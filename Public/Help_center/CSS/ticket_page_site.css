@@ -1,0 +1,1005 @@
+:root {
+    /* Dark Theme Variables (Default) */
+    --brand-color: #1a73e8;
+    /* A vibrant blue, good for highlights */
+    --bg-color: #000;
+    /* Pure black background */
+    --header-gradient: linear-gradient(to right, #000000, #D6BCFA);
+    /* Black to light purple */
+    --text-color: #fff;
+    /* White text */
+    --input-border: #555;
+    /* Medium grey for input borders */
+    --radius: 0.3rem;
+    /* Standard border-radius for rounded corners */
+    --transition: 0.2s ease-in-out;
+    /* Smooth transition for hover effects and theme changes */
+    --shadow-sm: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    /* Small shadow */
+    --shadow-md: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    /* Medium shadow */
+    --like-box-bg: #222;
+    /* Dark grey for "like" boxes/cards */
+    --notifications-bg: #222;
+    /* Dark grey for notifications container */
+    --ticket-form-bg: #222;
+    /* Dark grey for ticket form background */
+    --welcome-message-bg: #333;
+    /* Slightly lighter grey for welcome message */
+
+    /* Toast specific colors (default/dark theme) */
+    --toast-success-bg: #4CAF50;
+    /* Green */
+    --toast-success-text: #fff;
+    --toast-error-bg: #f44336;
+    /* Red */
+    --toast-error-text: #fff;
+    --toast-info-bg: #2196F3;
+    /* Blue */
+    --toast-info-text: #fff;
+}
+
+/* Light Theme Variables */
+body.light-theme {
+    --brand-color: #1a73e8;
+    /* Brand color typically remains the same */
+    --bg-color: #f0f2f5;
+    /* Light background, common for web apps */
+    --header-gradient: linear-gradient(to right, #e0e5ec, #b2cbe8);
+    /* Lighter, subtle gradient for header */
+    --text-color: #333;
+    /* Darker text for light background */
+    --input-border: #ccc;
+    /* Lighter input borders */
+    --like-box-bg: #ffffff;
+    /* White background for boxes */
+    --notifications-bg: #ffffff;
+    /* White background for notifications */
+    --ticket-form-bg: #ffffff;
+    /* White background for ticket form */
+    --welcome-message-bg: #e0e5ec;
+    /* Lighter welcome message background */
+    --header-button-border-color: var(--text-color);
+    /* Matches text color for light theme button borders */
+
+    /* Toast specific colors (light theme) */
+    --toast-success-bg: #D4EDDA;
+    /* Lighter green */
+    --toast-success-text: #155724;
+    /* Darker green for text */
+    --toast-error-bg: #F8D7DA;
+    /* Lighter red */
+    --toast-error-text: #721C24;
+    /* Darker red for text */
+    --toast-info-bg: #CCE5FF;
+    /* Lighter blue */
+    --toast-info-text: #004085;
+    /* Darker blue for text */
+}
+
+/* Base Styles */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    /* Ensure padding and border are included in element's total width and height */
+}
+
+body {
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    /* Modern, readable font stack */
+    background-color: var(--bg-color);
+    /* Apply theme background color */
+    color: var(--text-color);
+    /* Apply theme text color */
+    line-height: 1.6;
+    /* Improved readability */
+    display: flex;
+    flex-direction: column;
+    /* For sticky footer layout */
+    min-height: 100vh;
+    /* Ensure body takes at least full viewport height */
+    transition: background-color var(--transition), color var(--transition);
+    /* Smooth theme transition */
+}
+
+/* Header Styles */
+.site-header {
+    background: var(--header-gradient);
+    /* Apply theme header gradient */
+    color: var(--text-color);
+    /* Apply theme text color */
+    padding: 0.5rem 1rem;
+    /* Padding around header content */
+    position: relative;
+    /* For potential absolute positioning of children */
+    transition: background var(--transition), color var(--transition);
+    /* Smooth theme transition */
+}
+
+.header-container {
+    display: flex;
+    justify-content: space-between;
+
+    align-items: center;
+
+}
+
+.logo-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.logo-link {
+    text-decoration: none;
+    color: inherit;
+    display: inline-block;
+}
+
+.logo {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #D6BCFA;
+    transition: color var(--transition);
+}
+
+body.light-theme .logo {
+    color: #D6BCFA;
+}
+
+/* Tagline in Header */
+.tagline {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #ddd;
+    transition: color var(--transition);
+}
+
+body.light-theme .tagline {
+    color: #555;
+    /* Light theme specific tagline color (header) */
+}
+
+.header-buttons {
+    display: flex;
+    gap: 1rem;
+    /* Space between buttons */
+    align-items: center;
+    /* Align items vertically */
+}
+
+/* Header Button - Icon Only with Tooltip */
+.header-button {
+    background: transparent;
+    border: none;
+    color: #3b82f6;
+    /* Blue in light mode */
+    cursor: pointer;
+    font-size: 1.2rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.header-button:hover {
+    background: rgba(59, 130, 246, 0.1);
+    transform: scale(1.1);
+}
+
+/* Dark mode - Purple */
+body.dark-mode .header-button {
+    color: #8b5cf6;
+}
+
+body.dark-mode .header-button:hover {
+    background: rgba(139, 92, 246, 0.15);
+}
+
+/* Tooltip */
+.header-button::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 50%;
+    right: 50px;
+    transform: translateY(-50%) translateX(10px);
+    background: var(--card-bg, #1f2937);
+    color: var(--text-main, #fff);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+}
+
+/* Tooltip Arrow */
+.header-button::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 44px;
+    transform: translateY(-50%) translateX(10px);
+    border-width: 6px;
+    border-style: solid;
+    border-color: transparent transparent transparent var(--card-bg, #1f2937);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+/* Show Tooltip */
+.header-button:hover::before,
+.header-button:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(-50%) translateX(0);
+}
+
+/* Dark mode tooltip */
+body.dark-mode .header-button::before {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+body.dark-mode .header-button::after {
+    border-color: transparent transparent transparent #374151;
+}
+
+/* Main Content Layout */
+.main-content {
+    display: flex;
+    /* Use flexbox for main content area */
+    flex-grow: 1;
+    /* Allow content to grow and fill available space */
+    margin-top: 2rem;
+    /* Space from header */
+    align-items: stretch;
+    /* Stretch items to fill height */
+    min-height: calc(100vh - 4.5rem);
+    /* Adjust based on header/footer height, ensure content takes space */
+}
+
+/* Left Section (Sidebar) */
+.left-section {
+    width: 250px;
+    /* Default width */
+    min-width: 60px;
+    /* Minimum width for collapsed state */
+    padding: 1rem;
+    transition: width var(--transition);
+    /* Smooth width transition on collapse */
+    position: relative;
+    z-index: 2;
+    /* Ensure it's above other elements if needed */
+    overflow: visible;
+    /* Prevent clipping of pop-out elements/shadows */
+}
+
+.left-section.collapsed {
+    width: 60px;
+    /* Collapsed width */
+    overflow: visible;
+    /* Ensure content isn't clipped, e.g., if like-box text hides with margin */
+}
+
+.collapsible-menu {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    /* Align items to the start */
+    height: 100%;
+    /* Fill parent height */
+}
+
+.nav-header {
+    display: flex;
+    justify-content: space-between;
+    /* Space out label and toggle button */
+    align-items: center;
+    width: 100%;
+    padding: 0 0.5rem;
+}
+
+.nav-label {
+    font-size: 0.9rem;
+    font-weight: bold;
+    text-transform: uppercase;
+    color: var(--text-color);
+    transition: opacity var(--transition), width var(--transition);
+    /* Smooth transition for hiding label */
+}
+
+.left-section.collapsed .nav-label {
+    opacity: 0;
+    /* Hide label when collapsed */
+    width: 0;
+    /* Collapse width to avoid taking space */
+    margin: 0;
+    /* Remove margin */
+    overflow: hidden;
+    /* Hide overflow content */
+}
+
+.collapsible-button {
+    background: none;
+    color: var(--text-color);
+    border: none;
+    cursor: pointer;
+    padding: 0.3rem;
+    transition: transform var(--transition);
+    /* Smooth button rotation */
+    align-self: flex-end;
+    /* Align button to the end within flex container */
+}
+
+.collapsible-button i {
+    transition: transform var(--transition);
+    /* Smooth icon rotation */
+}
+
+.collapsible-button.collapsed i {
+    transform: rotate(180deg);
+    /* Rotate icon when collapsed */
+}
+
+.like-boxes {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    /* Space between like boxes */
+    transition: all var(--transition);
+    /* Smooth transition for spacing/layout changes */
+}
+
+.like-box {
+    background: var(--like-box-bg);
+    /* Apply theme background */
+    color: var(--text-color);
+    /* Apply theme text color */
+    border: none;
+    padding: 1.2rem 1rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+    /* Prevent text wrapping */
+    overflow: visible;
+    /* Ensure shadows are visible */
+    transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out, background var(--transition), color var(--transition);
+    /* Smooth transitions for hover and theme */
+    min-height: 50px;
+    /* Minimum height for consistent size */
+    position: relative;
+    /* For potential absolute children */
+}
+
+body.light-theme .like-box {
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    /* Lighter shadow for light theme */
+}
+
+.like-box:hover {
+    transform: translateY(-5px);
+    /* Lift effect on hover */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    /* Dark theme shadow */
+}
+
+body.light-theme .like-box:hover {
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+    /* More pronounced shadow for light theme hover */
+}
+
+.like-box i {
+    color: var(--brand-color);
+    /* Brand color for icons */
+    margin-right: 0.5rem;
+    min-width: 24px;
+    /* Ensure icon has minimum width */
+    font-size: 1.4em;
+    /* Larger icon size */
+    flex-shrink: 0;
+    /* Prevent icon from shrinking */
+}
+
+/* Text intensification on like-box hover */
+.like-box:hover span {
+    color: #fff;
+    /* Default for dark theme */
+    text-shadow:
+        0 0 4px #fff,
+        0 0 8px var(--brand-color),
+        0 0 12px var(--brand-color);
+    transition: color var(--transition), text-shadow var(--transition), font-weight var(--transition);
+}
+
+body.light-theme .like-box:hover span {
+    color: var(--brand-color);
+    /* Brand color for intensification in light theme */
+    text-shadow: none;
+    /* REMOVED TEXT SHADOW TO PREVENT BLURRING */
+    font-weight: bold;
+    /* Added for sharper intensification */
+}
+
+.left-section.collapsed .like-box {
+    padding: 1.2rem;
+    /* Adjusted padding for collapsed state */
+    justify-content: center;
+    /* Center icon when text is hidden */
+    width: 50px;
+    /* Fixed width for collapsed box */
+    margin: 0 auto;
+    /* Center the box */
+}
+
+.left-section.collapsed .like-box i {
+    margin-right: 0;
+    /* Remove margin when text is hidden */
+    transform: scale(1.1);
+    /* Slightly enlarge icon when collapsed */
+}
+
+.left-section.collapsed .like-box span {
+    opacity: 0;
+    /* Hide text when collapsed */
+    width: 0;
+    /* Collapse text width */
+    margin-left: -0.5rem;
+    /* Adjust margin to truly hide text */
+    transition: all var(--transition);
+    /* Smooth transition for hiding text */
+}
+
+/* Vertical Divider */
+.vertical-divider {
+    width: 2px;
+    background-color: #fff;
+    /* Default dark theme divider */
+    margin-left: 3rem;
+    /* Space from left section */
+    margin-right: 1rem;
+    /* Space from right section */
+    transition: all var(--transition);
+    /* Smooth transition for movement and color */
+}
+
+body.light-theme .vertical-divider {
+    background-color: #ccc;
+    /* Lighter divider for light theme */
+}
+
+.left-section.collapsed+.vertical-divider {
+    margin: 0 0.5rem;
+    /* Reduced margin when left section is collapsed */
+}
+
+/* Right Section (Main Content Area) */
+.right-section {
+    flex-grow: 1;
+    /* Allow to fill remaining space */
+    padding: 1rem;
+    transition: margin-left var(--transition);
+    /* Smooth transition for layout changes */
+}
+
+.welcome-message {
+    background-color: var(--welcome-message-bg);
+    /* Apply theme background */
+    color: var(--text-color);
+    /* Apply theme text color */
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 2rem;
+    transition: background-color var(--transition), color var(--transition);
+    /* Smooth theme transition */
+}
+
+.notifications-container {
+    background: var(--notifications-bg);
+    /* Apply theme background */
+    color: var(--text-color);
+    /* Apply theme text color */
+    border: 1px solid #444;
+    /* Default dark theme border */
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 2rem;
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
+    /* Smooth theme transition */
+}
+
+body.light-theme .notifications-container {
+    border-color: var(--input-border);
+    /* Lighter border for light theme */
+}
+
+.notifications-header {
+    margin-bottom: 0.5rem;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+}
+
+.notifications-header i {
+    margin-right: 0.5rem;
+    color: var(--brand-color);
+    /* Brand color for icon */
+}
+
+/* Ticket Form */
+.ticket-form-container {
+    background: var(--ticket-form-bg);
+    /* Apply theme background */
+    color: var(--text-color);
+    /* Apply theme text color */
+    border: 1px solid #444;
+    /* Default dark theme border */
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-top: 2rem;
+    /* display: none; */
+    /* Handled by JavaScript */
+    border: 2px solid #D6BCFA;
+    /* Stronger accent border for the form */
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
+    /* Smooth theme transition */
+}
+
+body.light-theme .ticket-form-container {
+    border-color: var(--input-border);
+    /* Lighter border for light theme */
+}
+
+.form-section h2 {
+    margin-top: 0;
+    color: var(--brand-color);
+    /* Brand color for section headings */
+    margin-bottom: 1rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+    /* Space between form elements */
+}
+
+label {
+    display: block;
+    /* Make labels block-level for proper spacing */
+    margin-bottom: 0.3rem;
+    font-weight: 500;
+}
+
+input,
+select,
+textarea {
+    width: 100%;
+    /* Full width */
+    padding: 0.6rem;
+    border: 1px solid var(--input-border);
+    /* Apply theme border */
+    border-radius: var(--radius);
+    font-size: 1rem;
+    background-color: var(--like-box-bg);
+    /* Use a consistent background for inputs */
+    color: var(--text-color);
+    /* Apply theme text color */
+    transition: border-color var(--transition), box-shadow var(--transition), background-color var(--transition), color var(--transition);
+    /* Smooth transitions for focus and theme */
+}
+
+body.light-theme input,
+body.light-theme select,
+body.light-theme textarea {
+    background-color: var(--like-box-bg);
+    /* Lighter input background in light theme */
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--brand-color);
+    /* Highlight border on focus */
+    outline: none;
+    /* Remove default outline */
+}
+
+.btn-primary {
+    background-color: var(--brand-color);
+    /* Brand color for primary buttons */
+    color: white;
+    padding: 0.7rem 1.5rem;
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background-color var(--transition);
+    /* Smooth hover effect */
+}
+
+.btn-primary:hover {
+    background-color: #0f5bcf;
+    /* Slightly darker blue on hover */
+}
+
+/* Urgent Assistance Section */
+.urgent-assistance {
+    margin-top: 2rem;
+}
+
+.urgent-assistance h3 {
+    margin-bottom: 0.5rem;
+}
+
+.urgent-assistance ul {
+    list-style: none;
+    /* Remove default list bullets */
+    padding-left: 0;
+}
+
+/* Footer Styles */
+.site-footer {
+    background: var(--header-gradient);
+    /* Apply theme header gradient */
+    color: var(--text-color);
+    /* Apply theme text color */
+    padding: 1rem;
+    display: flex;
+    justify-content: space-between;
+    /* Space out content */
+    align-items: center;
+    font-size: 0.9rem;
+    margin-top: auto;
+    /* Push footer to the bottom of the page */
+    transition: background var(--transition), color var(--transition);
+    /* Smooth theme transition */
+}
+
+.footer-left {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.footer-center {
+    text-align: center;
+}
+
+.footer-right {
+    text-align: right;
+}
+
+.footer-link {
+    color: var(--text-color);
+    text-decoration: none;
+    margin-left: 0.5rem;
+    transition: color var(--transition);
+    /* Smooth transition */
+}
+
+.footer-link:hover {
+    text-decoration: underline;
+    /* Underline on hover */
+}
+
+.footer-logo {
+    margin: 0;
+    padding: 0;
+    /* Ensure no internal padding */
+    text-align: left;
+    /* Explicitly align text within its own box */
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: #D6BCFA;
+    /* Fixed purple color for logo */
+    transition: color var(--transition);
+}
+
+body.light-theme .footer-logo {
+    color: #D6BCFA;
+    /* Keep the same purple color for light theme */
+}
+
+/* Footer Tagline */
+.footer-tagline {
+    margin: 0;
+    padding: 0;
+    /* Ensure no internal padding */
+    text-align: left;
+    /* Explicitly align text within its own box */
+    font-size: 0.8rem;
+    color: #ddd;
+    /* Default dark theme tagline color */
+    transition: color var(--transition);
+}
+
+/* Light theme adjustment for footer tagline */
+body.light-theme .footer-tagline {
+    color: var(--text-color);
+    /* Use general text color for light theme (which is #333) */
+}
+
+/* Error States (for form validation) */
+.error-field {
+    border: 2px solid red !important;
+    /* Red border for errors */
+    box-shadow: 0 0 5px rgba(255, 0, 0, 0.5);
+    /* Subtle red glow */
+}
+
+.error-label {
+    color: red !important;
+    /* Red text for error labels */
+    font-weight: bold;
+}
+
+/* Back to Top Button */
+.back-to-top {
+    position: fixed;
+    /* Fixed position relative to viewport */
+    bottom: 20px;
+    right: 20px;
+    background-color: rgba(40, 167, 69, 0.8);
+    /* Green, generally theme-independent */
+    color: #fff;
+    width: 50px;
+    height: 50px;
+    border: none;
+    border-radius: 50%;
+    /* Makes it circular */
+    font-size: 24px;
+    cursor: pointer;
+    display: flex;
+    /* Use flex to center icon */
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    /* Subtle shadow */
+    transition: transform 0.3s ease, background-color 0.3s ease;
+    /* Smooth hover effects */
+    z-index: 1000;
+    /* Ensure it's on top of other content */
+}
+
+.back-to-top:hover {
+    background-color: rgba(33, 136, 56, 0.8);
+    /* Darker green on hover */
+    transform: scale(1.1);
+    /* Slightly enlarge on hover */
+}
+
+/* --- TOAST NOTIFICATIONS (CONSOLIDATED & IMPROVED) --- */
+#toast-container {
+    position: fixed;
+    top: 1rem;
+    /* Place at the top */
+    right: 1rem;
+    /* Place at the right */
+    z-index: 9999;
+    /* Very high z-index to be on top of everything */
+    pointer-events: none;
+    /* So it doesn’t block clicks to underlying UI elements */
+    display: flex;
+    /* Allow stacking of multiple toasts vertically */
+    flex-direction: column;
+    gap: 10px;
+    /* Space between multiple toasts */
+}
+
+#toast-container .toast {
+    /* Basic styling for all toasts */
+    min-width: 250px;
+    padding: 1rem 1.5rem;
+    border-radius: 4px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    font-family: sans-serif;
+    font-size: 17px;
+    text-align: center;
+    box-sizing: border-box;
+    /* Include padding in width */
+    white-space: nowrap;
+    /* Prevent text wrapping unless explicitly broken */
+
+    /* Initial state for animation (hidden, off-screen right) */
+    right: -300px;
+    /* Start completely off-screen to the right (adjust based on max toast width) */
+    opacity: 0;
+    /* Start invisible */
+    position: relative;
+    /* Needed for 'right' property to work for animation */
+    pointer-events: all;
+    /* Allow interaction if needed, e.g., for a close button */
+
+    /* Animation transition */
+    transition: right 0.6s ease-out, opacity 0.6s ease-out, background-color var(--transition), color var(--transition), border var(--transition);
+}
+
+/* State when the toast is "shown" */
+#toast-container .toast.show {
+    right: 20px;
+    /* Slide into view, 20px from the right edge */
+    opacity: 1;
+    /* Make it fully visible */
+}
+
+/* Specific styles for different toast types */
+#toast-container .toast.success {
+    background-color: var(--toast-success-bg);
+    color: var(--toast-success-text);
+    border: 1px solid var(--toast-success-bg);
+    /* Match border to background for solid look */
+}
+
+#toast-container .toast.error {
+    background-color: var(--toast-error-bg);
+    color: var(--toast-error-text);
+    border: 1px solid var(--toast-error-bg);
+}
+
+#toast-container .toast.info {
+    background-color: var(--toast-info-bg);
+    color: var(--toast-info-text);
+    border: 1px solid var(--toast-info-bg);
+}
+
+/* Remove Button for File Attachments */
+.remove-button {
+    background-color: red !important;
+    /* Red background */
+    color: white !important;
+    /* White text */
+    border: none !important;
+    padding: 2px 6px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    font-size: 12px !important;
+    margin-left: 10px !important;
+}
+
+/* Theme Icon Button Only */
+.theme-switch-wrapper {
+    display: flex;
+    align-items: center;
+}
+
+.theme-icon-btn {
+    background: transparent;
+    border: none;
+    color: #3b82f6;
+    /* Blue in light mode */
+    cursor: pointer;
+    font-size: 1.3rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.theme-icon-btn:hover {
+    background: rgba(59, 130, 246, 0.1);
+    transform: scale(1.1);
+}
+
+/* Dark mode - Purple */
+body.dark-mode .theme-icon-btn {
+    color: #8b5cf6;
+}
+
+body.dark-mode .theme-icon-btn:hover {
+    background: rgba(139, 92, 246, 0.15);
+}
+
+/* Tooltip */
+.theme-icon-btn::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 50%;
+    right: 50px;
+    transform: translateY(-50%) translateX(10px);
+    background: var(--card-bg, #1f2937);
+    color: var(--text-main, #fff);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+}
+
+/* Tooltip Arrow */
+.theme-icon-btn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 44px;
+    transform: translateY(-50%) translateX(10px);
+    border-width: 6px;
+    border-style: solid;
+    border-color: transparent transparent transparent var(--card-bg, #1f2937);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+/* Show Tooltip */
+.theme-icon-btn:hover::before,
+.theme-icon-btn:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(-50%) translateX(0);
+}
+
+/* Dark mode tooltip */
+body.dark-mode .theme-icon-btn::before {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+body.dark-mode .theme-icon-btn::after {
+    border-color: transparent transparent transparent #374151;
+}
+
+/* NEW: Styling for the Track Ticket ID container */
+.track-ticket-id-container {
+    background: var(--ticket-form-bg);
+    /* Use same background as ticket form */
+    color: var(--text-color);
+    border: 1px solid #444;
+    /* Default dark theme border */
+    padding: 1rem;
+    border-radius: var(--radius);
+    margin-top: 2rem;
+    /* display: none; */
+    /* This is controlled by JavaScript, not initial CSS */
+    border: 2px solid #D6BCFA;
+    /* Stronger accent border for the form */
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+
+body.light-theme .track-ticket-id-container {
+    border-color: var(--input-border);
+    /* Lighter border for light theme */
+}
+
+.track-ticket-id-container h2 {
+    margin-top: 0;
+    color: var(--brand-color);
+    margin-bottom: 1rem;
+}
+
+.track-ticket-id-container .info-message {
+    font-size: 0.9em;
+    color: #999;
+    /* Softer text color for info */
+    margin-bottom: 1.5rem;
+    line-height: 1.4;
+    transition: color var(--transition);
+}
+
+body.light-theme .track-ticket-id-container .info-message {
+    color: #666;
+    /* Slightly darker for light theme */
+}

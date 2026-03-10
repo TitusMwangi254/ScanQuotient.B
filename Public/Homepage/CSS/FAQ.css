@@ -1,0 +1,511 @@
+/* Base styles for the FAQ page */
+body {
+    background-color: var(--primary-bg-color, #f4f7fa);
+    color: var(--text-color, #333);
+    font-family: 'Open Sans', sans-serif;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    position: relative;
+}
+
+/* --- Theme specific variables for dark mode --- */
+body.dark-theme {
+    --primary-bg-color: #1a1a2e;
+    --secondary-bg-color: #16213e;
+    --text-color: #e0e0e0;
+    --heading-color: #e0e0e0;
+    --border-color: #0f3460;
+    --primary-color: #8e1be0;
+    --accent-color: #8714de;
+    --shadow-light: 0 4px 15px rgba(0, 0, 0, 0.4);
+    --button-bg-color: #0f3460;
+    --button-text-color: #e0e0e0;
+    --button-hover-bg-color: #6d21d1;
+    --button-hover-text-color: #fff;
+}
+
+main {
+    flex: 1;
+    padding-bottom: 40px;
+}
+
+/* --- Top Controls Container (Theme Toggle & Home) --- */
+.top-controls {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    gap: 15px;
+    z-index: 1000;
+    flex-direction: row-reverse;
+}
+
+.top-controls .control-btn {
+    background-color: var(--secondary-bg-color, #fff);
+    color: var(--text-color, #333);
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 50%;
+    width: 45px;
+    height: 45px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    cursor: pointer;
+    box-shadow: var(--shadow-light, 0 2px 8px rgba(0, 0, 0, 0.1));
+    transition: background-color 0.3s ease, color 0.3s ease, transform 0.2s ease;
+    text-decoration: none;
+    /* For the anchor tag */
+}
+
+.top-controls .control-btn:hover {
+    background-color: var(--primary-color, #007bff);
+    color: #153cd6;
+    transform: translateY(-2px);
+}
+
+.top-controls .control-btn i {
+    pointer-events: none;
+}
+
+/* --- Brand/Logo Area (Top Left) --- */
+.brand-area {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    z-index: 1000;
+    color: #CBC3E3;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+body.dark-theme .brand-area {
+    color: var(--text-color, #e0e0e0);
+    text-shadow: none;
+}
+
+.brand-name {
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 800;
+    font-size: 1.8rem;
+    margin-bottom: 5px;
+    line-height: 1;
+    color: #4e2eaf;
+}
+
+.brand-tagline {
+    font-family: 'Open Sans', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    opacity: 0.8;
+    line-height: 1;
+}
+
+
+/* FAQ Hero Section - Background Image and Title */
+.faq-hero {
+    /* Background configuration */
+    background: linear-gradient(rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.75)),
+        url('https://images.unsplash.com/photo-1550751827-4bd374c3f58b?q=80&w=2070&auto=format&fit=crop') no-repeat center center/cover;
+
+    color: #fff;
+    /* Text color for content within the hero */
+    padding: 100px 20px 80px;
+    text-align: center;
+    margin-bottom: 50px;
+    border-radius: 0;
+
+    /* Ensure full width and no gaps at the top/sides of the viewport */
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-top: 0;
+}
+
+.faq-hero h1 {
+    font-size: 3.5rem;
+    margin-bottom: 20px;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 800;
+}
+
+.faq-hero p {
+    font-size: 1.2rem;
+    max-width: 800px;
+    margin: 0 auto;
+    font-family: 'Open Sans', sans-serif;
+}
+
+/* FAQ Accordion Container */
+.faq-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: var(--secondary-bg-color, #ffffff);
+    border-radius: 10px;
+    box-shadow: var(--shadow-light, 0 4px 15px rgba(0, 0, 0, 0.05));
+}
+
+.faq-item {
+    border-bottom: 1px solid var(--border-color, #eee);
+    padding: 20px 0;
+}
+
+.faq-item:last-child {
+    border-bottom: none;
+}
+
+.faq-question {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: 600;
+    color: var(--heading-color, #2c3e50);
+    padding: 10px 0;
+    transition: color 0.3s ease;
+}
+
+.faq-question:hover {
+    color: var(--primary-color, #007bff);
+}
+
+.faq-question i {
+    margin-left: 15px;
+    transition: transform 0.3s ease;
+}
+
+.faq-question.active i {
+    transform: rotate(180deg);
+}
+
+.faq-answer {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.5s ease-out, padding 0.5s ease-out;
+    font-size: 1.1rem;
+    color: var(--text-color, #555);
+    padding: 0 10px;
+}
+
+.faq-answer p {
+    margin-top: 15px;
+}
+
+.faq-answer.show {
+    max-height: 500px;
+    padding-bottom: 20px;
+}
+
+/* Call to Action Section */
+.faq-contact-cta {
+    text-align: center;
+    padding: 50px 20px;
+    background-color: var(--accent-color, #0056b3);
+    color: #fff;
+    border-radius: 10px;
+    margin: 50px auto;
+    max-width: 900px;
+}
+
+.faq-contact-cta h2 {
+    font-size: 2.5rem;
+    margin-bottom: 20px;
+    font-family: 'Montserrat', sans-serif;
+    font-weight: 700;
+}
+
+.faq-contact-cta p {
+    font-size: 1.1rem;
+    margin-bottom: 30px;
+    max-width: 700px;
+    margin-left: auto;
+    margin-right: auto;
+    font-family: 'Open Sans', sans-serif;
+}
+
+.faq-contact-cta .btn-primary {
+    display: inline-block;
+    background-color: var(--button-bg-color, #ffffff);
+    color: var(--button-text-color, #0056b3);
+    padding: 15px 30px;
+    border-radius: 5px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.faq-contact-cta .btn-primary:hover {
+    background-color: var(--button-hover-bg-color, #e0e0e0);
+    color: var(--button-hover-text-color, #0056b3);
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .top-controls {
+        top: 10px;
+        right: 10px;
+        gap: 10px;
+    }
+
+    .top-controls .control-btn {
+        width: 40px;
+        height: 40px;
+        font-size: 1rem;
+    }
+
+    .brand-area {
+        top: 10px;
+        left: 10px;
+    }
+
+    .brand-name {
+        font-size: 1.5rem;
+        margin-bottom: 3px;
+    }
+
+    .brand-tagline {
+        font-size: 0.8rem;
+    }
+
+    .faq-hero {
+        padding: 80px 15px 60px;
+    }
+
+    .faq-hero h1 {
+        font-size: 2.8rem;
+    }
+
+    .faq-hero p {
+        font-size: 1.1rem;
+    }
+
+    .faq-container {
+        margin: 30px 15px;
+        padding: 15px;
+    }
+
+    .faq-question {
+        font-size: 1.1rem;
+        padding: 8px 0;
+    }
+
+    .faq-answer {
+        font-size: 1rem;
+    }
+
+    .faq-contact-cta h2 {
+        font-size: 2.2rem;
+    }
+
+    .faq-contact-cta p {
+        font-size: 1rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .brand-area {
+        top: 10px;
+        left: 10px;
+    }
+
+    .brand-name {
+        font-size: 1.3rem;
+    }
+
+    .brand-tagline {
+        font-size: 0.7rem;
+    }
+
+    .faq-hero {
+        padding: 60px 15px 40px;
+        margin-bottom: 30px;
+    }
+
+    .faq-hero h1 {
+        font-size: 2rem;
+    }
+
+    .faq-hero p {
+        font-size: 0.95rem;
+    }
+
+    .faq-container,
+    .faq-contact-cta {
+        margin: 20px 10px;
+        padding: 15px;
+    }
+
+    .faq-question {
+        font-size: 1rem;
+    }
+
+    .faq-answer {
+        font-size: 0.9rem;
+    }
+
+    .faq-contact-cta h2 {
+        font-size: 1.8rem;
+    }
+
+    .faq-contact-cta p {
+        font-size: 0.9rem;
+    }
+
+    .faq-contact-cta .btn-primary {
+        padding: 12px 25px;
+        font-size: 0.95rem;
+    }
+}
+
+/* Footer Container */
+footer {
+    background: linear-gradient(to right, #e0e5ec, #b2cbe8);
+    /* Light mode gradient */
+    color: #1e293b;
+    /* Dark text for light mode */
+    padding: 60px 0;
+    width: 100%;
+    border-top: 2px solid #3b82f6;
+    /* Blue border for light mode */
+    transition: all 0.3s ease;
+}
+
+/* Dark mode - Purple theme */
+body.dark-mode footer {
+    background: #1e1b4b;
+    /* Deep purple solid */
+    color: #ecf0f1;
+    /* Light text */
+    border-top: 2px solid #8b5cf6;
+    /* Purple border */
+}
+
+.footer-content {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.footer-col {
+    flex: 1;
+    text-align: left;
+}
+
+.footer-col.brand-info {
+    flex: 1.5;
+    color: #334155;
+    /* Dark gray for light mode */
+}
+
+body.dark-mode .footer-col.brand-info {
+    color: #e0e0e0;
+    /* Light for dark mode */
+}
+
+/* Typography & Links */
+.footer-col h3 {
+    font-size: 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 25px;
+    color: #2563eb;
+    /* Blue accent for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-col h3 {
+    color: #a78bfa;
+    /* Light purple for dark mode */
+}
+
+.footer-col p,
+.footer-col ul li {
+    font-size: 0.95rem;
+    color: #475569;
+    /* Slate for light mode */
+    margin-bottom: 12px;
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-col p,
+body.dark-mode .footer-col ul li {
+    color: #bdc3c7;
+    /* Light gray for dark mode */
+}
+
+.footer-col ul {
+    list-style: none;
+    padding: 0;
+}
+
+.footer-col ul li a {
+    text-decoration: none;
+    color: #475569;
+    /* Slate for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-col ul li a {
+    color: #bdc3c7;
+    /* Light gray for dark mode */
+}
+
+.footer-col ul li a:hover {
+    color: #2563eb;
+    /* Blue hover for light mode */
+}
+
+body.dark-mode .footer-col ul li a:hover {
+    color: #a78bfa;
+    /* Purple hover for dark mode */
+}
+
+/* Bottom Bar */
+.footer-bottom {
+    width: 100%;
+    margin-top: 50px;
+    padding: 20px 0;
+    background-color: rgba(59, 130, 246, 0.1);
+    /* Light blue tint for light mode */
+    border-top: 1px solid rgba(59, 130, 246, 0.2);
+    font-size: 0.85rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+body.dark-mode .footer-bottom {
+    background-color: rgba(139, 92, 246, 0.15);
+    /* Purple tint for dark mode */
+    border-top: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+/* Social Icons */
+.footer-social-icons a i {
+    color: #2563eb;
+    /* Blue for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-social-icons a i {
+    color: #a78bfa;
+    /* Purple for dark mode */
+}
+
+.footer-social-icons a i:hover {
+    color: #1d4ed8;
+    /* Darker blue hover */
+}
+
+body.dark-mode .footer-social-icons a i:hover {
+    color: #c4b5fd;
+    /* Lighter purple hover */
+}

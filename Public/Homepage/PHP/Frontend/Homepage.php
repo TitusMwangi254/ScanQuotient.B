@@ -8,7 +8,7 @@
 
     <title>ScanQuotient | Homepage</title>
 
-    <link rel="icon" type="image/png" href="../../../Storage/Public_images/page_icon.png">
+    <link rel="icon" type="image/png" href="../../../../Storage/Public_images/page_icon.png" />
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
 
@@ -18,15 +18,14 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap"
         rel="stylesheet">
-
-    <link rel="stylesheet" href="../CSS/Homepage.css" />
+    <link rel="stylesheet" href="../../CSS/homepage.css" />
 
     <script>
         window.PHP_FEEDBACK = <?php echo json_encode($_SESSION['feedback_status'] ?? ''); ?>;
         <?php unset($_SESSION['feedback_status']); ?>
     </script>
 
-    <script src="../Javascript/homepage.js" defer></script>
+    <script src="../../Javascript/homepage.js" defer></script>
 </head>
 
 <body>
@@ -57,9 +56,16 @@
 
         <div class="profile-container" style="display: flex; align-items: center; gap: 10px;">
             <!-- Theme Toggle -->
-            <button class="theme-toggle-btn" id="themeToggle" aria-label="Toggle Theme">
+            <button class="theme-toggle-btn" id="themeToggle" aria-label="Toggle Theme" data-tooltip="Change Theme">
                 <i class="fas fa-moon" id="themeIcon"></i>
             </button>
+
+           <a href="../../../Help_center/PHP/Frontend/Help_center.php" 
+             class="help-btn" 
+             aria-label="Get Help" 
+             title="Help & Support">
+             <i class="fas fa-question-circle"></i>
+          </a><br>
 
             <button class="sign-in-btn"
                 onclick="window.location.href='/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php'">
@@ -76,7 +82,7 @@
         <div class="hero-content">
             <div class="hero-text">
                 <div class="hero-badge">
-                    <i class="fas fa-microchip"></i> Welcome to ScanQuotient
+                    <i class="fas fa-user-shield"></i> Welcome to ScanQuotient
                 </div>
                 <h1 class="hero-title">
                     Identify Threats.<br>
@@ -84,7 +90,7 @@
                     Secure Everything.
                 </h1>
                 <p class="hero-subtitle">
-                    Advanced vulnerability assessment platform engineered for modern SMEs.
+                    Simple vulnerability assessment platform engineered for modern SMEs.
                     Automated security scanning, intelligent risk scoring, and actionable
                     intelligence all in one unified command center.
                 </p>
@@ -140,8 +146,7 @@
                 <span class="section-eyebrow">Capabilities</span>
                 <h2 class="section-title">Comprehensive Security Arsenal</h2>
                 <p class="section-subtitle">
-                    Six powerful assessment modules working in concert to expose vulnerabilities
-                    before attackers do.
+                    Six key assessment modules working together to find vulnerabilities before attackers can.
                 </p>
             </div>
 
@@ -150,10 +155,10 @@
                     <div class="feature-icon">
                         <i class="fas fa-bug"></i>
                     </div>
-                    <h3 class="feature-title">Automated Vulnerability Scanning</h3>
+                    <h3 class="feature-title">Vulnerability Scanning</h3>
                     <p class="feature-description">
-                        Intelligent detection of SQL Injection, XSS, and OWASP Top 10 vulnerabilities
-                        with precision-engineered testing protocols.
+                        Intelligently detects SQL Injection and XSS, two vulnerabilities from the OWASP Top 10, using
+                        precise and reliable testing methods..
                     </p>
                 </div>
 
@@ -289,7 +294,7 @@
                         </h3>
                         <p style="color: var(--text-muted); line-height: 1.7;">
                             Instant account provisioning with role-based access controls.
-                            Configure authorized testing environments and notification preferences.
+                            Configure your authorized testing environment.
                         </p>
                     </div>
                 </div>
@@ -301,7 +306,7 @@
                         <h3 style="font-size: 1.5rem; margin-bottom: 12px; color: var(--text-main);">Target Assessment
                         </h3>
                         <p style="color: var(--text-muted); line-height: 1.7;">
-                            Input target URLs or IP ranges. Our engine executes parallel
+                            Input target URL. Our engine executes parallel
                             vulnerability tests, configuration audits, and encryption checks.
                         </p>
                     </div>
@@ -377,7 +382,7 @@
                         <div class="author-avatar">AK</div>
                         <div class="author-info">
                             <h4>Alex Kimani</h4>
-                            <p>Cybersecurity Student, University of Nairobi</p>
+                            <p>Cyber-seC Student,UON</p>
                         </div>
                     </div>
                 </div>
@@ -422,7 +427,7 @@
                     <p class="pricing-description">For growing teams requiring unlimited assessments.</p>
                     <ul class="pricing-features">
                         <li><i class="fas fa-check"></i> Unlimited scan storage</li>
-                        <li><i class="fas fa-check"></i> Advanced scanning modules</li>
+                        <li><i class="fas fa-check"></i> Advanced scanning modules priority</li>
                         <li><i class="fas fa-check"></i> Priority queue processing</li>
                         <li><i class="fas fa-check"></i> Export to PDF/CSV</li>
                         <li class="disabled"><i class="fas fa-times"></i> AI remediation</li>
@@ -444,9 +449,9 @@
                         <li><i class="fas fa-check"></i> Compliance reporting</li>
                         <li><i class="fas fa-check"></i> 24/7 priority support</li>
                     </ul>
-                    <a href="/ScanQuotient/ScanQuotient/Publicpages/Payment/Payment_page.php" class="btn btn-secondary"
+                    <a href="/ScanQuotient/ScanQuotient/Publicpages/Payment/Payment_page.php" class="btn btn-primary"
                         style="width: 100%; justify-content: center;">
-                        Contact Sales
+                        Upgrade Now
                     </a>
                 </div>
             </div>
@@ -542,7 +547,7 @@
 
                     <div class="about-quote">
                         "Security is not a product, but a continuous process of assessment,
-                        adaptation, and improvement."
+                        adaptation, and improvement." -Mwangi Ndekere, Founder & CEO
                     </div>
                 </div>
 
@@ -658,7 +663,7 @@
             <div class="footer-grid">
                 <div class="footer-brand">
                     <a href="#home" class="brand">ScanQuotient</a>
-                    <p>Quantifying Risk. Strengthening Security. Empowering organizations with intelligent vulnerability
+                    <p>Quantifying Risk. Strengthening Security. Empowering SME's with intelligent vulnerability
                         assessment.</p>
                     <div class="social-links">
                         <a href="https://twitter.com/elevatecomai " target="_blank"><i class="fab fa-twitter"></i></a>
@@ -696,7 +701,7 @@
                     <h4>Support</h4>
                     <ul>
                         <li><a href="FAQ.php">FAQ</a></li>
-                        <li><a href="../../../Ticket_page/PHP/Frontend/tickets_page_site.php">Help Center</a></li>
+                        <li><a href="../../../Help_center/PHP/Frontend/Help_center.php">Help Center</a></li>
                         <li><a href="terms_of_service.php">Terms of Service</a></li>
                         <li><a href="privacy_policy.php">Privacy Policy</a></li>
                     </ul>
@@ -705,7 +710,7 @@
 
             <div class="footer-bottom">
                 <p>&copy; 2026 ScanQuotient. All rights reserved.</p>
-                <p>Engineered with <i class="fas fa-heart" style="color: var(--accent);"></i> in Nairobi, Kenya</p>
+
             </div>
         </div>
     </footer>

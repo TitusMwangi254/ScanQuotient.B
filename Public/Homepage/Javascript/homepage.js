@@ -84,7 +84,7 @@ const modalData = {
   web: {
     title: "Web Application Scanning",
     content:
-      '<p>Our comprehensive web application scanning module performs deep inspection of your web assets:</p><ul style="margin: 16px 0; padding-left: 20px;"><li>OWASP Top 10 vulnerability detection</li><li>SQL Injection and XSS testing</li><li>CSRF and authentication bypass checks</li><li>API endpoint security validation</li><li>Custom payload generation</li></ul><p>Perfect for e-commerce platforms, SaaS applications, and enterprise web portals.</p>',
+      '<p>Our comprehensive web application scanning module performs deep inspection of your web assets:</p><ul style="margin: 16px 0; padding-left: 20px;"><li>SQL Injection and XSS testing</li><li>CSRF and authentication bypass checks</li><li>API endpoint security validation</li><li>Custom payload generation</li></ul><p>Perfect for e-commerce platforms, SaaS applications, and enterprise web portals.</p>',
   },
   config: {
     title: "Configuration & Header Review",

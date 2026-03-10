@@ -1,0 +1,473 @@
+/* Base styles (Light Mode defaults) */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    background-color: #f4f7f6;
+    /* Light background for default (light) mode */
+    color: #333;
+    /* Dark text for default (light) mode */
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    /* Stack content vertically */
+    align-items: center;
+    /* Center content horizontally */
+    min-height: 100vh;
+    padding: 40px 20px;
+    box-sizing: border-box;
+    position: relative;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    /* Smooth transition for theme change */
+}
+
+/* Dark Mode styles */
+body.dark-mode {
+    background-color: #000000;
+    /* Plain Black Background */
+    color: #f0f0f0;
+    /* Light text for dark mode */
+}
+
+.policy-content {
+    max-width: 900px;
+    padding: 0;
+    margin-top: 50px;
+    /* Space for the top navigation */
+    margin-bottom: 80px;
+    /* Space for the bottom button */
+}
+
+.policy-content h2 {
+    font-size: 2.8em;
+    color: #2c3e50;
+    /* Dark heading for light mode */
+    margin-bottom: 30px;
+    text-align: center;
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .policy-content h2 {
+    color: #ffffff;
+    /* White heading for dark mode */
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+}
+
+.policy-content h3 {
+    font-size: 1.8em;
+    color: #34495e;
+    /* Dark heading for light mode */
+    margin-top: 40px;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #e0e0e0;
+    /* Light border for light mode */
+    padding-bottom: 8px;
+    transition: color 0.3s ease, border-color 0.3s ease;
+}
+
+body.dark-mode .policy-content h3 {
+    color: #e0e0e0;
+    /* Off-white heading for dark mode */
+    border-bottom: 1px solid #333333;
+    /* Darker border for dark mode */
+}
+
+.policy-content p {
+    margin-bottom: 15px;
+    font-size: 1.1em;
+}
+
+.policy-content ul {
+    list-style-type: disc;
+    margin-left: 30px;
+    margin-bottom: 15px;
+}
+
+.policy-content ul li {
+    margin-bottom: 8px;
+}
+
+.policy-content strong {
+    color: #2c3e50;
+    /* Dark strong text for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .policy-content strong {
+    color: #ffffff;
+    /* White strong text for dark mode */
+}
+
+.policy-content a {
+    color: #3498db;
+    /* Blue for links in light mode */
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .policy-content a {
+    color: #87ceeb;
+    /* Sky blue for links in dark mode */
+}
+
+.policy-content a:hover {
+    text-decoration: underline;
+}
+
+/* Top Left Branding */
+.top-left-brand {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    z-index: 1001;
+    text-align: left;
+}
+
+.top-left-brand .main-title {
+    font-size: 1.6em;
+    font-weight: bold;
+    color: #8a2be2;
+    /* Purple color for light mode */
+    margin-bottom: 5px;
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .top-left-brand .main-title {
+    color: #8a2be2;
+    /* Lighter purple for dark mode */
+}
+
+.top-left-brand .tagline {
+    font-size: 0.9em;
+    color: #7f8c8d;
+    /* Grey color for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .top-left-brand .tagline {
+    color: #bdc3c7;
+}
+
+.top-right-nav {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    z-index: 1001;
+}
+
+.top-right-nav a {
+    color: #163dc0;
+    font-size: 1.4em;
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .top-right-nav a {
+    color: #2d24a9;
+}
+
+.top-right-nav a:hover {
+    color: #3498db;
+}
+
+body.dark-mode .top-right-nav a:hover {
+    color: #604f86;
+}
+
+.theme-switch-wrapper {
+    display: flex;
+    align-items: center;
+}
+
+.theme-icon-btn {
+    background: transparent;
+    border: none;
+    color: #163dc0;
+    /* Blue in light mode */
+    cursor: pointer;
+    font-size: 1.3rem;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.theme-icon-btn:hover {
+    background: rgba(59, 130, 246, 0.1);
+    transform: scale(1.1);
+}
+
+/* Dark mode - Purple */
+body.dark-mode .theme-icon-btn {
+    color: #2c1a53;
+    /* Purple */
+}
+
+body.dark-mode .theme-icon-btn:hover {
+    background: rgba(139, 92, 246, 0.15);
+}
+
+/* Tooltip - Fixed positioning */
+.theme-icon-btn::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 50%;
+    right: 50px;
+    /* Position to the left of button */
+    left: auto;
+    transform: translateY(-50%) translateX(10px);
+    background: var(--card-bg, #1f2937);
+    color: var(--text-main, #fff);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+}
+
+/* Tooltip Arrow */
+.theme-icon-btn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 44px;
+    /* Position to the left of button */
+    left: auto;
+    transform: translateY(-50%) translateX(10px);
+    border-width: 6px;
+    border-style: solid;
+    border-color: transparent transparent transparent var(--card-bg, #1f2937);
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+/* Show Tooltip on Hover */
+.theme-icon-btn:hover::before,
+.theme-icon-btn:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(-50%) translateX(0);
+}
+
+/* Dark mode tooltip adjustments */
+body.dark-mode .theme-icon-btn::before {
+    background: #374151;
+    border-color: #4b5563;
+}
+
+body.dark-mode .theme-icon-btn::after {
+    border-color: transparent transparent transparent #374151;
+}
+
+/* Back to Home Page Button at the Bottom */
+.bottom-home-btn {
+    display: block;
+    width: fit-content;
+    margin: 20px auto 30px auto;
+    padding: 12px 25px;
+    background-color: #28a745;
+    /* Green button */
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 1.1em;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.bottom-home-btn:hover {
+    background-color: #218838;
+    transform: translateY(-2px);
+}
+
+/* Scroll-to-top button styles */
+#scrollToTopBtn {
+    display: block;
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    background-color: rgba(0, 128, 0, 0.6);
+    /* Translucent Green */
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    font-size: 1.5em;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    transition: background-color 0.3s ease;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+#scrollToTopBtn:hover {
+    background-color: rgba(0, 128, 0, 0.8);
+}
+
+/* Footer Container */
+footer {
+    background: linear-gradient(to right, #e0e5ec, #b2cbe8);
+    /* Light mode gradient */
+    color: #1e293b;
+    /* Dark text for light mode */
+    padding: 60px 0;
+    width: 100%;
+    border-top: 2px solid #3b82f6;
+    /* Blue border for light mode */
+    transition: all 0.3s ease;
+}
+
+/* Dark mode - Purple theme */
+body.dark-mode footer {
+    background: #1e1b4b;
+    /* Deep purple solid */
+    color: #ecf0f1;
+    /* Light text */
+    border-top: 2px solid #8b5cf6;
+    /* Purple border */
+}
+
+.footer-content {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+}
+
+.footer-col {
+    flex: 1;
+    text-align: left;
+}
+
+.footer-col.brand-info {
+    flex: 1.5;
+    color: #334155;
+    /* Dark gray for light mode */
+}
+
+body.dark-mode .footer-col.brand-info {
+    color: #e0e0e0;
+    /* Light for dark mode */
+}
+
+/* Typography & Links */
+.footer-col h3 {
+    font-size: 1.2rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 25px;
+    color: #2563eb;
+    /* Blue accent for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-col h3 {
+    color: #a78bfa;
+    /* Light purple for dark mode */
+}
+
+.footer-col p,
+.footer-col ul li {
+    font-size: 0.95rem;
+    color: #475569;
+    /* Slate for light mode */
+    margin-bottom: 12px;
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-col p,
+body.dark-mode .footer-col ul li {
+    color: #bdc3c7;
+    /* Light gray for dark mode */
+}
+
+.footer-col ul {
+    list-style: none;
+    padding: 0;
+}
+
+.footer-col ul li a {
+    text-decoration: none;
+    color: #475569;
+    /* Slate for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-col ul li a {
+    color: #bdc3c7;
+    /* Light gray for dark mode */
+}
+
+.footer-col ul li a:hover {
+    color: #2563eb;
+    /* Blue hover for light mode */
+}
+
+body.dark-mode .footer-col ul li a:hover {
+    color: #a78bfa;
+    /* Purple hover for dark mode */
+}
+
+/* Bottom Bar */
+.footer-bottom {
+    width: 100%;
+    margin-top: 50px;
+    padding: 20px 0;
+    background-color: rgba(59, 130, 246, 0.1);
+    /* Light blue tint for light mode */
+    border-top: 1px solid rgba(59, 130, 246, 0.2);
+    font-size: 0.85rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+body.dark-mode .footer-bottom {
+    background-color: rgba(139, 92, 246, 0.15);
+    /* Purple tint for dark mode */
+    border-top: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+/* Social Icons */
+.footer-social-icons a i {
+    color: #2563eb;
+    /* Blue for light mode */
+    transition: color 0.3s ease;
+}
+
+body.dark-mode .footer-social-icons a i {
+    color: #a78bfa;
+    /* Purple for dark mode */
+}
+
+.footer-social-icons a i:hover {
+    color: #1d4ed8;
+    /* Darker blue hover */
+}
+
+body.dark-mode .footer-social-icons a i:hover {
+    color: #c4b5fd;
+    /* Lighter purple hover */
+}
