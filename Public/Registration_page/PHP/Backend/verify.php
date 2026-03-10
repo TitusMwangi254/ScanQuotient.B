@@ -173,23 +173,26 @@ function sendWelcomeEmail($user)
             </div>
         ";
 
-        $mail->AltBody = "
+   $mail->AltBody = "
 Welcome to ScanQuotient!
 
 Hello " . $user['first_name'] . ",
 
 Your email has been successfully verified and your account is now active.
 
-YOUR FIRST-TIME LOGIN CREDENTIALS:
-Username: " . $username . "
-Password: " . $password . "
+You can now log in to your ScanQuotient account using the credentials that were sent to you earlier.
 
-IMPORTANT: You will be required to change your password upon first login.
+For security reasons, you will be required to change your password during your first loginete your account setup.
 
-Login here: https://yourdomain.com/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php
+Login here:
+https://yourdomain.com/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php
 
-Need help? Contact: scanquotient@gmail.com
-        ";
+If you did not receive your login credentials or need assistance, please contact our support team.
+
+Support Email: scanquotient@gmail.com
+
+Thank you for choosing ScanQuotient.
+";
 
         $mail->send();
 

@@ -22,7 +22,7 @@ unset($_SESSION['loginError']); // Clear the error flag after displaying it
 
 <body>
     <div class="top-right-nav">
-        <a href="../../../Registration_page/PHP/Frontend/Registration_page.php" title="Help">
+        <a href="../../../Help_center/PHP/Frontend/Help_center.php" title="Help">
             <i class="fas fa-question-circle"></i>
         </a>
         <a href="../../../Homepage/PHP/Frontend/Homepage.php" title="Back to Home">
@@ -90,7 +90,7 @@ unset($_SESSION['loginError']); // Clear the error flag after displaying it
         </form>
 
         <div class="links">
-            <a href="/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/forgot_password.php">Forgot
+            <a href="../../PHP/Frontend/Forgot_password.php">Forgot
                 Password?</a> |
             <a href="../../../Registration_page/PHP/Frontend/Registration_page.php">
                 Don’t have an account?

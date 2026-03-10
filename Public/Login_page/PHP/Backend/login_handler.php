@@ -134,7 +134,7 @@ try {
         $_SESSION['auth_stage'] = 'pending_completion';
 
         logSecurityEvent($pdo, $username, 'INCOMPLETE_ACCOUNT', 'Redirecting to account completion');
-        header('Location: /ScanQuotient/ScanQuotient/Publicpages/Registration_completion_page/PHP/Frontend/registration_completion_site.php');
+        header('Location: ../../../Registration_completion_page/PHP/Frontend/Registration_completion_site.php');
         exit;
     }
 
@@ -147,14 +147,14 @@ try {
         if ($user['password_reset_expires'] !== null && strtotime($user['password_reset_expires']) < time()) {
             $_SESSION['force_reset_reason'] = 'expired';
             logSecurityEvent($pdo, $username, 'PASSWORD_RESET_EXPIRED', 'Forced password reset - expired token');
-            header('Location: /ScanQuotient/ScanQuotient/Publicpages/Password_reset/PHP/Frontend/password_reset_page4.php?reason=expired');
+            header('Location: ../../../Reset_password/PHP/Frontend/Password_reset_page.php?reason=expired');
             exit;
         }
 
         // Active reset required
         $_SESSION['force_reset_reason'] = 'required';
         logSecurityEvent($pdo, $username, 'PASSWORD_RESET_REQUIRED', 'Mandatory password reset pending');
-        header('Location: /ScanQuotient/ScanQuotient/Publicpages/Password_reset/PHP/Frontend/password_reset_page4.php?reason=required');
+        header('Location: ../../../Reset_password/PHP/Frontend/Password_reset_page.php?reason=required');
         exit;
     }
 
@@ -163,7 +163,7 @@ try {
         $_SESSION['auth_mode'] = 'password_reset';
         $_SESSION['force_reset_reason'] = 'password_expired';
         logSecurityEvent($pdo, $username, 'PASSWORD_EXPIRED', 'Password expired - forced reset');
-        header('Location: /ScanQuotient/ScanQuotient/Publicpages/Password_reset/PHP/Frontend/password_reset_page4.php?reason=password_expired');
+        header('Location: ../../../Reset_password/PHP/Frontend/Password_reset_page.php?reason=password_expired');
         exit;
     }
 
@@ -195,7 +195,7 @@ try {
 
         logSecurityEvent($pdo, $username, '2FA_INITIATED', 'Two-factor authentication code sent to: ' . $user['email']);
 
-        header('Location: /ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/Login_OTP_verification.php');
+        header('Location: ../../../Login_page/PHP/Frontend/Login_OTP_verification.php');
         exit;
     }
 
