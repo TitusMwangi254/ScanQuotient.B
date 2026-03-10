@@ -60,15 +60,13 @@
                 <i class="fas fa-moon" id="themeIcon"></i>
             </button>
 
-           <a href="../../../Help_center/PHP/Frontend/Help_center.php" 
-             class="help-btn" 
-             aria-label="Get Help" 
-             title="Help & Support">
-             <i class="fas fa-question-circle"></i>
-          </a><br>
+            <a href="../../../Help_center/PHP/Frontend/Help_center.php" class="help-btn" aria-label="Get Help"
+                title="Help & Support">
+                <i class="fas fa-question-circle"></i>
+            </a><br>
 
             <button class="sign-in-btn"
-                onclick="window.location.href='/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php'">
+                onclick="window.location.href='../../../Login_page/PHP/Frontend/Login_page_site.php'">
                 <i class="fas fa-sign-in-alt"></i> Sign In
             </button>
         </div>
@@ -414,8 +412,8 @@
                         <li><i class="fas fa-check"></i> Email support</li>
                         <li class="disabled"><i class="fas fa-times"></i> AI-assisted analysis</li>
                     </ul>
-                    <a href="/ScanQuotient/ScanQuotient/Publicpages/Registration_page/PHP/Frontend/Registration_page.php"
-                        class="btn btn-secondary" style="width: 100%; justify-content: center;">
+                    <a href="../../../Registration_page/PHP/Frontend/Registration_page.php" class="btn btn-secondary"
+                        style="width: 100%; justify-content: center;">
                         Get Started
                     </a>
                 </div>
@@ -432,7 +430,7 @@
                         <li><i class="fas fa-check"></i> Export to PDF/CSV</li>
                         <li class="disabled"><i class="fas fa-times"></i> AI remediation</li>
                     </ul>
-                    <a href="/ScanQuotient/ScanQuotient/Publicpages/Payment/Payment_page.php" class="btn btn-primary"
+                    <a href="../../../Login_page/PHP/Frontend/Login_page_site.php" class="btn btn-primary"
                         style="width: 100%; justify-content: center;">
                         Upgrade Now
                     </a>
@@ -449,7 +447,7 @@
                         <li><i class="fas fa-check"></i> Compliance reporting</li>
                         <li><i class="fas fa-check"></i> 24/7 priority support</li>
                     </ul>
-                    <a href="/ScanQuotient/ScanQuotient/Publicpages/Payment/Payment_page.php" class="btn btn-primary"
+                    <a href="../../../Login_page/PHP/Frontend/Login_page_site.php" class="btn btn-primary"
                         style="width: 100%; justify-content: center;">
                         Upgrade Now
                     </a>

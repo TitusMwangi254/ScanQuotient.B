@@ -1,0 +1,221 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+/* Base styles for both themes */
+:root {
+    --bg-color: #f4f7f6;
+    --container-bg-color: #ffffff;
+    --text-color: #333;
+    --primary-color: #007bff;
+    --primary-hover-color: #0056b3;
+    --icon-color: #666;
+    --icon-hover-color: #333;
+    --input-border-color: #e0e0e0;
+    --input-focus-shadow: rgba(0, 123, 255, 0.2);
+    --icon-color: blueviolet;
+    --icon-hover-color: #8A2BE2;
+
+}
+
+/* Dark theme styles */
+body.dark-theme {
+    --bg-color: #1a1a1a;
+    --container-bg-color: #2c2c2c;
+    --text-color: #e0e0e0;
+    --primary-color: #4a90e2;
+    --primary-hover-color: #357bd2;
+    --icon-color: #a0a0a0;
+    --icon-hover-color: #ffffff;
+    --input-border-color: #555;
+    --input-focus-shadow: rgba(74, 144, 226, 0.2);
+}
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background-color: var(--bg-color);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+    color: var(--text-color);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* New styles for the top-bar and logo */
+.top-bar {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 1000;
+}
+
+.logo {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.logo h1 {
+    font-size: 24px;
+    font-weight: 700;
+    color: #8A2BE2;
+    /* Purple color */
+    margin: 0;
+}
+
+.logo p {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-color);
+    margin: 0;
+    margin-top: -5px;
+}
+
+.header-icons {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.header-icons .icon-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 20px;
+    color: var(--icon-color, blueviolet);
+    /* use CSS variable */
+    transition: color 0.3s ease, transform 0.2s ease;
+}
+
+.header-icons .icon-btn:hover {
+    color: var(--icon-hover-color, #8A2BE2);
+    /* purple on hover */
+    transform: scale(1.1);
+}
+
+
+.otp-container {
+    background-color: var(--container-bg-color);
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    text-align: center;
+    width: 100%;
+    max-width: 450px;
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.dark-theme .otp-container {
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+h2 {
+    color: var(--primary-color);
+    margin-bottom: 10px;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+p {
+    color: var(--text-color);
+    margin-bottom: 5px;
+    /* Adjusted margin to fit the timer */
+    font-size: 14px;
+}
+
+#timer {
+    font-size: 14px;
+    color: var(--primary-color);
+    font-weight: 600;
+    margin-bottom: 25px;
+}
+
+strong {
+    color: var(--text-color);
+}
+
+.otp-inputs {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 25px 0;
+}
+
+.otp-inputs input {
+    width: 45px;
+    height: 55px;
+    font-size: 24px;
+    text-align: center;
+    border: 2px solid var(--input-border-color);
+    border-radius: 8px;
+    caret-color: var(--primary-color);
+    background-color: transparent;
+    color: var(--text-color);
+    transition: border-color 0.3s, box-shadow 0.3s;
+    outline: none;
+    font-weight: 500;
+}
+
+.otp-inputs input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px var(--input-focus-shadow);
+}
+
+.otp-inputs input::-webkit-inner-spin-button,
+.otp-inputs input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.otp-inputs input[type=number] {
+    -moz-appearance: textfield;
+}
+
+button {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    background-color: var(--primary-color);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    outline: none;
+}
+
+button:hover {
+    background-color: var(--primary-hover-color);
+}
+
+button:disabled {
+    background-color: #b0c4de;
+    cursor: not-allowed;
+}
+
+.resend-link {
+    margin-top: 20px;
+    font-size: 14px;
+    color: var(--text-color);
+}
+
+.resend-link button {
+    background: none;
+    color: var(--primary-color);
+    border: none;
+    padding: 0;
+    font-size: 14px;
+    font-weight: 500;
+    text-decoration: underline;
+    cursor: pointer;
+    width: auto;
+}
+
+.resend-link button:hover {
+    color: var(--primary-hover-color);
+}

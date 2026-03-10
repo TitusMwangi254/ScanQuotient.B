@@ -165,9 +165,7 @@ body.light-theme .tagline {
 .header-buttons {
     display: flex;
     gap: 1rem;
-    /* Space between buttons */
     align-items: center;
-    /* Align items vertically */
 }
 
 /* Header Button - Icon Only with Tooltip */
@@ -193,13 +191,17 @@ body.light-theme .tagline {
     transform: scale(1.1);
 }
 
-/* Dark mode - Purple */
-body.dark-mode .header-button {
-    color: #8b5cf6;
+/* Dark mode - Purple (matching your other page) */
+body.dark .header-button,
+body:not(.light-theme) .header-button {
+    color: #9b59b6;
+    /* Purple matching your other page */
 }
 
-body.dark-mode .header-button:hover {
-    background: rgba(139, 92, 246, 0.15);
+body.dark .header-button:hover,
+body:not(.light-theme) .header-button:hover {
+    background: rgba(155, 89, 182, 0.2);
+    /* Purple tint */
 }
 
 /* Tooltip */
@@ -249,13 +251,15 @@ body.dark-mode .header-button:hover {
 }
 
 /* Dark mode tooltip */
-body.dark-mode .header-button::before {
-    background: #374151;
-    border-color: #4b5563;
+body.dark .header-button::before,
+body:not(.light-theme) .header-button::before {
+    background: #1f1f1f;
+    border-color: #444;
 }
 
-body.dark-mode .header-button::after {
-    border-color: transparent transparent transparent #374151;
+body.dark .header-button::after,
+body:not(.light-theme) .header-button::after {
+    border-color: transparent transparent transparent #1f1f1f;
 }
 
 /* Main Content Layout */
@@ -897,13 +901,17 @@ body.light-theme .footer-tagline {
     transform: scale(1.1);
 }
 
-/* Dark mode - Purple */
-body.dark-mode .theme-icon-btn {
-    color: #8b5cf6;
+/* Dark mode - Purple (matching your other pages) */
+body.dark .theme-icon-btn,
+body:not(.light-theme) .theme-icon-btn {
+    color: #9b59b6;
+    /* Purple */
 }
 
-body.dark-mode .theme-icon-btn:hover {
-    background: rgba(139, 92, 246, 0.15);
+body.dark .theme-icon-btn:hover,
+body:not(.light-theme) .theme-icon-btn:hover {
+    background: rgba(155, 89, 182, 0.2);
+    /* Purple tint */
 }
 
 /* Tooltip */
@@ -952,14 +960,16 @@ body.dark-mode .theme-icon-btn:hover {
     transform: translateY(-50%) translateX(0);
 }
 
-/* Dark mode tooltip */
-body.dark-mode .theme-icon-btn::before {
-    background: #374151;
-    border-color: #4b5563;
+/* Dark mode tooltip (matching your other pages) */
+body.dark .theme-icon-btn::before,
+body:not(.light-theme) .theme-icon-btn::before {
+    background: #1f1f1f;
+    border-color: #444;
 }
 
-body.dark-mode .theme-icon-btn::after {
-    border-color: transparent transparent transparent #374151;
+body.dark .theme-icon-btn::after,
+body:not(.light-theme) .theme-icon-btn::after {
+    border-color: transparent transparent transparent #1f1f1f;
 }
 
 /* NEW: Styling for the Track Ticket ID container */

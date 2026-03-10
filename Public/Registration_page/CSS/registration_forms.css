@@ -1,0 +1,1196 @@
+/* Reset & Base */
+:root {
+    /* Dark Theme Colors (default) */
+    --body-bg: #121212;
+    --text-color: #e0e0e0;
+    --header-bg-start: #000000;
+    --header-bg-end: #D6BCFA;
+    /* Dark Mode: Purple accent */
+    --header-border: #fff;
+    --box-shadow-color: rgba(255, 255, 255, 0.1);
+    --left-section-bg: #1f1f1f;
+    --left-message-color: #bbb;
+    --right-section-border-left: #fff;
+    --btn-bg: #007bff;
+    --btn-hover-bg: #0056b3;
+    --btn-active-bg: #0056b3;
+    --btn-back-bg: #28a745;
+    --btn-back-hover-bg: #218838;
+    --alerts-section-bg: #1f1f1f;
+    --alerts-section-border: #444;
+    --alerts-text-color: #bbb;
+    --instructions-card-bg: #1f1f1f;
+    --instructions-strong-color: #e0e0e0;
+    --instructions-link-color: #007bff;
+    --form-input-bg: #2c2c2c;
+    --form-input-border: #444;
+    --form-input-color: #e0e0e0;
+    --file-input-bg: #1f1f1f;
+    --radio-checkmark-border: #e0e0e0;
+    --radio-checked-bg: #28a745;
+    --radio-checked-border: #28a745;
+    --icon-btn-bg: #28a745;
+    --icon-btn-hover-bg: #218838;
+    --footer-border-top: #444;
+    --back-to-top-bg: rgba(40, 167, 69, 0.8);
+    --back-to-top-hover-bg: rgba(33, 136, 56, 0.8);
+    --error-border: #e74c3c;
+    --error-background: #fdecea;
+    --error-text: #c0392b;
+    --already-account-link: #007bff;
+    --brand-color: #D6BCFA;
+    /* Light purple for brand in dark mode (and now consistently in light mode for brand text) */
+    --tagline-color: #fff;
+    /* Tagline in dark mode (white) */
+    --footer-general-text-color: #fff;
+    /* Default footer text color (white for dark theme) */
+    --header-button-bg: #000000;
+    /* Header button background for dark mode (black) */
+    --header-button-hover-bg: #007bff;
+    /* Header button hover background for dark mode (blue) */
+
+
+    /* Theme Toggle Specific Colors */
+    --toggle-background: #000000;
+    /* Changed from #ccc to black for toggle background in dark mode */
+    --toggle-slider-background: #2196F3;
+    /* Slider track color when checked in dark mode (active, indicating light switch) */
+    --toggle-icon-color-dark: #000;
+    /* Sun color (black) */
+    --toggle-icon-color-light: #555;
+    /* Moon color (dark grey) */
+}
+
+/* Light Theme Variables */
+body.light-theme {
+    --body-bg: #f4f7f6;
+    --text-color: #333;
+    --header-bg-start: #e0e5ec;
+    /* Light Mode: Very light grey for gradient start */
+    --header-bg-end: #b2cbe8;
+    /* Light Mode: Light blue-grey for gradient end */
+    --header-border: #ccc;
+    --box-shadow-color: rgba(0, 0, 0, 0.1);
+    --left-section-bg: #e9ecef;
+    --left-message-color: #555;
+    --right-section-border-left: #ccc;
+    --btn-bg: #007bff;
+    --btn-hover-bg: #0056b3;
+    --btn-active-bg: #0056b3;
+    --btn-back-bg: #28a745;
+    --btn-back-hover-bg: #218838;
+    --alerts-section-bg: #fff;
+    --alerts-section-border: #ddd;
+    --alerts-text-color: #666;
+    --instructions-card-bg: #fff;
+    --instructions-strong-color: #333;
+    --instructions-link-color: #007bff;
+    --form-input-bg: #f8f9fa;
+    --form-input-border: #ced4da;
+    --form-input-color: #495057;
+    --file-input-bg: #e9ecef;
+    --radio-checkmark-border: #666;
+    --radio-checked-bg: #28a745;
+    --radio-checked-border: #28a745;
+    --icon-btn-bg: #28a745;
+    --icon-btn-hover-bg: #218838;
+    --footer-border-top: #ddd;
+    --back-to-top-bg: rgba(40, 167, 69, 0.8);
+    --back-to-top-hover-bg: rgba(33, 136, 56, 0.8);
+    --error-border: #e74c3c;
+    --error-background: #fdecea;
+    --error-text: #c0392b;
+    --already-account-link: #007bff;
+
+    /* This --brand-color now *only* impacts elements specifically using this variable
+       where it's defined *after* the .brand text (e.g., toggle slider if not overridden) */
+    --brand-color: #1a73e8;
+    /* Light Mode: Vibrant blue, primarily for button background */
+
+    --tagline-color: #333;
+    /* Tagline in light mode (dark grey for contrast on light header) */
+    --footer-general-text-color: #333;
+    /* Footer text color for light theme (dark grey for contrast on light footer) */
+    --header-button-bg: #1a73e8;
+    /* Header button background for light mode (vibrant blue) */
+    --header-button-hover-bg: #1760cc;
+    /* Header button hover background for light mode (darker blue) */
+
+
+    /* Theme Toggle Specific Colors for Light Mode */
+    --toggle-background: #a5d8ff;
+    /* Background for toggle in light mode (off state) */
+    --toggle-slider-background: #1a73e8;
+    /* Slider track color when checked in light mode (consistent with vibrant blue) */
+}
+
+/* === NEW RULE: Force 'Elevate Ecom AI' brand text to be dark mode purple in light theme === */
+body.light-theme .brand {
+    color: #D6BCFA;
+    /* Ensure the brand text remains purple in light mode */
+}
+
+/* === NEW RULE: Force footer brand link to be dark mode purple in light theme === */
+body.light-theme .footer-brand a {
+    color: #D6BCFA;
+    /* Ensure the footer brand link remains purple in light mode */
+}
+
+/* =================================================================================== */
+
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--body-bg);
+    color: var(--text-color);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+a {
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: none;
+}
+
+/* Header */
+.header {
+    width: 100%;
+    background: linear-gradient(to right, var(--header-bg-start), var(--header-bg-end));
+    color: #fff;
+    /* This color applies to static header text/icons *that don't use variables* */
+    padding: 15px 20px;
+    display: flex;
+    /* Ensure this is here for alignment */
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--header-border);
+    box-shadow: 0 2px 10px var(--box-shadow-color);
+    z-index: 1000;
+    transition: background 0.3s ease, border-bottom 0.3s ease, box-shadow 0.3s ease;
+    /* Smooth header transition */
+}
+
+.brand-container {
+    display: flex;
+    flex-direction: column;
+}
+
+.brand {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: var(--brand-color);
+    /* Uses this variable, which is now explicitly set for both themes */
+    transition: color 0.3s ease;
+    /* Smooth transition for brand color */
+}
+
+.tagline {
+    font-size: 0.9rem;
+    color: var(--tagline-color);
+    /* Use variable for tagline color */
+    transition: color 0.3s ease;
+    /* Smooth transition for tagline color */
+}
+
+/* ========== HEADER BUTTONS & THEME TOGGLE ========== */
+
+.header-buttons {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+/* Floating icon links - Dark Mode (Default) */
+.header-buttons .icon-link {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    color: #9b59b6;
+    /* Purple - dark mode default */
+    text-decoration: none;
+    font-size: 1.3rem;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+}
+
+.header-buttons .icon-link:hover {
+    background-color: rgba(155, 89, 182, 0.2);
+    /* Purple tint */
+    transform: translateY(-2px);
+    color: #9b59b6;
+}
+
+/* Tooltip */
+.header-buttons .icon-link::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding: 5px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, top 0.2s ease;
+    z-index: 1001;
+}
+
+.header-buttons .icon-link:hover::after {
+    opacity: 1;
+    top: 100%;
+}
+
+.header-buttons .icon-link i {
+    font-size: 1.3rem;
+    transition: transform 0.3s ease;
+}
+
+.header-buttons .icon-link:hover i {
+    transform: scale(1.1);
+}
+
+
+/* ========== THEME TOGGLE - ICON ONLY ========== */
+
+.theme-switch {
+    position: relative;
+    display: inline-block;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    transition: background-color 0.2s ease;
+}
+
+.theme-switch:hover {
+    background-color: rgba(155, 89, 182, 0.2);
+    /* Purple hover - dark mode */
+}
+
+/* Tooltip */
+.theme-switch::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding: 5px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, top 0.2s ease;
+    z-index: 1001;
+}
+
+.theme-switch:hover::after {
+    opacity: 1;
+    top: 100%;
+}
+
+/* Hide default checkbox */
+.theme-switch input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+/* Icon container */
+.icon-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    position: relative;
+}
+
+/* Icon styling - Dark Mode (Default) */
+.icon-toggle .sun-icon,
+.icon-toggle .moon-icon {
+    position: absolute;
+    font-size: 1.3em;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Sun icon - visible in dark mode (unchecked), purple */
+.icon-toggle .sun-icon {
+    color: #9b59b6;
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+}
+
+/* Moon icon - hidden in dark mode (unchecked), purple */
+.icon-toggle .moon-icon {
+    color: #9b59b6;
+    opacity: 0;
+    transform: scale(0.5) rotate(-90deg);
+}
+
+/* When checked (light mode): hide sun, show moon */
+input:checked+.icon-toggle .sun-icon {
+    opacity: 0;
+    transform: scale(0.5) rotate(90deg);
+}
+
+input:checked+.icon-toggle .moon-icon {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+}
+
+
+/* ========== LIGHT MODE OVERRIDES ========== */
+
+body.light-theme .header-buttons .icon-link {
+    color: #74b9ff;
+    /* Blue in light mode */
+}
+
+body.light-theme .header-buttons .icon-link:hover {
+    background-color: rgba(116, 185, 255, 0.15);
+    /* Blue tint */
+    color: #74b9ff;
+}
+
+body.light-theme .theme-switch:hover {
+    background-color: rgba(128, 128, 128, 0.2);
+    /* Neutral hover */
+}
+
+/* Theme toggle icons in light mode */
+body.light-theme .icon-toggle .sun-icon {
+    color: #f1c40f;
+    /* Yellow sun in light mode */
+}
+
+body.light-theme .icon-toggle .moon-icon {
+    color: #74b9ff;
+    /* Blue moon in light mode */
+}
+
+/* Page Title */
+.page-title {
+    text-align: center;
+    font-size: 1.8rem;
+    margin: 20px 0;
+    flex-shrink: 0;
+    color: var(--text-color);
+}
+
+/* Layout */
+.container {
+    display: flex;
+    flex: 1;
+    gap: 20px;
+    padding: 20px;
+}
+
+.left-section {
+    width: 33%;
+    min-width: 250px;
+    background-color: var(--left-section-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    gap: 20px;
+}
+
+.left-message {
+    font-size: 1rem;
+    text-align: center;
+    color: var(--left-message-color);
+}
+
+.btn {
+    background-color: var(--btn-bg);
+    border: none;
+    border-radius: 5px;
+    padding: 15px;
+    color: #fff;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: background-color 0.3s ease, transform 0.3s ease;
+    width: 80%;
+}
+
+.btn:hover {
+    background-color: var(--btn-hover-bg);
+    transform: scale(1.05);
+}
+
+.btn.active {
+    background-color: var(--btn-active-bg);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+}
+
+.btn.btn-back {
+    background-color: var(--btn-back-bg);
+    border-color: var(--btn-back-bg);
+    color: #fff;
+}
+
+.btn.btn-back:hover {
+    background-color: var(--btn-back-hover-bg);
+    border-color: var(--btn-back-hover-bg);
+}
+
+.right-section {
+    width: 67%;
+    padding: 40px;
+    border-left: 2px solid var(--right-section-border-left);
+}
+
+/* Notifications */
+#alertsSection {
+    margin-bottom: 20px;
+    padding: 20px;
+    background-color: var(--alerts-section-bg);
+    border: 1px solid var(--alerts-section-border);
+    border-radius: 5px;
+}
+
+#alertsSection h2 {
+    margin-bottom: 10px;
+    color: var(--text-color);
+}
+
+#alertsSection p {
+    color: var(--alerts-text-color);
+    font-size: 1rem;
+}
+
+#alertsSection .fa-bell-slash {
+    margin-right: 8px;
+    color: var(--alerts-text-color);
+}
+
+/* Instruction Card */
+.instructions.card {
+    margin-bottom: 30px;
+    padding: 20px;
+    background-color: var(--instructions-card-bg);
+    border-radius: 5px;
+}
+
+.instructions.card strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--instructions-strong-color);
+}
+
+.instructions.card a {
+    color: var(--instructions-link-color);
+}
+
+/* Forms */
+.form-container {
+    display: none;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.form-container h2 {
+    text-align: center;
+    margin-bottom: 15px;
+    color: var(--text-color);
+}
+
+.form-container label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: var(--text-color);
+}
+
+.form-container input,
+.form-container textarea,
+.form-container select {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border: 1px solid var(--form-input-border);
+    border-radius: 5px;
+    background-color: var(--form-input-bg);
+    color: var(--form-input-color);
+}
+
+.form-container input[type="file"] {
+    background-color: var(--file-input-bg);
+    padding: 8px;
+}
+
+/* Custom radio styling */
+.radio-group {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.radio-wrapper {
+    position: relative;
+    padding-left: 28px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: normal;
+    display: inline-block;
+}
+
+.radio-wrapper input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+    height: 0;
+    width: 0;
+}
+
+.radio-wrapper .checkmark {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 16px;
+    width: 16px;
+    background-color: transparent;
+    border: 2px solid var(--radio-checkmark-border);
+    border-radius: 50%;
+}
+
+.radio-wrapper input:checked~.checkmark {
+    background-color: var(--radio-checked-bg);
+    border-color: var(--radio-checked-border);
+}
+
+.radio-wrapper .checkmark:after {
+    content: "";
+    position: absolute;
+    display: none;
+}
+
+.radio-wrapper input:checked~.checkmark:after {
+    display: block;
+}
+
+.radio-wrapper .checkmark:after {
+    top: 4px;
+    left: 4px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: white;
+}
+
+/* Embedded plus button inside inputs */
+/* 1) Make wrapper stretch both children to the same height */
+.input-with-icon {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+}
+
+/* 2) Force both input and button to a fixed height (or you can use your input’s padding + line-height) */
+.input-with-icon input,
+.input-with-icon .icon-btn {
+    height: 40px;
+    border-radius: 5px;
+}
+
+/* 3) Style the button green with hover effect */
+.input-with-icon .icon-btn {
+    background-color: var(--icon-btn-bg);
+    color: #fff;
+    border: none;
+    padding: 0 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s ease;
+}
+
+.input-with-icon .icon-btn:hover {
+    background-color: var(--icon-btn-hover-bg);
+}
+
+/* Registered question styling */
+.registered-options {
+    display: flex;
+    gap: 15px;
+    margin-top: 5px;
+}
+
+/* Emergency-contact card */
+.emergency-contact-card {
+    margin-bottom: 20px;
+    padding: 20px;
+    background-color: var(--left-section-bg);
+    border-radius: 5px;
+}
+
+/* Database Integration toggles */
+.db-field {
+    display: none;
+}
+
+.db-field.visible {
+    display: block;
+}
+
+.form-buttons {
+    text-align: center;
+}
+
+.already-account a {
+    color: var(--already-account-link);
+}
+
+/* Footer */
+.footer-separator {
+    border: 0;
+    height: 1px;
+    background-color: var(--header-border);
+    margin: 20px 0;
+}
+
+/* Footer */
+footer {
+    background: linear-gradient(to right, var(--header-bg-start), var(--header-bg-end));
+    color: var(--footer-general-text-color);
+    /* Use the general footer text color variable */
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 2px solid var(--footer-border-top);
+    transition: background 0.3s ease, border-top 0.3s ease, color 0.3s ease;
+    /* Add color transition */
+}
+
+.footer-brand {
+    flex: 1;
+    text-align: left;
+}
+
+.footer-brand a {
+    color: var(--brand-color);
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.footer-center {
+    flex: 1;
+    text-align: center;
+}
+
+.footer-contact {
+    flex: 1;
+    text-align: right;
+}
+
+.footer-contact h3 {
+    font-size: 1rem;
+    margin-bottom: 5px;
+}
+
+.footer-contact a {
+    color: #1a73e8;
+    /* Vibrant blue matching your brand */
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.footer-contact a:hover {
+    color: #1760cc;
+    /* Darker blue on hover */
+    text-decoration: underline;
+}
+
+
+/* Back to Top */
+.back-to-top {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background-color: var(--back-to-top-bg);
+    color: #fff;
+    width: 50px;
+    height: 50px;
+    border: none;
+    border-radius: 50%;
+    font-size: 24px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    transition: transform 0.3s ease, background-color 0.3s ease;
+    z-index: 1000;
+}
+
+.back-to-top:hover {
+    background-color: var(--back-to-top-hover-bg);
+    transform: scale(1.1);
+}
+
+/* Highlight invalid inputs with a red border */
+.input-error {
+    border: 2px solid var(--error-border) !important;
+}
+
+/* Highlight their labels */
+.label-error {
+    color: var(--error-border) !important;
+}
+
+.error-summary {
+    border: 1px solid var(--error-border);
+    background: var(--error-background);
+    color: var(--error-text);
+    padding: 1em;
+    margin-bottom: 1em;
+    border-radius: 4px;
+}
+
+.error-summary ul {
+    margin: 0;
+    padding-left: 1.2em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .header-buttons {
+        margin-top: 10px;
+        width: 100%;
+        justify-content: space-around;
+        /* This can be different for mobile */
+        gap: 5px;
+        /* Adjust gap for mobile if needed */
+    }
+
+    /* Adjusted for the new toggle switch, which doesn't have a data-tooltip */
+    .header-buttons button::after {
+        top: 105%;
+    }
+
+    /* NEW: Adjust responsive tooltip for theme switch */
+    .theme-switch::after {
+        top: 105%;
+        /* Adjust tooltip position for smaller screens */
+    }
+
+    .container {
+        flex-direction: column;
+        padding: 10px;
+    }
+
+    .left-section,
+    .right-section {
+        width: 100%;
+        border-left: none;
+        padding: 15px;
+    }
+
+    .left-section {
+        order: 2;
+    }
+
+    .right-section {
+        order: 1;
+    }
+
+    .footer {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .footer-brand,
+    .footer-center,
+    .footer-contact {
+        text-align: center;
+        margin-bottom: 10px;
+    }
+}
+
+/* Validation Styles */
+.error-message {
+    color: #e74c3c;
+    font-size: 0.85rem;
+    margin-top: 5px;
+    display: none;
+    align-items: center;
+    gap: 5px;
+}
+
+.error-message.show {
+    display: flex;
+}
+
+.input-error {
+    border-color: #e74c3c !important;
+    background-color: rgba(231, 76, 60, 0.05);
+}
+
+.input-success {
+    border-color: #27ae60 !important;
+    background-color: rgba(39, 174, 96, 0.05);
+}
+
+.validation-icon {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1rem;
+}
+
+.validation-icon.success {
+    color: #27ae60;
+}
+
+.validation-icon.error {
+    color: #e74c3c;
+}
+
+.input-wrapper {
+    position: relative;
+    margin-bottom: 15px;
+}
+
+.radio-group.error {
+    border: 2px solid #e74c3c;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+/* Progress indicator */
+.form-progress {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 20px;
+    gap: 10px;
+}
+
+.progress-step {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #bdc3c7;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: white;
+    transition: all 0.3s ease;
+}
+
+.progress-step.active {
+    background: #3498db;
+}
+
+.progress-step.completed {
+    background: #27ae60;
+}
+
+.progress-line {
+    width: 50px;
+    height: 3px;
+    background: #bdc3c7;
+    align-self: center;
+    transition: all 0.3s ease;
+}
+
+.progress-line.completed {
+    background: #27ae60;
+}
+
+/* Shake animation for errors */
+@keyframes shake {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    10%,
+    30%,
+    50%,
+    70%,
+    90% {
+        transform: translateX(-5px);
+    }
+
+    20%,
+    40%,
+    60%,
+    80% {
+        transform: translateX(5px);
+    }
+}
+
+.shake {
+    animation: shake 0.5s ease-in-out;
+}
+
+/* Disabled button state */
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Toast notification */
+.toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #e74c3c;
+    color: white;
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    display: none;
+    align-items: center;
+    gap: 10px;
+    z-index: 1000;
+    animation: slideIn 0.3s ease;
+}
+
+.toast.show {
+    display: flex;
+}
+
+.toast.success {
+    background: #27ae60;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* Required field indicator */
+.required::after {
+    content: " *";
+    color: #e74c3c;
+}
+
+/* Loading state */
+.btn-loading {
+    position: relative;
+    color: transparent !important;
+}
+
+.btn-loading::after {
+    content: "";
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    top: 50%;
+    left: 50%;
+    margin-left: -10px;
+    margin-top: -10px;
+    border: 2px solid #ffffff;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spinner 0.8s linear infinite;
+}
+
+@keyframes spinner {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Initial state - hide forms, show notifications */
+.form-container {
+    display: none;
+}
+
+/* Welcome content visible by default */
+#welcomeContent {
+    display: block;
+}
+
+/* Hidden state */
+.hidden {
+    display: none !important;
+}
+
+/* Profile Photo Preview Styles */
+.photo-preview-container {
+    margin-top: 10px;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 12px;
+    border: 2px dashed #dee2e6;
+    transition: all 0.3s ease;
+}
+
+.photo-preview-container.show {
+    display: flex;
+}
+
+.photo-preview-container.has-image {
+    border-style: solid;
+    border-color: #27ae60;
+    background: rgba(39, 174, 96, 0.05);
+}
+
+.photo-preview-wrapper {
+    position: relative;
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    overflow: hidden;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    background: #fff;
+}
+
+.photo-preview-wrapper img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.photo-preview-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    font-size: 3rem;
+}
+
+.photo-remove-btn {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #e74c3c;
+    color: white;
+    border: 3px solid white;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.photo-remove-btn:hover {
+    background: #c0392b;
+    transform: scale(1.1);
+}
+
+.photo-info {
+    text-align: center;
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.photo-info .filename {
+    font-weight: 600;
+    color: #333;
+    word-break: break-all;
+    max-width: 200px;
+}
+
+.photo-info .filesize {
+    color: #27ae60;
+    font-weight: 500;
+}
+
+.file-input-wrapper {
+    position: relative;
+    overflow: hidden;
+    display: inline-block;
+    width: 100%;
+}
+
+.file-input-wrapper input[type=file] {
+    position: absolute;
+    left: -9999px;
+}
+
+.file-input-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 12px 20px;
+    background: #3498db;
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-weight: 500;
+}
+
+.file-input-label:hover {
+    background: #2980b9;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(52, 152, 219, 0.3);
+}
+
+.file-input-label i {
+    font-size: 1.2rem;
+}
+
+.drag-active {
+    border-color: #3498db !important;
+    background: rgba(52, 152, 219, 0.1) !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .photo-preview-wrapper {
+        width: 120px;
+        height: 120px;
+    }
+}
