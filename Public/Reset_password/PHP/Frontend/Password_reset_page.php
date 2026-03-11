@@ -30,7 +30,8 @@ if (empty($username) && !empty($userId)) {
 $statusMessages = [
     'expired' => 'Your password reset link has expired. Please set a new password.',
     'required' => 'A password reset is required for your account security.',
-    'password_expired' => 'Your password has expired. Please create a new password to continue.'
+    'password_expired' => 'Your password has expired. Please create a new password to continue.',
+    'user_requested' => 'You requested to change your password. Enter your current password to verify your identity.'
 ];
 $statusMessage = $statusMessages[$resetReason] ?? $statusMessages['required'];
 ?>

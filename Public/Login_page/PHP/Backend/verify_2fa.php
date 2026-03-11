@@ -83,8 +83,8 @@ try {
 
     // Determine redirect
     $redirect = ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'super_admin')
-        ? '/ScanQuotient/ScanQuotient/Privatepages/Admin_dashboard/PHP/Frontend/admin_main_dashboard.php'
-        : '/ScanQuotient/ScanQuotient/Privatepages/Business_owner_portal/PHP/user_dashboard.php';
+        ? '../../../../Private/Admin_dashboard/PHP/Frontend/Admin_dashboard.php'
+        : '../../../../Private/User_dashboard/PHP/Frontend/User_dashboard.php';
 
     echo json_encode([
         'status' => 'success',

@@ -1734,7 +1734,7 @@ html.dark .toast {
 .theme-toggle-btn {
     background: transparent;
     border: none;
-    color: var(--text-main);
+    color: #3269c0;
     cursor: pointer;
     font-size: 1.2rem;
     width: 40px;
@@ -1818,7 +1818,7 @@ html.dark .theme-toggle-btn::after {
 }
 
 .help-btn {
-    color: var(--icon-color);
+    color: #3269c0;
     font-size: 1.25rem;
     text-decoration: none;
     transition: color 0.2s, transform 0.2s;

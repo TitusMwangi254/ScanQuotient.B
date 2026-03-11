@@ -227,14 +227,18 @@ try {
     logSecurityEvent($pdo, $username, 'LOGIN_SUCCESS', 'User logged in successfully');
 
     // Route based on role
+
     switch ($user['role']) {
         case 'admin':
         case 'super_admin':
-            header('Location: /ScanQuotient/ScanQuotient/Privatepages/Admin_dashboard/PHP/Frontend/admin_main_dashboard.php');
+            // Go up 4 levels to reach ScanQuotient.B, then into Private
+            header('Location: ../../../../Private/Admin_dashboard/PHP/Frontend/Admin_dashboard.php');
             break;
+
         case 'user':
         default:
-            header('Location: /ScanQuotient/ScanQuotient/Privatepages/Business_owner_portal/PHP/user_dashboard.php');
+            // Go up 4 levels to reach ScanQuotient.B, then into Private
+            header('Location: ../../../../Private/User_dashboard/PHP/Frontend/User_dashboard.php');
             break;
     }
     exit;
@@ -242,12 +246,12 @@ try {
 } catch (PDOException $e) {
     error_log("Database error in login_handler: " . $e->getMessage());
     $_SESSION['loginError'] = 'System error. Please try again later.';
-    header('Location: /ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php');
+    header('Location: ../../PHP/Frontend/Login_page_site.php');
     exit;
 } catch (Exception $e) {
     error_log("General error in login_handler: " . $e->getMessage());
     $_SESSION['loginError'] = 'An unexpected error occurred. Please try again.';
-    header('Location: /ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php');
+    header('Location: ../../PHP/Frontend/Login_page_site.php');
     exit;
 }
 
