@@ -41,6 +41,65 @@ try {
     ];
     $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
 
+    // ------------------------------------------------------------
+    // Rate limiting / lockouts (auto-creates table if missing)
+    // ------------------------------------------------------------
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS login_rate_limits (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            scope ENUM('user','ip') NOT NULL,
+            scope_key VARCHAR(255) NOT NULL,
+            fail_count INT NOT NULL DEFAULT 0,
+            first_fail_at DATETIME NULL,
+            last_fail_at DATETIME NULL,
+            locked_until DATETIME NULL,
+            lock_minutes INT NULL,
+            reason VARCHAR(50) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_scope_key (scope, scope_key),
+            INDEX idx_locked_until (locked_until),
+            INDEX idx_last_fail (last_fail_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+
+    $ipAddress = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $nowTs = time();
+
+    $getLock = function (string $scope, string $key) use ($pdo) {
+        $stmt = $pdo->prepare("SELECT * FROM login_rate_limits WHERE scope = ? AND scope_key = ? LIMIT 1");
+        $stmt->execute([$scope, $key]);
+        return $stmt->fetch() ?: null;
+    };
+
+    $isLocked = function (?array $row) use ($nowTs) {
+        if (!$row || empty($row['locked_until'])) return false;
+        return strtotime($row['locked_until']) > $nowTs;
+    };
+
+    $minsRemaining = function (?array $row) use ($nowTs) {
+        if (!$row || empty($row['locked_until'])) return 0;
+        $diff = strtotime($row['locked_until']) - $nowTs;
+        return $diff > 0 ? (int)ceil($diff / 60) : 0;
+    };
+
+    // Check existing locks before doing any auth work
+    $userLockRow = $getLock('user', $username);
+    if ($isLocked($userLockRow)) {
+        $mins = $minsRemaining($userLockRow);
+        $_SESSION['loginError'] = "Too many failed login attempts for this username. Please wait {$mins} minute(s) and try again.";
+        header('Location: ../../PHP/Frontend/Login_page_site.php');
+        exit;
+    }
+
+    $ipLockRow = $getLock('ip', $ipAddress);
+    if ($isLocked($ipLockRow)) {
+        $mins = $minsRemaining($ipLockRow);
+        $_SESSION['loginError'] = "Too many login attempts from your network. Please wait {$mins} minute(s) and try again.";
+        header('Location: ../../PHP/Frontend/Login_page_site.php');
+        exit;
+    }
+
     // Fetch user by username (ambiguous error if not found)
     $stmt = $pdo->prepare("
         SELECT * FROM users 
@@ -61,6 +120,71 @@ try {
     // AMBIGUOUS ERROR: Don't reveal if username or password is wrong
     if (!$user || !$passwordValid) {
         logSecurityEvent($pdo, $username, 'FAILED_LOGIN', 'Invalid credentials provided');
+
+        // Update per-username fail counter (5 failures => 5 minute lock)
+        $userRow = $getLock('user', $username);
+        $resetUserWindow = true;
+        if ($userRow && !empty($userRow['last_fail_at'])) {
+            // rolling window: if last failure was more than 10 minutes ago, reset
+            $resetUserWindow = (strtotime($userRow['last_fail_at']) < ($nowTs - 10 * 60));
+        }
+        $userFails = $resetUserWindow ? 0 : (int)($userRow['fail_count'] ?? 0);
+        $userFails++;
+        $userLockUntil = null;
+        $userReason = null;
+        $userLockMins = null;
+        if ($userFails >= 5) {
+            $userLockMins = 5;
+            $userLockUntil = date('Y-m-d H:i:s', $nowTs + ($userLockMins * 60));
+            $userReason = 'password_lock';
+        }
+        $upsert = $pdo->prepare("
+            INSERT INTO login_rate_limits (scope, scope_key, fail_count, first_fail_at, last_fail_at, locked_until, lock_minutes, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                fail_count = VALUES(fail_count),
+                first_fail_at = IF(VALUES(first_fail_at) IS NULL, first_fail_at, VALUES(first_fail_at)),
+                last_fail_at = VALUES(last_fail_at),
+                locked_until = VALUES(locked_until),
+                lock_minutes = VALUES(lock_minutes),
+                reason = VALUES(reason)
+        ");
+        $firstFailAt = ($resetUserWindow || !$userRow || empty($userRow['first_fail_at'])) ? date('Y-m-d H:i:s', $nowTs) : $userRow['first_fail_at'];
+        $upsert->execute(['user', $username, $userFails, $firstFailAt, date('Y-m-d H:i:s', $nowTs), $userLockUntil, $userLockMins, $userReason]);
+
+        // Update per-IP fail counter (guessing protection => 15 minute lock)
+        // Threshold chosen to avoid locking legitimate users too aggressively.
+        $ipRow = $getLock('ip', $ipAddress);
+        $resetIpWindow = true;
+        if ($ipRow && !empty($ipRow['last_fail_at'])) {
+            // rolling window: if last failure was more than 15 minutes ago, reset
+            $resetIpWindow = (strtotime($ipRow['last_fail_at']) < ($nowTs - 15 * 60));
+        }
+        $ipFails = $resetIpWindow ? 0 : (int)($ipRow['fail_count'] ?? 0);
+        $ipFails++;
+        $ipLockUntil = null;
+        $ipReason = null;
+        $ipLockMins = null;
+        if ($ipFails >= 20) {
+            $ipLockMins = 15;
+            $ipLockUntil = date('Y-m-d H:i:s', $nowTs + ($ipLockMins * 60));
+            $ipReason = 'ip_lock';
+        }
+        $firstIpFailAt = ($resetIpWindow || !$ipRow || empty($ipRow['first_fail_at'])) ? date('Y-m-d H:i:s', $nowTs) : $ipRow['first_fail_at'];
+        $upsert->execute(['ip', $ipAddress, $ipFails, $firstIpFailAt, date('Y-m-d H:i:s', $nowTs), $ipLockUntil, $ipLockMins, $ipReason]);
+
+        // If user lock just triggered, show the lock message instead of generic invalid credentials
+        if ($userLockUntil) {
+            $_SESSION['loginError'] = 'Too many wrong password attempts. Your login is locked for 5 minutes.';
+            header('Location: ../../PHP/Frontend/Login_page_site.php');
+            exit;
+        }
+        if ($ipLockUntil) {
+            $_SESSION['loginError'] = 'Too many login attempts from this IP. You are blocked for 15 minutes.';
+            header('Location: ../../PHP/Frontend/Login_page_site.php');
+            exit;
+        }
+
         $_SESSION['loginError'] = 'Invalid username or password. Please try again.';
         header('Location: ../../PHP/Frontend/Login_page_site.php');
         exit;
@@ -200,6 +324,21 @@ try {
     }
 
     // --- ALL CHECKS PASSED - LOGIN SUCCESSFUL ---
+
+    // Clear user lock on successful login (keep IP record but reset count)
+    try {
+        $clearUser = $pdo->prepare("DELETE FROM login_rate_limits WHERE scope = 'user' AND scope_key = ?");
+        $clearUser->execute([$username]);
+        $clearIp = $pdo->prepare("
+            UPDATE login_rate_limits
+            SET fail_count = 0, first_fail_at = NULL, last_fail_at = NULL, locked_until = NULL, lock_minutes = NULL, reason = NULL
+            WHERE scope = 'ip' AND scope_key = ?
+        ");
+        $clearIp->execute([$ipAddress]);
+    } catch (Exception $e) {
+        // Non-fatal
+        error_log("Failed to clear login rate limits: " . $e->getMessage());
+    }
 
     // Clear auth mode flags
     unset($_SESSION['auth_mode']);

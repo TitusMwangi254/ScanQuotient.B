@@ -1,5 +1,5 @@
 <?php
-// user_subscription.php
+// user_subscription.php - FIXED VERSION
 session_start();
 
 // Authentication check
@@ -80,6 +80,7 @@ $currentPlan = 'freemium';
 $paymentHistory = [];
 $subscriptionStatus = 'active';
 $nextBillingDate = null;
+$daysRemaining = 0;
 
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
@@ -88,7 +89,7 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
     ]);
 
-    // Get user's payment/subscription history
+    // Get user's payment/subscription history - include account_status from table
     $stmt = $pdo->prepare("
         SELECT * FROM payments 
         WHERE email = ? AND deleted_at IS NULL 
@@ -98,65 +99,57 @@ try {
     $stmt->execute([$userEmail]);
     $paymentHistory = $stmt->fetchAll();
 
-    // Determine current active plan
+    // Determine current active plan from database
     if (!empty($paymentHistory)) {
         $latestPayment = $paymentHistory[0];
-        if (
-            $latestPayment['status'] === 'completed' &&
-            (!isset($latestPayment['expires_at']) || strtotime($latestPayment['expires_at']) > time())
-        ) {
-            $currentPlan = strtolower($latestPayment['package']);
+
+        // Check if subscription is active and not expired
+        $isActive = ($latestPayment['account_status'] ?? 'active') === 'active';
+        $isExpired = isset($latestPayment['expires_at']) &&
+            strtotime($latestPayment['expires_at']) < time();
+
+        if ($isActive && !$isExpired) {
+            $currentPlan = $latestPayment['package'];
             $subscriptionStatus = 'active';
             $nextBillingDate = $latestPayment['expires_at'];
-        } elseif (isset($latestPayment['expires_at']) && strtotime($latestPayment['expires_at']) < time()) {
+            $daysRemaining = getDaysRemaining($nextBillingDate);
+        } elseif ($isExpired) {
             $subscriptionStatus = 'expired';
             $currentPlan = 'freemium'; // Fallback to free
+        } else {
+            $subscriptionStatus = 'suspended';
+            $currentPlan = 'freemium';
         }
+    } else {
+        // No payment history = freemium
+        $currentPlan = 'freemium';
+        $subscriptionStatus = 'active'; // Freemium is always "active"
     }
 
-    // Handle plan upgrade/downgrade
+    // Handle form actions
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = $_POST['subscription_action'] ?? '';
 
         switch ($action) {
-            case 'upgrade':
-            case 'downgrade':
-                $targetPlan = $_POST['target_plan'] ?? '';
-                if (isset($plans[$targetPlan])) {
-                    // In real implementation, redirect to payment gateway
-                    // For now, simulate successful payment
-                    $amount = $plans[$targetPlan]['price'];
-                    $transactionId = 'TXN_' . strtoupper(bin2hex(random_bytes(8)));
-                    $expiresAt = date('Y-m-d H:i:s', strtotime('+30 days'));
-
+            case 'cancel':
+                // Cancel subscription: record a downgrade to freemium while preserving history.
+                // We do NOT soft-delete prior payments (deleted_at is used for "trash").
+                if (!empty($paymentHistory) && ($plans[$currentPlan]['price'] ?? 0) > 0) {
                     $insertStmt = $pdo->prepare("
-                        INSERT INTO payments (email, package, amount, transaction_id, status, payment_method, expires_at, created_at) 
-                        VALUES (?, ?, ?, ?, 'completed', 'paypal', ?, NOW())
+                        INSERT INTO payments (email, package, account_status, amount, transaction_id, status, payment_method, expires_at, created_at)
+                        VALUES (?, 'freemium', 'active', 0.00, NULL, 'cancelled', 'manual', NULL, NOW())
                     ");
-                    $insertStmt->execute([$userEmail, $targetPlan, $amount, $transactionId, $expiresAt]);
+                    $insertStmt->execute([$userEmail]);
 
-                    $successMessage = "Successfully " . ($action === 'upgrade' ? 'upgraded to' : 'downgraded to') . " " . $plans[$targetPlan]['name'] . "!";
+                    $successMessage = "Subscription cancelled successfully. You have been downgraded to Freemium.";
+                    $currentPlan = 'freemium';
+                    $subscriptionStatus = 'active';
+                    $nextBillingDate = null;
+                    $daysRemaining = 0;
 
                     // Refresh data
                     $stmt->execute([$userEmail]);
                     $paymentHistory = $stmt->fetchAll();
-                    $currentPlan = $targetPlan;
-                    $nextBillingDate = $expiresAt;
-                    $subscriptionStatus = 'active';
-                }
-                break;
-
-            case 'cancel':
-                // Soft delete latest payment (simulate cancellation)
-                if (!empty($paymentHistory)) {
-                    $updateStmt = $pdo->prepare("
-                        UPDATE payments 
-                        SET deleted_at = NOW(), deleted_by = ? 
-                        WHERE id = ? AND deleted_at IS NULL
-                    ");
-                    $updateStmt->execute([$userId, $paymentHistory[0]['id']]);
-                    $successMessage = "Subscription cancelled. You will revert to Freemium at the end of your billing period.";
-                    $subscriptionStatus = 'canceling';
                 }
                 break;
         }
@@ -197,757 +190,34 @@ function getDaysRemaining($expiresAt)
     <title>ScanQuotient | My Subscription</title>
     <link rel="icon" type="image/png" href="../../../../Storage/Public_images/page_icon.png" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <style>
-        :root {
-            --sq-sub-bg: #f0f7ff;
-            --sq-sub-card: #ffffff;
-            --sq-sub-text: #1e293b;
-            --sq-sub-text-light: #64748b;
-            --sq-sub-primary: #3b82f6;
-            --sq-sub-primary-light: #60a5fa;
-            --sq-sub-success: #10b981;
-            --sq-sub-warning: #f59e0b;
-            --sq-sub-danger: #ef4444;
-            --sq-sub-purple: #8b5cf6;
-            --sq-sub-gray: #94a3b8;
-            --sq-sub-border: #e2e8f0;
-            --sq-sub-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            --sq-sub-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-        }
+    <link rel="stylesheet" href="../../CSS/user_subscription.css" />
 
-        body.sq-sub-dark {
-            --sq-sub-bg: #0f172a;
-            --sq-sub-card: #1e293b;
-            --sq-sub-text: #f1f5f9;
-            --sq-sub-text-light: #94a3b8;
-            --sq-sub-primary: #60a5fa;
-            --sq-sub-primary-light: #93c5fd;
-            --sq-sub-border: rgba(148, 163, 184, 0.2);
-            --sq-sub-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            --sq-sub-shadow-lg: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        html,
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--sq-sub-bg);
-            color: var(--sq-sub-text);
-            min-height: 100vh;
-            line-height: 1.6;
-        }
-
-        /* Header */
-        .sq-sub-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 16px 32px;
-            background: linear-gradient(to right, #ffffff, #ADD8E6);
-            border-bottom: 1px solid var(--sq-sub-border);
-            box-shadow: var(--sq-sub-shadow);
-        }
-
-        body.sq-sub-dark .sq-sub-header {
-            background: linear-gradient(135deg, #2e1065 0%, #1e293b 100%);
-        }
-
-        .sq-sub-header-left {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .sq-sub-back-btn {
-            width: 40px;
-            height: 40px;
-            border-radius: 10px;
-            border: 1px solid var(--sq-sub-border);
-            background: rgba(255, 255, 255, 0.8);
-            color: var(--sq-sub-text-light);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-decoration: none;
-            font-size: 16px;
-            transition: all 0.3s;
-        }
-
-        body.sq-sub-dark .sq-sub-back-btn {
-            background: rgba(0, 0, 0, 0.2);
-        }
-
-        .sq-sub-back-btn:hover {
-            background: var(--sq-sub-primary);
-            color: white;
-            transform: translateX(-3px);
-        }
-
-        .sq-sub-brand {
-            font-weight: 800;
-            font-size: 24px;
-            color: var(--sq-sub-primary);
-            text-decoration: none;
-        }
-
-        body.sq-sub-dark .sq-sub-brand {
-            color: var(--sq-sub-primary-light);
-        }
-
-        .sq-sub-header-right {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .sq-sub-theme-toggle {
-            width: 40px;
-            height: 40px;
-            border-radius: 10px;
-            border: 1px solid var(--sq-sub-border);
-            background: rgba(255, 255, 255, 0.8);
-            color: var(--sq-sub-text-light);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            transition: all 0.3s;
-        }
-
-        body.sq-sub-dark .sq-sub-theme-toggle {
-            background: rgba(0, 0, 0, 0.2);
-        }
-
-        .sq-sub-theme-toggle:hover {
-            background: var(--sq-sub-primary);
-            color: white;
-        }
-
-        /* Container */
-        .sq-sub-container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 40px 20px;
-        }
-
-        /* Alert */
-        .sq-sub-alert {
-            padding: 16px 20px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 14px;
-            font-weight: 500;
-            animation: sq-sub-slide-down 0.3s ease;
-        }
-
-        @keyframes sq-sub-slide-down {
-            from {
-                opacity: 0;
-                transform: translateY(-10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .sq-sub-alert--success {
-            background: rgba(16, 185, 129, 0.1);
-            border: 1px solid rgba(16, 185, 129, 0.2);
-            color: var(--sq-sub-success);
-        }
-
-        .sq-sub-alert--error {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid rgba(239, 68, 68, 0.2);
-            color: var(--sq-sub-danger);
-        }
-
-        .sq-sub-alert-close {
-            margin-left: auto;
-            background: none;
-            border: none;
-            color: inherit;
-            cursor: pointer;
-            font-size: 16px;
-            opacity: 0.6;
-        }
-
-        .sq-sub-alert-close:hover {
-            opacity: 1;
-        }
-
-        /* Current Plan Banner */
-        .sq-sub-current-plan {
-            background: var(--sq-sub-card);
-            border: 1px solid var(--sq-sub-border);
-            border-radius: 20px;
-            padding: 32px;
-            margin-bottom: 40px;
-            box-shadow: var(--sq-sub-shadow);
-            display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 32px;
-            align-items: center;
-        }
-
-        @media (max-width: 768px) {
-            .sq-sub-current-plan {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .sq-sub-plan-info h2 {
-            font-size: 14px;
-            font-weight: 700;
-            color: var(--sq-sub-text-light);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 8px;
-        }
-
-        .sq-sub-plan-name {
-            font-size: 32px;
-            font-weight: 800;
-            color: var(--sq-sub-text);
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .sq-sub-plan-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        .sq-sub-plan-badge--active {
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--sq-sub-success);
-        }
-
-        .sq-sub-plan-badge--expired {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--sq-sub-danger);
-        }
-
-        .sq-sub-plan-badge--canceling {
-            background: rgba(245, 158, 11, 0.1);
-            color: var(--sq-sub-warning);
-        }
-
-        .sq-sub-plan-price {
-            font-size: 18px;
-            color: var(--sq-sub-text-light);
-            margin-bottom: 16px;
-        }
-
-        .sq-sub-plan-price strong {
-            color: var(--sq-sub-text);
-            font-size: 24px;
-        }
-
-        .sq-sub-plan-meta {
-            display: flex;
-            gap: 24px;
-            flex-wrap: wrap;
-        }
-
-        .sq-sub-plan-meta-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 14px;
-            color: var(--sq-sub-text-light);
-        }
-
-        .sq-sub-plan-meta-item i {
-            color: var(--sq-sub-primary);
-        }
-
-        .sq-sub-plan-actions {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .sq-sub-btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 14px 28px;
-            border-radius: 12px;
-            font-size: 14px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.3s;
-            border: none;
-            text-decoration: none;
-        }
-
-        .sq-sub-btn--primary {
-            background: var(--sq-sub-primary);
-            color: white;
-            box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
-        }
-
-        .sq-sub-btn--primary:hover {
-            background: var(--sq-sub-primary-light);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(59, 130, 246, 0.4);
-        }
-
-        .sq-sub-btn--secondary {
-            background: transparent;
-            color: var(--sq-sub-text-light);
-            border: 2px solid var(--sq-sub-border);
-        }
-
-        .sq-sub-btn--secondary:hover {
-            border-color: var(--sq-sub-danger);
-            color: var(--sq-sub-danger);
-        }
-
-        .sq-sub-btn--danger {
-            background: var(--sq-sub-danger);
-            color: white;
-        }
-
-        .sq-sub-btn--danger:hover {
-            background: #dc2626;
-        }
-
-        /* Plans Grid */
-        .sq-sub-plans-title {
-            font-size: 24px;
-            font-weight: 800;
-            margin-bottom: 24px;
-            color: var(--sq-sub-text);
-        }
-
-        .sq-sub-plans-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 24px;
-            margin-bottom: 40px;
-        }
-
-        @media (max-width: 968px) {
-            .sq-sub-plans-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .sq-sub-plan-card {
-            background: var(--sq-sub-card);
-            border: 2px solid var(--sq-sub-border);
-            border-radius: 20px;
-            padding: 32px;
-            position: relative;
-            transition: all 0.3s;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .sq-sub-plan-card:hover {
-            transform: translateY(-4px);
-            box-shadow: var(--sq-sub-shadow-lg);
-        }
-
-        .sq-sub-plan-card--current {
-            border-color: var(--sq-sub-success);
-            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1);
-        }
-
-        .sq-sub-plan-card--popular {
-            border-color: var(--sq-sub-primary);
-            box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
-        }
-
-        .sq-sub-plan-popular-badge {
-            position: absolute;
-            top: -12px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: var(--sq-sub-primary);
-            color: white;
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        .sq-sub-plan-header {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-
-        .sq-sub-plan-icon {
-            width: 64px;
-            height: 64px;
-            border-radius: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 28px;
-            margin: 0 auto 16px;
-        }
-
-        .sq-sub-plan-card[data-plan="freemium"] .sq-sub-plan-icon {
-            background: rgba(100, 116, 139, 0.1);
-            color: #64748b;
-        }
-
-        .sq-sub-plan-card[data-plan="pro"] .sq-sub-plan-icon {
-            background: rgba(59, 130, 246, 0.1);
-            color: #3b82f6;
-        }
-
-        .sq-sub-plan-card[data-plan="enterprise"] .sq-sub-plan-icon {
-            background: rgba(139, 92, 246, 0.1);
-            color: #8b5cf6;
-        }
-
-        .sq-sub-plan-card-title {
-            font-size: 22px;
-            font-weight: 800;
-            margin-bottom: 8px;
-        }
-
-        .sq-sub-plan-card-price {
-            font-size: 36px;
-            font-weight: 800;
-            color: var(--sq-sub-text);
-        }
-
-        .sq-sub-plan-card-price span {
-            font-size: 16px;
-            font-weight: 500;
-            color: var(--sq-sub-text-light);
-        }
-
-        .sq-sub-plan-description {
-            font-size: 14px;
-            color: var(--sq-sub-text-light);
-            text-align: center;
-            margin-bottom: 24px;
-            line-height: 1.6;
-        }
-
-        .sq-sub-plan-features {
-            flex: 1;
-            margin-bottom: 24px;
-        }
-
-        .sq-sub-plan-feature {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            margin-bottom: 12px;
-            font-size: 14px;
-        }
-
-        .sq-sub-plan-feature i {
-            color: var(--sq-sub-success);
-            margin-top: 3px;
-        }
-
-        .sq-sub-plan-feature--limitation {
-            color: var(--sq-sub-text-light);
-        }
-
-        .sq-sub-plan-feature--limitation i {
-            color: var(--sq-sub-gray);
-        }
-
-        .sq-sub-plan-cta {
-            width: 100%;
-        }
-
-        .sq-sub-plan-cta .sq-sub-btn {
-            width: 100%;
-        }
-
-        .sq-sub-plan-current-label {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            padding: 14px;
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--sq-sub-success);
-            border-radius: 12px;
-            font-weight: 700;
-        }
-
-        /* Payment History */
-        .sq-sub-history {
-            background: var(--sq-sub-card);
-            border: 1px solid var(--sq-sub-border);
-            border-radius: 20px;
-            padding: 32px;
-            box-shadow: var(--sq-sub-shadow);
-        }
-
-        .sq-sub-history-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-        }
-
-        .sq-sub-history-title {
-            font-size: 20px;
-            font-weight: 800;
-        }
-
-        .sq-sub-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        .sq-sub-table th {
-            text-align: left;
-            padding: 12px 16px;
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--sq-sub-text-light);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            border-bottom: 1px solid var(--sq-sub-border);
-        }
-
-        .sq-sub-table td {
-            padding: 16px;
-            border-bottom: 1px solid var(--sq-sub-border);
-            font-size: 14px;
-        }
-
-        .sq-sub-table tr:last-child td {
-            border-bottom: none;
-        }
-
-        .sq-sub-status {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .sq-sub-status--completed {
-            background: rgba(16, 185, 129, 0.1);
-            color: var(--sq-sub-success);
-        }
-
-        .sq-sub-status--pending {
-            background: rgba(245, 158, 11, 0.1);
-            color: var(--sq-sub-warning);
-        }
-
-        .sq-sub-status--failed {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--sq-sub-danger);
-        }
-
-        .sq-sub-empty {
-            text-align: center;
-            padding: 40px;
-            color: var(--sq-sub-text-light);
-        }
-
-        .sq-sub-empty i {
-            font-size: 48px;
-            margin-bottom: 16px;
-            opacity: 0.3;
-        }
-
-        /* Modal */
-        .sq-sub-modal-overlay {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(15, 23, 42, 0.8);
-            backdrop-filter: blur(8px);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-
-        .sq-sub-modal-overlay--active {
-            display: flex;
-        }
-
-        .sq-sub-modal {
-            background: var(--sq-sub-card);
-            border-radius: 24px;
-            max-width: 480px;
-            width: 100%;
-            padding: 40px;
-            text-align: center;
-            animation: sq-sub-modal-in 0.3s ease;
-        }
-
-        @keyframes sq-sub-modal-in {
-            from {
-                opacity: 0;
-                transform: scale(0.9);
-            }
-
-            to {
-                opacity: 1;
-                transform: scale(1);
-            }
-        }
-
-        .sq-sub-modal-icon {
-            width: 80px;
-            height: 80px;
-            border-radius: 24px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 36px;
-            margin: 0 auto 24px;
-        }
-
-        .sq-sub-modal-icon--upgrade {
-            background: rgba(59, 130, 246, 0.1);
-            color: var(--sq-sub-primary);
-        }
-
-        .sq-sub-modal-icon--downgrade {
-            background: rgba(245, 158, 11, 0.1);
-            color: var(--sq-sub-warning);
-        }
-
-        .sq-sub-modal-icon--cancel {
-            background: rgba(239, 68, 68, 0.1);
-            color: var(--sq-sub-danger);
-        }
-
-        .sq-sub-modal h3 {
-            font-size: 24px;
-            font-weight: 800;
-            margin-bottom: 12px;
-        }
-
-        .sq-sub-modal p {
-            color: var(--sq-sub-text-light);
-            margin-bottom: 24px;
-            line-height: 1.6;
-        }
-
-        .sq-sub-modal-actions {
-            display: flex;
-            gap: 12px;
-            justify-content: center;
-        }
-
-        .sq-sub-footer {
-            margin-top: 40px;
-            padding: 24px;
-            text-align: center;
-            color: var(--sq-sub-text-light);
-            font-size: 13px;
-            border-top: 1px solid var(--sq-sub-border);
-        }
-
-        .sq-sub-header-left {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        /* Back Button */
-        .sq-sub-back-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 14px;
-            border: none;
-            border-radius: 6px;
-            background-color: #8b5cf6;
-            /* Brand Purple */
-            color: #ffffff;
-            font-size: 14px;
-            cursor: pointer;
-        }
-
-        .sq-sub-back-btn:hover {
-            opacity: 0.9;
-        }
-
-        /* Brand Wrapper */
-        .sq-brand-wrapper {
-            display: flex;
-            flex-direction: column;
-        }
-
-        /* Brand Name */
-        .sq-sub-brand {
-            color: #8b5cf6;
-            font-weight: 700;
-            text-decoration: none;
-            font-size: 18px;
-        }
-
-        /* Tagline */
-        .sq-sub-tagline {
-            font-size: 12px;
-            color: #8b5cf6;
-            opacity: 0.75;
-            margin: 2px 0 0 0;
-        }
-    </style>
 </head>
 
 <body>
-
-    <header class="sq-sub-header">
-        <div class="sq-sub-header-left">
-
-            <!-- Normal Previous Button -->
-            <button type="button" class="sq-sub-back-btn" onclick="history.back()">
+    <header class="sq-admin-header">
+        <div class="sq-admin-header-left">
+            <a href="/ScanQuotient.v2/ScanQuotient.B/Private/User_dashboard/PHP/Frontend/User_dashboard.php"
+                class="sq-admin-back-btn">
                 <i class="fas fa-arrow-left"></i>
-
-            </button>
-
-            <!-- Brand + Tagline -->
-            <div class="sq-brand-wrapper">
-                <a href="#" class="sq-sub-brand">ScanQuotient</a>
-                <p class="sq-sub-tagline">Quantifying Risk. Strengthening Security.</p>
+            </a>
+            <div class="brand-wrapper">
+                <a href="#" class="sq-admin-brand">ScanQuotient</a>
+                <p class="sq-admin-tagline">Quantifying Risk. Strengthening Security.</p>
             </div>
-
         </div>
-        <div class="sq-sub-header-right">
-            <button class="sq-sub-theme-toggle" onclick="toggleSubTheme()">
-                <i class="fas fa-sun" id="subThemeIcon"></i>
+        <div class="sq-admin-header-right">
+
+            <button class="sq-admin-theme-toggle" id="sqThemeToggle" title="Toggle Theme">
+                <i class="fas fa-sun"></i>
             </button>
+            <a href="/ScanQuotient.v2/ScanQuotient.B/Private/User_dashboard/PHP/Frontend/User_dashboard.php"
+                class="icon-btn" title="Home">
+                <i class="fas fa-home"></i>
+            </a>
+            <a href="../../../../Public/Login_page/PHP/Frontend/Login_page_site.php" class="icon-btn" title="Logout">
+                <i class="fas fa-sign-out-alt"></i>
+            </a>
         </div>
     </header>
 
@@ -1013,11 +283,14 @@ function getDaysRemaining($expiresAt)
                     <?php if ($nextBillingDate && $plans[$currentPlan]['price'] > 0): ?>
                         <div class="sq-sub-plan-meta-item">
                             <i class="fas fa-calendar"></i>
-                            <span>Next billing: <?php echo formatDate($nextBillingDate); ?></span>
+                            <span>Renews: <?php echo formatDate($nextBillingDate); ?></span>
                         </div>
                         <div class="sq-sub-plan-meta-item">
                             <i class="fas fa-clock"></i>
-                            <span><?php echo getDaysRemaining($nextBillingDate); ?> days remaining</span>
+                            <span class="sq-sub-days-remaining">
+                                <i class="fas fa-hourglass-half"></i>
+                                <?php echo $daysRemaining; ?> days remaining
+                            </span>
                         </div>
                     <?php endif; ?>
                     <div class="sq-sub-plan-meta-item">
@@ -1029,14 +302,13 @@ function getDaysRemaining($expiresAt)
 
             <div class="sq-sub-plan-actions">
                 <?php if ($subscriptionStatus === 'active' && $plans[$currentPlan]['price'] > 0): ?>
-                    <button class="sq-sub-btn sq-sub-btn--secondary" onclick="showCancelModal()">
+                    <button class="sq-sub-btn sq-sub-btn--danger" onclick="showCancelModal()">
                         <i class="fas fa-times"></i> Cancel Subscription
                     </button>
                 <?php endif; ?>
             </div>
         </div>
 
-        <!-- Available Plans -->
         <h2 class="sq-sub-plans-title">Available Plans</h2>
 
         <div class="sq-sub-plans-grid">
@@ -1056,7 +328,9 @@ function getDaysRemaining($expiresAt)
                         <div class="sq-sub-plan-icon">
                             <i class="fas <?php echo $plan['icon']; ?>"></i>
                         </div>
-                        <h3 class="sq-sub-plan-card-title"><?php echo $plan['name']; ?></h3>
+                        <h3 class="sq-sub-plan-card-title">
+                            <?php echo $plan['name']; ?>
+                        </h3>
                         <div class="sq-sub-plan-card-price">
                             <?php echo formatCurrency($plan['price']); ?>
                             <?php if ($plan['price'] > 0): ?>
@@ -1067,20 +341,26 @@ function getDaysRemaining($expiresAt)
                         </div>
                     </div>
 
-                    <p class="sq-sub-plan-description"><?php echo $plan['description']; ?></p>
+                    <p class="sq-sub-plan-description">
+                        <?php echo $plan['description']; ?>
+                    </p>
 
                     <div class="sq-sub-plan-features">
                         <?php foreach ($plan['features'] as $feature): ?>
                             <div class="sq-sub-plan-feature">
                                 <i class="fas fa-check-circle"></i>
-                                <span><?php echo $feature; ?></span>
+                                <span>
+                                    <?php echo $feature; ?>
+                                </span>
                             </div>
                         <?php endforeach; ?>
 
                         <?php foreach ($plan['limitations'] as $limitation): ?>
                             <div class="sq-sub-plan-feature sq-sub-plan-feature--limitation">
                                 <i class="fas fa-times-circle"></i>
-                                <span><?php echo $limitation; ?></span>
+                                <span>
+                                    <?php echo $limitation; ?>
+                                </span>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -1091,16 +371,26 @@ function getDaysRemaining($expiresAt)
                                 <i class="fas fa-check"></i> Current Plan
                             </div>
                         <?php elseif ($canUpgrade): ?>
-                            <button class="sq-sub-btn sq-sub-btn--primary"
-                                onclick="showUpgradeModal('<?php echo $planKey; ?>', '<?php echo $plan['name']; ?>')">
-                                <i class="fas fa-arrow-up"></i> Upgrade
-                            </button>
+                            <form action="../../../Payment/PHP/Frontend/Payment1.php" method="POST" style="display: inline;">
+                                <input type="hidden" name="package" value="<?php echo htmlspecialchars($planKey); ?>">
+                                <input type="hidden" name="price" value="<?php echo $plan['price']; ?>">
+                                <input type="hidden" name="action" value="upgrade">
+                                <input type="hidden" name="plan_name" value="<?php echo htmlspecialchars($plan['name']); ?>">
+                                <button type="submit" class="sq-sub-btn sq-sub-btn--primary">
+                                    <i class="fas fa-arrow-up"></i> Upgrade
+                                </button>
+                            </form>
                         <?php elseif ($canDowngrade): ?>
-                            <button class="sq-sub-btn sq-sub-btn--secondary"
-                                onclick="showDowngradeModal('<?php echo $planKey; ?>', '<?php echo $plan['name']; ?>')">
-                                <i class="fas fa-arrow-down"></i> Downgrade
-                            </button>
-                        <?php elseif ($planKey === 'freemium'): ?>
+                            <form action="../../../Payment/PHP/Frontend/Payment1.php" method="POST" style="display: inline;">
+                                <input type="hidden" name="package" value="<?php echo htmlspecialchars($planKey); ?>">
+                                <input type="hidden" name="price" value="<?php echo $plan['price']; ?>">
+                                <input type="hidden" name="action" value="downgrade">
+                                <input type="hidden" name="plan_name" value="<?php echo htmlspecialchars($plan['name']); ?>">
+                                <button type="submit" class="sq-sub-btn sq-sub-btn--secondary">
+                                    <i class="fas fa-arrow-down"></i> Downgrade
+                                </button>
+                            </form>
+                        <?php elseif ($planKey === 'freemium' && $currentPlan !== 'freemium'): ?>
                             <button class="sq-sub-btn sq-sub-btn--secondary"
                                 onclick="showDowngradeModal('<?php echo $planKey; ?>', '<?php echo $plan['name']; ?>')">
                                 <i class="fas fa-arrow-down"></i> Switch to Free
@@ -1131,6 +421,7 @@ function getDaysRemaining($expiresAt)
                             <th>Amount</th>
                             <th>Transaction ID</th>
                             <th>Status</th>
+                            <th>Account</th>
                             <th>Expires</th>
                         </tr>
                     </thead>
@@ -1147,13 +438,20 @@ function getDaysRemaining($expiresAt)
                                 <td>
                                     <code
                                         style="background: var(--sq-sub-bg); padding: 4px 8px; border-radius: 6px; font-size: 12px;">
-                                                        <?php echo htmlspecialchars($payment['transaction_id'] ?? 'N/A'); ?>
-                                                    </code>
+                                                                                                                                                                                <?php echo htmlspecialchars($payment['transaction_id'] ?? 'N/A'); ?>
+                                                                                                                                                                            </code>
                                 </td>
                                 <td>
                                     <span class="sq-sub-status sq-sub-status--<?php echo $payment['status']; ?>">
                                         <i class="fas fa-circle" style="font-size: 6px;"></i>
                                         <?php echo ucfirst($payment['status']); ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <span
+                                        class="sq-sub-status sq-sub-status--<?php echo ($payment['account_status'] ?? 'active'); ?>">
+                                        <i class="fas fa-circle" style="font-size: 6px;"></i>
+                                        <?php echo ucfirst($payment['account_status'] ?? 'active'); ?>
                                     </span>
                                 </td>
                                 <td><?php echo formatDate($payment['expires_at']); ?></td>
@@ -1222,7 +520,7 @@ function getDaysRemaining($expiresAt)
             modalIcon.className = 'sq-sub-modal-icon sq-sub-modal-icon--cancel';
             modalIcon.innerHTML = '<i class="fas fa-times"></i>';
             modalTitle.textContent = 'Cancel Subscription?';
-            modalDesc.textContent = 'You will lose access to premium features at the end of your current billing period. Your data will be preserved on the free plan.';
+            modalDesc.textContent = 'You will lose access to premium features immediately and be downgraded to Freemium. This action cannot be undone.';
             modalAction.value = 'cancel';
             modalTargetPlan.value = '';
             modalConfirmBtn.textContent = 'Yes, Cancel';

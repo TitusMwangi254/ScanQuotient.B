@@ -2,7 +2,10 @@
 // login_page.php
 session_start();
 
-// Destroy any existing session immediately
+// Capture any login error BEFORE clearing the session
+$loginError = $_SESSION['loginError'] ?? false;
+
+// Destroy any existing session immediately (but keep $loginError for display)
 if (session_status() === PHP_SESSION_ACTIVE) {
     $_SESSION = array();
 
@@ -24,9 +27,6 @@ header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Cache-Control: post-check=0, pre-check=0", false);
 header("Pragma: no-cache");
 header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
-
-$loginError = $_SESSION['loginError'] ?? false;
-unset($_SESSION['loginError']);
 ?>
 
 <!DOCTYPE html>

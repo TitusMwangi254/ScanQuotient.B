@@ -430,7 +430,7 @@
                         <li><i class="fas fa-check"></i> Export to PDF/CSV</li>
                         <li class="disabled"><i class="fas fa-times"></i> AI remediation</li>
                     </ul>
-                    <a href="../../../Login_page/PHP/Frontend/Login_page_site.php" class="btn btn-primary"
+                    <a href="../../../Payment/PHP/Frontend/Payment_page.php" class="btn btn-primary"
                         style="width: 100%; justify-content: center;">
                         Upgrade Now
                     </a>
@@ -447,7 +447,7 @@
                         <li><i class="fas fa-check"></i> Compliance reporting</li>
                         <li><i class="fas fa-check"></i> 24/7 priority support</li>
                     </ul>
-                    <a href="../../../Login_page/PHP/Frontend/Login_page_site.php" class="btn btn-primary"
+                    <a href="../../../Payment/PHP/Frontend/Payment_page.php" class="btn btn-primary"
                         style="width: 100%; justify-content: center;">
                         Upgrade Now
                     </a>

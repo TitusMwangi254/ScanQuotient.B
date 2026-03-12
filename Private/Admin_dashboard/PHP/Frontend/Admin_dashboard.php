@@ -176,14 +176,12 @@ if (!empty($profile_photo)) {
                 </a>
 
                 <!-- Security -->
-                <a href="/ScanQuotient/ScanQuotient/Privatepages/Admin_dashboard/PHP/Frontend/security.php"
-                    class="nav-btn">
+                <a href="../../../../Private/Site_security/PHP/Frontend/Site_security.php" class="nav-btn">
                     <i class="fas fa-shield-alt"></i>
                     <span>Security_logs</span>
                 </a>
                 <!-- Payments -->
-                <a href="/ScanQuotient/ScanQuotient/Privatepages/Admin_dashboard/PHP/Frontend/payment_accounts.php"
-                    class="nav-btn">
+                <a href="../../../../Private/Subscription_Manager/PHP/Frontend/Payment_accounts.php" class="nav-btn">
                     <i class="fas fa-credit-card"></i>
                     <span>Subscriptions</span>
                 </a>

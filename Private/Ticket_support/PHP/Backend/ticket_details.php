@@ -52,7 +52,11 @@ if (!$ticket)
 $stmt->close();
 $conn->close();
 
-$attachmentsBaseUrl = "http://localhost/final_year_project/Site_Storage/Tickets/submitted_attachements";
+// FIXED: Correct base URL for ticket attachments
+// Files are stored at: C:\xampp\htdocs\ScanQuotient.v2\ScanQuotient.B\Storage\Ticket_attachments
+// Web accessible path: /ScanQuotient.v2/ScanQuotient.B/Storage/Ticket_attachments
+$attachmentsBaseUrl = "/ScanQuotient.v2/ScanQuotient.B/Storage/Ticket_attachments";
+
 function esc($v)
 {
     return htmlspecialchars((string) $v ?? '', ENT_QUOTES, 'UTF-8');
@@ -105,9 +109,9 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
         <div class="sq-admin-header-right">
             <div class="sq-admin-user">
                 <i class="fas fa-user-shield"></i>
-                <span>
-                    <?php echo htmlspecialchars($user_name); ?>
-                </span>
+                    <span>
+                        <?php echo htmlspecialchars($user_name); ?>
+                    </span>
             </div>
             <button class="sq-admin-theme-toggle" id="sqThemeToggle" title="Toggle Theme">
                 <i class="fas fa-sun"></i>
@@ -212,174 +216,176 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
 
                 <div class="detail-item">
                     <div class="detail-label">Requester</div>
-                    <div class="detail-value">
-                        <?php echo showVal($ticket['name']); ?>
-                    </div>
+                    <div class="detail-value"><?php echo showVal($ticket['name']); ?>
                 </div>
+        </div>
 
-                <div class="detail-item">
-                    <div class="detail-label">Email</div>
-                    <div class="detail-value email">
-                        <a href="mailto:<?php echo esc($ticket['email']); ?>">
-                            <i class="fas fa-envelope" style="margin-right: 4px;"></i>
-                            <?php echo showVal($ticket['email']); ?>
+        <div class="detail-item">
+            <div class="detail-label">Email</div>
+            <div class="detail-value email">
+                <a href="mailto:<?php echo esc($ticket['email']); ?>">
+                        <i class="fas fa-envelope" style="margin-right: 4px;"></i>
+                    <?php echo showVal($ticket['email']); ?>
+                </a>
+            </div>
+        </div>
+
+        <div class="detail-item">
+            <div class="detail-label">Phone</div>
+                    <div class=" detail-value">
+                <?php echo $ticket['phone'] ? '<i class="fas fa-phone" style="margin-right: 4px;"></i>' . showVal($ticket['phone']) : '<em style="color: var(--sq-text-light);">Not provided</em>'; ?>
+            </div>
+        </div>
+
+        <div class="detail-item">
+            <div class="detail-label">Subject</div>
+            <div class="detail-value" style="font-weight: 600;">
+                <?php echo showVal($ticket['subject']); ?>
+            </div>
+        </div>
+
+        <div class="detail-item">
+            <div class="detail-label">Message</div>
+            <div class="message-box">
+                <?php echo nl2br(showVal($ticket['message'])); ?>
+            </div>
+        </div>
+
+        <div class="detail-item">
+            <div class="detail-label">Attachments</div>
+            <?php if (!empty($ticket['attachment_path'])):
+                $paths = array_values(array_filter(array_map('trim', explode(',', $ticket['attachment_path'])), 'strlen'));
+                $names = !empty($ticket['attachment_name']) ? array_values(array_filter(array_map('trim', explode(',', $ticket['attachment_name'])), fn($x) => $x !== '')) : [];
+                if (count($paths) > 0): ?>
+                        <ul class="attachments-list">
+                    <?php foreach ($paths as $i => $rawPath):
+                        // FIXED: Extract just the filename from the stored path
+                        $fileName = basename($rawPath);
+                        // Build the correct URL to the attachment
+                        $fileUrl = $attachmentsBaseUrl . '/' . $fileName;
+                        $linkText = $names[$i] ?? $fileName;
+                        ?>
+                                                <li>
+                                                    <span class="attachment-name">
+                                                        <i class="fas fa-paperclip"></i>
+                                                        <?php echo esc(strlen($linkText) > 20 ? substr($linkText, 0, 20) . '...' : $linkText); ?>
+                                                    </span>
+                                                    <div class="attachment-actions">
+                                                        <a href="<?php echo esc($fileUrl); ?>" target="_blank" class="attachment-btn view" title="View">
+                                                            <i class="fas fa-eye"></i>
+                                                        </a>
+                                                        <a href="<?php echo esc($fileUrl); ?>" download class="attachment-btn
+            download" title="Download">
+                        <i class="fas fa-download"></i>
                         </a>
                     </div>
+                    </li>
+                <?php endforeach; ?>
+                </ul>
+            <?php else: ?>
+                <div class="reply-empty" style="margin-top: 8px;"> <i class="fas fa-times-circle"></i> No attachments
                 </div>
+            <?php endif; ?>
+        <?php else: ?>
+            <div class="reply-empty" style="margin-top: 8px;">
+                <i class="fas fa-times-circle"></i> No attachments
+                </div>
+            <?php endif; ?>
+        </div>
 
-                <div class="detail-item">
-                    <div class="detail-label">Phone</div>
-                    <div class="detail-value">
-                        <?php echo $ticket['phone'] ? '<i class="fas fa-phone" style="margin-right: 4px;"></i>' . showVal($ticket['phone']) : '<em style="color: var(--sq-text-light);">Not provided</em>'; ?>
+        <div class="detail-item">
+            <div class="detail-label">Created
+        </div>
+        <div class="detail-value">
+            <i class="fas fa-calendar" style="margin-right: 4px; color: var(--sq-text-light);"></i>
+            <?php echo date('M j, Y g:i A', strtotime($ticket['created_at'])); ?>
+            </div>
+        </div>
+
+        <?php if ($ticket['updated_at']): ?>
+            <div class="detail-item">
+                <div class="detail-label">Last Updated</div>
+                <div class="detail-value">
+                        <i class="fas fa-clock" style="margin-right: 4px; color: var(--sq-text-light);"></i>
+                    <?php echo date('M j, Y g:i A', strtotime($ticket['updated_at'])); ?>
+                </div>
+            </div>
+        <?php endif; ?>
+        </aside>
+
+        <!-- RIGHT TOP: Resolution Card -->
+        <section class="main-top-card">
+            <div class="card-header">
+                    <div class=" card-icon success">
+                <i class="fas fa-check-circle"></i>
                     </div>
-                </div>
+                <h2 class="card-title">Resolution & Answer</h2>
+            </div>
 
-                <div class="detail-item">
-                    <div class="detail-label">Subject</div>
-                    <div class="detail-value" style="font-weight: 600;">
-                        <?php echo showVal($ticket['subject']); ?>
-                    </div>
-                </div>
+            <div class="form-group">
+                <label class="form-label">Resolution / Final Answer</label>
+                <textarea id="ticket-resolution" class="form-textarea"
+                    placeholder="Enter the resolution or final answer for this ticket..."><?php echo esc($ticket['answer'] ?? ''); ?></textarea>
+            </div>
 
-                <div class="detail-item">
-                    <div class="detail-label">Message</div>
-                    <div class="message-box">
-                        <?php echo nl2br(showVal($ticket['message'])); ?>
-                    </div>
-                </div>
+            <div class="action-bar" style="border-top: none; padding-top: 0; margin-top: 0;">
+                <button class="btn btn-success" id="resolutionBtn">
+                    <i class="fas fa-save"></i> Save Resolution
+                </button>
+            </div>
+        </section>
 
-                <div class="detail-item">
-                    <div class="detail-label">Attachments</div>
-                    <?php if (!empty($ticket['attachment_path'])):
-                        $paths = array_values(array_filter(array_map('trim', explode(',', $ticket['attachment_path'])), 'strlen'));
-                        $names = !empty($ticket['attachment_name']) ? array_values(array_filter(array_map('trim', explode(',', $ticket['attachment_name'])), fn($x) => $x !== '')) : [];
-                        if (count($paths) > 0): ?>
-                            <ul class="attachments-list">
-                                <?php foreach ($paths as $i => $rawPath):
-                                    $fileName = basename($rawPath);
-                                    $fileUrl = rtrim($attachmentsBaseUrl, '/') . '/' . $fileName;
-                                    $linkText = $names[$i] ?? $fileName;
-                                    ?>
-                                    <li>
-                                        <span class="attachment-name">
-                                            <i class="fas fa-paperclip"></i>
-                                            <?php echo esc(strlen($linkText) > 20 ? substr($linkText, 0, 20) . '...' : $linkText); ?>
-                                        </span>
-                                        <div class="attachment-actions">
-                                            <a href="<?php echo esc($fileUrl); ?>" target="_blank" class="attachment-btn view">
-                                                <i class="fas fa-eye"></i>
-                                            </a>
-                                            <a href="<?php echo esc($fileUrl); ?>" download class="attachment-btn download">
-                                                <i class="fas fa-download"></i>
-                                            </a>
-                                        </div>
-                                    </li>
+        <!-- RIGHT BOTTOM: Conversation Card -->
+        <section class="main-bottom-card">
+            <div class="card-header">
+                <div class="card-icon chat">
+                    <i class="fas fa-comments"></i>
+                </div>
+                <h2 class="card-title">Conversation History</h2>
+            </div>
+
+            <!-- User Replies -->
+            <div class="replies-section">
+                <div class="replies-title">
+                    <i class="fas fa-user" style="margin-right: 6px;"></i> User Messages
+                </div>
+                <?php
+                $ur = showVal($ticket['user_reply'], '');
+                if ($ur !== '' && $ur !== '—'):
+                    $arr = array_map('trim', explode(',', $ur));
+                    ?>
+                    <ul class="reply-list">
+                        <?php foreach ($arr as $r): ?>
+                            <li class="reply-item user">
+                                                <?php echo esc($r); ?>
+                                        </li>
                                 <?php endforeach; ?>
                             </ul>
-                        <?php else: ?>
-                            <div class="reply-empty" style="margin-top: 8px;">
-                                <i class="fas fa-times-circle"></i> No attachments
+                    <?php else: ?>
+                            <div class="reply-empty">
+                                <i class="fas fa-comment-slash"></i> No user messages yet
                             </div>
                         <?php endif; ?>
-                    <?php else: ?>
-                        <div class="reply-empty" style="margin-top: 8px;">
-                            <i class="fas fa-times-circle"></i> No attachments
-                        </div>
-                    <?php endif; ?>
-                </div>
+            </div>
 
-                <div class="detail-item">
-                    <div class="detail-label">Created</div>
-                    <div class="detail-value">
-                        <i class="fas fa-calendar" style="margin-right: 4px; color: var(--sq-text-light);"></i>
-                        <?php echo date('M j, Y g:i A', strtotime($ticket['created_at'])); ?>
-                    </div>
+            <!-- Admin Replies -->
+            <div class="replies-section">
+                <div class="replies-title">
+                    <i class="fas fa-user-shield" style="margin-right: 6px;"></i> Admin Replies
                 </div>
-
-                <?php if ($ticket['updated_at']): ?>
-                    <div class="detail-item">
-                        <div class="detail-label">Last Updated</div>
-                        <div class="detail-value">
-                            <i class="fas fa-clock" style="margin-right: 4px; color: var(--sq-text-light);"></i>
-                            <?php echo date('M j, Y g:i A', strtotime($ticket['updated_at'])); ?>
-                        </div>
+                <?php if (count($adminRepliesArr) > 0): ?>
+                    <ol class="reply-list" id="admin-replies-list">
+                        <?php foreach ($adminRepliesArr as $r): ?>
+                            <li class="reply-item admin">
+                                <?php echo esc($r); ?>
+                            </li>
+                        <?php endforeach; ?>
+                    </ol>
+                <?php else: ?>
+                    <div class="reply-empty" id="no-admin-replies">
+                                <i class="fas fa-comment-slash"></i> No admin replies yet
                     </div>
                 <?php endif; ?>
-            </aside>
-
-            <!-- RIGHT TOP: Resolution Card -->
-            <section class="main-top-card">
-                <div class="card-header">
-                    <div class="card-icon success">
-                        <i class="fas fa-check-circle"></i>
-                    </div>
-                    <h2 class="card-title">Resolution & Answer</h2>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Resolution / Final Answer</label>
-                    <textarea id="ticket-resolution" class="form-textarea"
-                        placeholder="Enter the resolution or final answer for this ticket..."><?php echo esc($ticket['answer'] ?? ''); ?></textarea>
-                </div>
-
-                <div class="action-bar" style="border-top: none; padding-top: 0; margin-top: 0;">
-                    <button class="btn btn-success" id="resolutionBtn">
-                        <i class="fas fa-save"></i> Save Resolution
-                    </button>
-                </div>
-            </section>
-
-            <!-- RIGHT BOTTOM: Conversation Card -->
-            <section class="main-bottom-card">
-                <div class="card-header">
-                    <div class="card-icon chat">
-                        <i class="fas fa-comments"></i>
-                    </div>
-                    <h2 class="card-title">Conversation History</h2>
-                </div>
-
-                <!-- User Replies -->
-                <div class="replies-section">
-                    <div class="replies-title">
-                        <i class="fas fa-user" style="margin-right: 6px;"></i> User Messages
-                    </div>
-                    <?php
-                    $ur = showVal($ticket['user_reply'], '');
-                    if ($ur !== '' && $ur !== '—'):
-                        $arr = array_map('trim', explode(',', $ur));
-                        ?>
-                        <ul class="reply-list">
-                            <?php foreach ($arr as $r): ?>
-                                <li class="reply-item user">
-                                    <?php echo esc($r); ?>
-                                </li>
-                            <?php endforeach; ?>
-                        </ul>
-                    <?php else: ?>
-                        <div class="reply-empty">
-                            <i class="fas fa-comment-slash"></i> No user messages yet
-                        </div>
-                    <?php endif; ?>
-                </div>
-
-                <!-- Admin Replies -->
-                <div class="replies-section">
-                    <div class="replies-title">
-                        <i class="fas fa-user-shield" style="margin-right: 6px;"></i> Admin Replies
-                    </div>
-                    <?php if (count($adminRepliesArr) > 0): ?>
-                        <ol class="reply-list" id="admin-replies-list">
-                            <?php foreach ($adminRepliesArr as $r): ?>
-                                <li class="reply-item admin">
-                                    <?php echo esc($r); ?>
-                                </li>
-                            <?php endforeach; ?>
-                        </ol>
-                    <?php else: ?>
-                        <div class="reply-empty" id="no-admin-replies">
-                            <i class="fas fa-comment-slash"></i> No admin replies yet
-                        </div>
-                    <?php endif; ?>
                 </div>
 
                 <!-- New Reply Form -->
@@ -439,252 +445,251 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
     <footer class="sq-admin-footer">
         <p>ScanQuotient Security Platform • Quantifying Risk. Strengthening Security.</p>
         <p>
-            Logged in as
-            <?php echo htmlspecialchars($user_name); ?> •
-            <a
-                href="/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Backend/logout_from_the_system.php">Logout</a>
-        </p>
-        <p style="margin-top: 8px; font-size: 12px;">
-            <a href="mailto:elevateecomai@gmail.com?subject=Support%20Request">info@ScanQuotientsupport.com</a>
-        </p>
-    </footer>
+            Logged in as <?php echo htmlspecialchars($user_name); ?> •
+                <a
+                    href="/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Backend/logout_from_the_system.php">Logout</a>
+                </p>
+                <p style="margin-top: 8px; font-size: 12px;">
+                    <a href="mailto:elevateecomai@gmail.com?subject=Support%20Request">info@ScanQuotientsupport.com</a>
+                </p>
+                </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    <script>
-        // Theme Toggle
-        const sqThemeToggle = document.getElementById('sqThemeToggle');
-        const sqBody = document.body;
+                <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+                <script>
+                    // Theme Toggle
+                    const sqThemeToggle = document.getElementById('sqThemeToggle');
+                    const sqBody = document.body;
 
-        function sqSetTheme(theme) {
-            sqBody.classList.toggle('sq-dark', theme === 'dark');
-            sqThemeToggle.innerHTML = theme === 'dark' ? '<i class="fas fa-moon"></i>' : '<i class="fas fa-sun"></i>';
-        }
-
-        sqThemeToggle.addEventListener('click', () => {
-            const current = sqBody.classList.contains('sq-dark') ? 'light' : 'dark';
-            sqSetTheme(current);
-            localStorage.setItem('sq-admin-theme', current);
-        });
-
-        sqSetTheme(localStorage.getItem('sq-admin-theme') || 'light');
-
-        // Help Modal
-        const helpBtn = document.getElementById('helpBtn');
-        const helpModal = document.getElementById('helpModal');
-
-        helpBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            helpModal.classList.add('active');
-        });
-
-        function closeHelpModal() {
-            helpModal.classList.remove('active');
-        }
-
-        window.addEventListener('click', (e) => {
-            if (e.target === helpModal) closeHelpModal();
-        });
-
-        // API Helper
-        function postAction(url, data) {
-            return fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            }).then(r => r.json());
-        }
-
-        function showSwal(msg, type = 'success') {
-            Swal.fire({
-                title: type === 'success' ? 'Success!' : 'Error!',
-                text: msg,
-                icon: type,
-                timer: 3000,
-                timerProgressBar: true,
-                showConfirmButton: false,
-                toast: true,
-                position: 'top-end'
-            });
-        }
-
-        // Status Modal
-        const statusModal = document.getElementById('modal-status');
-        const statusSelect = document.getElementById('statusSelect');
-
-        document.getElementById('statusBtn').addEventListener('click', () => {
-            const current = document.getElementById('status-badge').textContent.trim().toLowerCase().replace(' ', '_');
-            statusSelect.value = current;
-            statusModal.classList.add('active');
-        });
-
-        document.getElementById('statusCancelBtn').addEventListener('click', () => {
-            statusModal.classList.remove('active');
-        });
-
-        document.getElementById('statusConfirmBtn').addEventListener('click', async () => {
-            const newStatus = statusSelect.value;
-            if (!newStatus) {
-                Swal.fire({ icon: 'warning', title: 'Select a status', text: 'Please choose a status first.' });
-                return;
-            }
-
-            const btn = document.getElementById('statusConfirmBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Changing...';
-
-            try {
-                const res = await postAction('../../PHP/Backend/ticket_actions.php', {
-                    action: 'status',
-                    unique_id: '<?php echo esc($ticket['unique_id']); ?>',
-                    status: newStatus
-                });
-
-                showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
-
-                if (res.status === 'ok') {
-                    const badge = document.getElementById('status-badge');
-                    badge.className = 'status-badge status-' + newStatus;
-                    badge.innerHTML = '<i class="fas fa-circle" style="font-size: 8px;"></i> ' + newStatus.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-                    statusModal.classList.remove('active');
-                }
-            } catch (e) {
-                showSwal('Failed to change status', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-check"></i> Change';
-            }
-        });
-
-        window.addEventListener('click', (e) => {
-            if (e.target === statusModal) statusModal.classList.remove('active');
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                statusModal.classList.remove('active');
-                closeHelpModal();
-            }
-        });
-
-        // Resolution
-        document.getElementById('resolutionBtn').addEventListener('click', async () => {
-            const btn = document.getElementById('resolutionBtn');
-            const text = document.getElementById('ticket-resolution').value.trim();
-
-            if (!text) {
-                Swal.fire({ icon: 'error', title: 'Empty', text: 'Resolution cannot be empty!' });
-                return;
-            }
-
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-
-            try {
-                const res = await postAction('../../PHP/Backend/ticket_actions.php', {
-                    action: 'resolution',
-                    unique_id: '<?php echo esc($ticket['unique_id']); ?>',
-                    resolution: text
-                });
-                showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
-            } catch (e) {
-                showSwal('Failed to save', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-save"></i> Save Resolution';
-            }
-        });
-
-        // Reply
-        document.getElementById('replyBtn').addEventListener('click', async () => {
-            const btn = document.getElementById('replyBtn');
-            const text = document.getElementById('admin-reply').value.trim();
-
-            if (!text) {
-                Swal.fire({ icon: 'error', title: 'Empty', text: 'Reply cannot be empty!' });
-                return;
-            }
-
-            btn.disabled = true;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
-
-            try {
-                const res = await postAction('../../PHP/Backend/ticket_actions.php', {
-                    action: 'reply',
-                    unique_id: '<?php echo esc($ticket['unique_id']); ?>',
-                    reply: text
-                });
-
-                showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
-
-                if (res.status === 'ok') {
-                    // Add to list
-                    let list = document.getElementById('admin-replies-list');
-                    const empty = document.getElementById('no-admin-replies');
-
-                    if (!list) {
-                        if (empty) empty.remove();
-                        list = document.createElement('ol');
-                        list.className = 'reply-list';
-                        list.id = 'admin-replies-list';
-                        document.querySelectorAll('.replies-section')[1].appendChild(list);
+                    function sqSetTheme(theme) {
+                        sqBody.classList.toggle('sq-dark', theme === 'dark');
+                        sqThemeToggle.innerHTML = theme === 'dark' ? '<i class="fas fa-moon"></i>' : '<i class="fas fa-sun"></i>';
                     }
 
-                    const li = document.createElement('li');
-                    li.className = 'reply-item admin';
-                    li.textContent = text;
-                    list.appendChild(li);
+                    sqThemeToggle.addEventListener('click', () => {
+                        const current = sqBody.classList.contains('sq-dark') ? 'light' : 'dark';
+                        sqSetTheme(current);
+                        localStorage.setItem('sq-admin-theme', current);
+                    });
 
-                    document.getElementById('admin-reply').value = '';
-                }
-            } catch (e) {
-                showSwal('Failed to send', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-paper-plane"></i> Send Reply';
-            }
-        });
+                    sqSetTheme(localStorage.getItem('sq-admin-theme') || 'light');
 
-        // Delete
-        document.getElementById('deleteBtn').addEventListener('click', () => {
-            Swal.fire({
-                title: 'Delete this ticket?',
-                text: 'This action cannot be undone!',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#ef4444',
-                cancelButtonColor: '#3b82f6',
-                confirmButtonText: 'Yes, delete it!'
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    const btn = document.getElementById('deleteBtn');
-                    btn.disabled = true;
-                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+                    // Help Modal
+                    const helpBtn = document.getElementById('helpBtn');
+                    const helpModal = document.getElementById('helpModal');
 
-                    postAction('', {
-                        action: 'delete',
-                        unique_id: '<?php echo esc($ticket['unique_id']); ?>'
-                    }).then(res => {
-                            Swal.fire({
-                                title: res.status === 'ok' ? 'Deleted!' : 'Error!',
-                                text: res.message,
-                                icon: res.status === 'ok' ? 'success' : 'error',
-                                timer: 1500,
-                                showConfirmButton: false
-                            }).then(() => {
-                                if (res.status === 'ok') {
-                                    window.location.href = '../../PHP/Frontend/Admin_ticket_support.php';
-                                }
-                            });
-                        }).catch(() => {
-                            Swal.fire({ title: 'Error!', text: 'Failed to delete', icon: 'error', timer: 1500, showConfirmButton: false });
-                        }).finally(() => {
-                            btn.disabled = false;
-                            btn.innerHTML = '<i class="fas fa-trash-alt"></i> Delete Ticket';
+                    helpBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        helpModal.classList.add('active');
+                    });
+
+                    function closeHelpModal() {
+                        helpModal.classList.remove('active');
+                    }
+
+                    window.addEventListener('click', (e) => {
+                        if (e.target === helpModal) closeHelpModal();
+                    });
+
+                    // API Helper
+                    function postAction(url, data) {
+                        return fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(data)
+                        }).then(r => r.json());
+                    }
+
+                    function showSwal(msg, type = 'success') {
+                        Swal.fire({
+                            title: type === 'success' ? 'Success!' : 'Error!',
+                            text: msg,
+                            icon: type,
+                            timer: 3000,
+                            timerProgressBar: true,
+                            showConfirmButton: false,
+                            toast: true,
+                            position: 'top-end'
                         });
-                }
-            });
-        });
-    </script>
+                    }
+
+                    // Status Modal
+                    const statusModal = document.getElementById('modal-status');
+                    const statusSelect = document.getElementById('statusSelect');
+
+                    document.getElementById('statusBtn').addEventListener('click', () => {
+                        const current = document.getElementById('status-badge').textContent.trim().toLowerCase().replace(' ', '_');
+                        statusSelect.value = current;
+                        statusModal.classList.add('active');
+                    });
+
+                    document.getElementById('statusCancelBtn').addEventListener('click', () => {
+                        statusModal.classList.remove('active');
+                    });
+
+                    document.getElementById('statusConfirmBtn').addEventListener('click', async () => {
+                        const newStatus = statusSelect.value;
+                        if (!newStatus) {
+                            Swal.fire({ icon: 'warning', title: 'Select a status', text: 'Please choose a status first.' });
+                            return;
+                        }
+
+                        const btn = document.getElementById('statusConfirmBtn');
+                        btn.disabled = true;
+                        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Changing...';
+
+                        try {
+                            const res = await postAction('../../PHP/Backend/ticket_actions.php', {
+                                action: 'status',
+                                unique_id: '<?php echo esc($ticket['unique_id']); ?>',
+                                status: newStatus
+                            });
+
+                            showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
+
+                            if (res.status === 'ok') {
+                                const badge = document.getElementById('status-badge');
+                                badge.className = 'status-badge status-' + newStatus;
+                                badge.innerHTML = '<i class="fas fa-circle" style="font-size: 8px;"></i> ' + newStatus.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+                                statusModal.classList.remove('active');
+                            }
+                        } catch (e) {
+                            showSwal('Failed to change status', 'error');
+                        } finally {
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="fas fa-check"></i> Change';
+                        }
+                    });
+
+                    window.addEventListener('click', (e) => {
+                        if (e.target === statusModal) statusModal.classList.remove('active');
+                    });
+
+                    document.addEventListener('keydown', (e) => {
+                        if (e.key === 'Escape') {
+                            statusModal.classList.remove('active');
+                            closeHelpModal();
+                        }
+                    });
+
+                    // Resolution
+                    document.getElementById('resolutionBtn').addEventListener('click', async () => {
+                        const btn = document.getElementById('resolutionBtn');
+                        const text = document.getElementById('ticket-resolution').value.trim();
+
+                        if (!text) {
+                            Swal.fire({ icon: 'error', title: 'Empty', text: 'Resolution cannot be empty!' });
+                            return;
+                        }
+
+                        btn.disabled = true;
+                        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+                        try {
+                            const res = await postAction('../../PHP/Backend/ticket_actions.php', {
+                                action: 'resolution',
+                                unique_id: '<?php echo esc($ticket['unique_id']); ?>',
+                                resolution: text
+                            });
+                            showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
+                        } catch (e) {
+                            showSwal('Failed to save', 'error');
+                        } finally {
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="fas fa-save"></i> Save Resolution';
+                        }
+                    });
+
+                    // Reply
+                    document.getElementById('replyBtn').addEventListener('click', async () => {
+                        const btn = document.getElementById('replyBtn');
+                        const text = document.getElementById('admin-reply').value.trim();
+
+                        if (!text) {
+                            Swal.fire({ icon: 'error', title: 'Empty', text: 'Reply cannot be empty!' });
+                            return;
+                        }
+
+                        btn.disabled = true;
+                        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+
+                        try {
+                            const res = await postAction('../../PHP/Backend/ticket_actions.php', {
+                                action: 'reply',
+                                unique_id: '<?php echo esc($ticket['unique_id']); ?>',
+                                reply: text
+                            });
+
+                            showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
+
+                            if (res.status === 'ok') {
+                                // Add to list
+                                let list = document.getElementById('admin-replies-list');
+                                const empty = document.getElementById('no-admin-replies');
+
+                                if (!list) {
+                                    if (empty) empty.remove();
+                                    list = document.createElement('ol');
+                                    list.className = 'reply-list';
+                                    list.id = 'admin-replies-list';
+                                    document.querySelectorAll('.replies-section')[1].appendChild(list);
+                                }
+
+                                const li = document.createElement('li');
+                                li.className = 'reply-item admin';
+                                li.textContent = text;
+                                list.appendChild(li);
+
+                                document.getElementById('admin-reply').value = '';
+                            }
+                        } catch (e) {
+                            showSwal('Failed to send', 'error');
+                        } finally {
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="fas fa-paper-plane"></i> Send Reply';
+                        }
+                    });
+
+                    // Delete
+                    document.getElementById('deleteBtn').addEventListener('click', () => {
+                        Swal.fire({
+                            title: 'Delete this ticket?',
+                            text: 'This action cannot be undone!',
+                            icon: 'warning',
+                            showCancelButton: true,
+                            confirmButtonColor: '#ef4444',
+                            cancelButtonColor: '#3b82f6',
+                            confirmButtonText: 'Yes, delete it!'
+                        }).then((result) => {
+                            if (result.isConfirmed) {
+                                const btn = document.getElementById('deleteBtn');
+                                btn.disabled = true;
+                                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+
+                                postAction('', {
+                                    action: 'delete',
+                                    unique_id: '<?php echo esc($ticket['unique_id']); ?>'
+                    }).then(res => {
+                                        Swal.fire({
+                                            title: res.status === 'ok' ? 'Deleted!' : 'Error!',
+                                            text: res.message,
+                                            icon: res.status === 'ok' ? 'success' : 'error',
+                                            timer: 1500,
+                                            showConfirmButton: false
+                                        }).then(() => {
+                                            if (res.status === 'ok') {
+                                                window.location.href = '../../PHP/Frontend/Admin_ticket_support.php';
+                                            }
+                                        });
+                                    }).catch(() => {
+                                        Swal.fire({ title: 'Error!', text: 'Failed to delete', icon: 'error', timer: 1500, showConfirmButton: false });
+                                    }).finally(() => {
+                                        btn.disabled = false;
+                                        btn.innerHTML = '<i class="fas fa-trash-alt"></i> Delete Ticket';
+                                    });
+                            }
+                        });
+                    });
+                </script>
 </body>
 
 </html>
