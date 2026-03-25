@@ -51,6 +51,10 @@ if ($perPageParam === 'all') {
 }
 $totalItems = 0;
 $totalPages = 1;
+$scanMetricsLabels = [];
+$scanMetricsDailyCounts = [];
+$scanMetricsRiskLabels = [];
+$scanMetricsRiskCounts = [];
 
 try {
     $pdo = new PDO($dsn, DB_USER, DB_PASS, [
@@ -124,6 +128,53 @@ try {
     ");
     $stmt->execute($params);
     $scans = $stmt->fetchAll() ?: [];
+
+    // Metrics dataset (filtered to current view, not paginated)
+    $metricsStmt = $pdo->prepare("
+        SELECT scan_json, created_at
+        FROM scan_results
+        WHERE {$whereSql}
+        ORDER BY created_at DESC
+    ");
+    $metricsStmt->execute($params);
+    $allScansForMetrics = $metricsStmt->fetchAll() ?: [];
+    $dailyMap = [];
+    $riskMap = [];
+    $days = 14;
+    foreach ($allScansForMetrics as $rowMetric) {
+        $createdAtMetric = (string) ($rowMetric['created_at'] ?? '');
+        $tsMetric = strtotime($createdAtMetric);
+        if ($tsMetric !== false) {
+            $dayKey = date('Y-m-d', $tsMetric);
+            if (!isset($dailyMap[$dayKey])) {
+                $dailyMap[$dayKey] = 0;
+            }
+            $dailyMap[$dayKey]++;
+        }
+
+        $scanJsonMetric = json_decode((string) ($rowMetric['scan_json'] ?? ''), true) ?: [];
+        $riskLevelMetric = strtolower(trim((string) ($scanJsonMetric['summary']['risk_level'] ?? 'unknown')));
+        if ($riskLevelMetric === '') {
+            $riskLevelMetric = 'unknown';
+        }
+        if (!isset($riskMap[$riskLevelMetric])) {
+            $riskMap[$riskLevelMetric] = 0;
+        }
+        $riskMap[$riskLevelMetric]++;
+    }
+
+    for ($i = $days - 1; $i >= 0; $i--) {
+        $day = date('Y-m-d', strtotime("-{$i} days"));
+        $scanMetricsLabels[] = date('M j', strtotime($day));
+        $scanMetricsDailyCounts[] = (int) ($dailyMap[$day] ?? 0);
+    }
+    if (!empty($riskMap)) {
+        arsort($riskMap);
+        foreach ($riskMap as $riskKey => $riskCount) {
+            $scanMetricsRiskLabels[] = ucfirst($riskKey);
+            $scanMetricsRiskCounts[] = (int) $riskCount;
+        }
+    }
     $groups = [];
     $stmtG = $pdo->prepare("SELECT id, name FROM scan_groups WHERE user_id = ? ORDER BY name");
     $stmtG->execute([$currentUserId]);
@@ -165,6 +216,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
     <title>Scan History | ScanQuotient</title>
     <link rel="icon" type="image/png" href="../../../../Storage/Public_images/page_icon.png" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         :root {
             --bg-main: #f0f7ff;
@@ -510,6 +562,48 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             grid-template-columns: repeat(4, 1fr);
             gap: 20px;
             margin-bottom: 30px;
+        }
+
+        .metrics-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow);
+        }
+
+        .metrics-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .metrics-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--text-main);
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .metrics-subtitle {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-light);
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 16px;
+        }
+
+        .metrics-canvas-wrap {
+            height: 280px;
         }
 
         .stat-card {
@@ -1312,6 +1406,10 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             .stats-grid {
                 grid-template-columns: repeat(2, 1fr);
             }
+
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         @media (max-width: 768px) {
@@ -1474,6 +1572,23 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
 
         <main class="main">
             <div class="history-container">
+                <div class="metrics-card">
+                    <div class="metrics-header">
+                        <div class="metrics-title">
+                            <i class="fas fa-chart-line" style="color: var(--brand-color);"></i>
+                            Scan metrics
+                        </div>
+                        <div class="metrics-subtitle">Last 14 days trend + risk distribution</div>
+                    </div>
+                    <div class="metrics-grid">
+                        <div class="metrics-canvas-wrap">
+                            <canvas id="scanTrendChart"></canvas>
+                        </div>
+                        <div class="metrics-canvas-wrap">
+                            <canvas id="scanRiskChart"></canvas>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- History Table -->
                 <div class="history-card">
@@ -2640,6 +2755,78 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             updateStats();
             simulateRealtimeActivity();
         }
+
+        // Metrics charts (server-driven)
+        (function () {
+            if (typeof Chart === 'undefined') return;
+            const trendEl = document.getElementById('scanTrendChart');
+            const riskEl = document.getElementById('scanRiskChart');
+            if (!trendEl && !riskEl) return;
+
+            const trendLabels = <?php echo json_encode($scanMetricsLabels ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            const trendData = <?php echo json_encode($scanMetricsDailyCounts ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            const riskLabels = <?php echo json_encode($scanMetricsRiskLabels ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            const riskData = <?php echo json_encode($scanMetricsRiskCounts ?? [], JSON_UNESCAPED_SLASHES); ?>;
+
+            const isDark = document.body.classList.contains('dark');
+            const grid = isDark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(148, 163, 184, 0.24)';
+            const ticks = isDark ? '#cbd5e1' : '#475569';
+
+            if (trendEl && trendLabels.length) {
+                new Chart(trendEl.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: trendLabels,
+                        datasets: [{
+                            label: 'Scans',
+                            data: trendData,
+                            borderColor: isDark ? '#a78bfa' : '#3b82f6',
+                            backgroundColor: isDark ? 'rgba(167, 139, 250, 0.18)' : 'rgba(59, 130, 246, 0.14)',
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { labels: { color: ticks, font: { weight: '700' } } } },
+                        scales: {
+                            x: { grid: { color: grid }, ticks: { color: ticks, font: { weight: '700' } } },
+                            y: { grid: { color: grid }, ticks: { color: ticks }, beginAtZero: true }
+                        }
+                    }
+                });
+            }
+
+            if (riskEl && riskLabels.length) {
+                new Chart(riskEl.getContext('2d'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: riskLabels,
+                        datasets: [{
+                            data: riskData,
+                            backgroundColor: [
+                                'rgba(239, 68, 68, 0.58)',
+                                'rgba(245, 158, 11, 0.58)',
+                                'rgba(59, 130, 246, 0.58)',
+                                'rgba(16, 185, 129, 0.58)',
+                                'rgba(100, 116, 139, 0.58)'
+                            ],
+                            borderColor: isDark ? 'rgba(15, 23, 42, 0.5)' : 'rgba(255, 255, 255, 0.9)',
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'bottom', labels: { color: ticks, font: { weight: '700' } } }
+                        }
+                    }
+                });
+            }
+        })();
 
         // Back to top
         (function () {

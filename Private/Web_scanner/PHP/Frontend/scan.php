@@ -95,7 +95,7 @@ if (!empty($profile_photo)) {
                                 <input type="url" id="targetURL" class="url-input" placeholder="https://example.com  "
                                     required>
                                 <button type="button" id="scanBtn" class="scan-btn">
-                                    <img src="../../../../Storage/Public_images/page_icon.png" alt="" class="scan-btn-icon" aria-hidden="true">
+                                    <i class="fas fa-crosshairs scan-btn-icon" aria-hidden="true"></i>
                                     Start Scan
                                 </button>
                             </div>

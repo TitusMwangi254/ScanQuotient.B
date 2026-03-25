@@ -158,7 +158,6 @@ async function gatherData() {
   const b = browserInfoFromUA(ua);
   const os = osFromUA(ua);
 
-  // Network
   const profile = conn ? `${conn.effectiveType || conn.type || "Unknown"}${conn.saveData ? " • Data Saver" : ""}` : (navigator.onLine ? "Online" : "Offline");
   setCell("connType", profile, conn?.type ? `type: ${conn.type}` : "");
   setCell("downlink", conn?.downlink ? `${conn.downlink} Mbps` : "--", conn?.downlinkMax ? `max ${conn.downlinkMax} Mbps` : "");
@@ -177,7 +176,6 @@ async function gatherData() {
     setCell("networkProvider", "Unavailable", "Provider lookup failed");
   }
 
-  // Browser
   setCell("browserInfo", b.name, "client runtime");
   setCell("browserVersion", b.version, b.version !== "Unknown" ? "detected from user-agent" : "");
   setCell("osInfo", os, "host operating system");
@@ -191,7 +189,6 @@ async function gatherData() {
     navigator.cookieEnabled ? "session persistence available" : "some workflows may break"
   );
 
-  // Security
   const isHttps = window.location.protocol === "https:";
   setCell(
     "httpsStatus",
@@ -248,7 +245,6 @@ async function gatherData() {
     adBlock ? "some third-party requests may be blocked" : ""
   );
 
-  // System
   setCell("cpuCores", navigator.hardwareConcurrency || "--", "logical cores");
   setCell("deviceMemory", navigator.deviceMemory ? `${navigator.deviceMemory} GB` : "--", "approximate");
   setCell("viewportSize", `${window.innerWidth} × ${window.innerHeight}`, "usable browser area");
@@ -301,7 +297,6 @@ function init() {
   setInterval(gatherData, 30000);
 }
 
-// Session Timer
 let seconds = 0;
 setInterval(() => {
   seconds++;
@@ -318,3 +313,4 @@ window.addEventListener("resize", () => {
 });
 
 document.addEventListener("DOMContentLoaded", init);
+
