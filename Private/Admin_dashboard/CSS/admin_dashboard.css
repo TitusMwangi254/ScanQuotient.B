@@ -49,19 +49,25 @@
       line-height: 1.6;
   }
 
-  /* Header - Light mode: white to light blue | Dark mode: black to light purple */
+  /* Transparent glass header so scrolled content blurs underneath */
   .page-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       padding: 16px 32px;
-      background: linear-gradient(to right, #ffffff, #ADD8E6);
-      border-bottom: 1px solid var(--border-color);
+      background: rgba(255, 255, 255, 0.16);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.28);
       box-shadow: var(--shadow);
+      position: sticky;
+      top: 0;
+      z-index: 120;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
   }
 
   body.dark .page-header {
-      background: linear-gradient(to right, #000000, #D6BCFA);
+      background: rgba(15, 23, 42, 0.22);
+      border-bottom-color: rgba(148, 163, 184, 0.28);
   }
 
   .header-left {

@@ -133,9 +133,9 @@ if (!empty($profile_photo)) {
             <div class="brand">Navigation</div>
             <nav>
                 <a href="#" class="nav-btn active"><i class="fas fa-home"></i><span>Dashboard</span></a>
-                <a href="/ScanQuotient/ScanQuotient/Privatepages/Business_owner_portal/PHP/scan.php" class="nav-btn"><i
+                <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/scan.php" class="nav-btn"><i
                         class="fas fa-plus-circle"></i><span>New Scan</span></a>
-                <a href="/ScanQuotient/ScanQuotient/Privatepages/Business_owner_portal/PHP/historical_scans.php"
+                <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php"
                     class="nav-btn"><i class="fas fa-history"></i><span>History</span></a>
                 <div class="nav-divider"></div>
                 <a href="/ScanQuotient.v2/ScanQuotient.B/Public/Help_center/PHP/Frontend/Help_center.php"
@@ -223,12 +223,12 @@ if (!empty($profile_photo)) {
                         </div>
 
                         <div class="action-buttons">
-                            <a href="/ScanQuotient/ScanQuotient/Privatepages/Business_owner_portal/PHP/scan.php"
+                            <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/scan.php"
                                 class="btn-primary">
-                                <i class="fas fa-rocket"></i> Start New Scan
+                                <img src="../../../../Storage/Public_images/page_icon.png" alt="" class="action-btn-icon" aria-hidden="true"> Start New Scan
                             </a>
 
-                            <a href="/ScanQuotient/ScanQuotient/Privatepages/Business_owner_portal/PHP/historical_scans.php"
+                            <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php"
                                 class="btn-secondary">
                                 <i class="fas fa-history"></i> View Scan History
                             </a>

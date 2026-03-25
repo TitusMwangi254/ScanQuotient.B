@@ -47,16 +47,19 @@ body {
     justify-content: space-between;
     align-items: center;
     padding: 16px 32px;
-    background: linear-gradient(to right, #ffffff, #ADD8E6);
-    border-bottom: 1px solid var(--sq-border);
+    background: rgba(255, 255, 255, 0.16);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.28);
     box-shadow: var(--sq-shadow);
     position: sticky;
     top: 0;
-    z-index: 100;
+    z-index: 120;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
 }
 
 body.sq-dark .sq-admin-header {
-    background: linear-gradient(to right, #000000, #D6BCFA);
+    background: rgba(15, 23, 42, 0.22);
+    border-bottom-color: rgba(148, 163, 184, 0.28);
 }
 
 .sq-admin-header-left {
@@ -643,4 +646,19 @@ body.sq-dark {
 
 .sq-admin-header a:hover {
     color: var(--sq-link-hover);
+}
+
+.header-profile-photo {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px;
+    min-height: 38px;
+    max-width: 38px !important;
+    max-height: 38px !important;
+    display: block;
+    flex: 0 0 38px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid rgba(59, 130, 246, 0.35);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
 }

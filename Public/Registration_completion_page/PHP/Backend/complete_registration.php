@@ -169,7 +169,7 @@ try {
     echo json_encode([
         'status' => 'success',
         'message' => 'Account setup completed successfully!',
-        'redirect' => '../../../Login_page/PHP/Frontend/Login_page_site.php'
+        'redirect' => '/ScanQuotient.v2/ScanQuotient.B/Public/Login_page/PHP/Frontend/Login_page_site.php'
     ]);
 
 } catch (PDOException $e) {

@@ -35,6 +35,14 @@ define('DB_STORAGE_PATH', 'Storage/User_Profile_images');
 
 $adminId = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 'unknown';
 $adminName = $_SESSION['user_name'] ?? 'Admin';
+$profile_photo = $_SESSION['profile_photo'] ?? null;
+if (!empty($profile_photo)) {
+    $photo_path = ltrim((string) $profile_photo, '/');
+    $base_url = '/ScanQuotient.v2/ScanQuotient.B';
+    $avatar_url = $base_url . '/' . $photo_path;
+} else {
+    $avatar_url = '/ScanQuotient.v2/ScanQuotient.B/Storage/Public_images/default-avatar.png';
+}
 $successMessage = '';
 $errorMessage = '';
 $toastMessage = '';
@@ -78,14 +86,14 @@ try {
         // Handle AJAX photo upload
         if ($action === 'update_profile_photo') {
             header('Content-Type: application/json');
-            
+
             if (!isset($_FILES['photo']) || $_FILES['photo']['error'] !== UPLOAD_ERR_OK) {
                 echo json_encode(['success' => false, 'message' => 'No file uploaded or upload error']);
                 exit;
             }
 
             $file = $_FILES['photo'];
-            
+
             // Validate file type
             $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
             if (!in_array($file['type'], $allowedTypes)) {
@@ -140,7 +148,7 @@ try {
                 $surname = trim($_POST['surname'] ?? '');
                 $gender = in_array($_POST['gender'] ?? '', $validGenders) ? $_POST['gender'] : 'other';
                 $phoneNumber = trim($_POST['phone_number'] ?? '');
-                
+
                 if (empty($firstName) || empty($surname)) {
                     $toastMessage = "First name and surname are required";
                     $toastType = "error";
@@ -199,7 +207,7 @@ try {
             case 'update_security':
                 $twoFactorEnabled = in_array($_POST['two_factor_enabled'] ?? '', $validYesNo) ? $_POST['two_factor_enabled'] : 'no';
                 $passwordResetStatus = in_array($_POST['password_reset_status'] ?? '', $validYesNo) ? $_POST['password_reset_status'] : 'no';
-                
+
                 $stmt = $pdo->prepare("UPDATE users SET two_factor_enabled = ?, password_reset_status = ?, updated_at = NOW(), updated_by = ? WHERE id = ?");
                 $stmt->execute([$twoFactorEnabled, $passwordResetStatus, $adminName, $userId]);
                 $toastMessage = "Security settings updated successfully";
@@ -213,14 +221,14 @@ try {
                 // Generate temporary password
                 $tempPassword = bin2hex(random_bytes(4)); // 8 characters
                 $passwordHash = password_hash($tempPassword, PASSWORD_DEFAULT);
-                
+
                 // Update database - set password_reset_status to yes
                 $stmt = $pdo->prepare("UPDATE users SET password_hash = ?, password_reset_status = 'yes', last_password_change = NOW(), password_reset_expires = DATE_ADD(NOW(), INTERVAL 24 HOUR), updated_at = NOW(), updated_by = ? WHERE id = ?");
                 $stmt->execute([$passwordHash, $adminName, $userId]);
-                
+
                 // Send email with temporary password
                 $emailSent = sendPasswordResetEmail($user['email'], $user['first_name'], $tempPassword);
-                
+
                 if ($emailSent) {
                     $toastMessage = "Password reset. Temporary password sent to " . htmlspecialchars($user['email']) . " (24h expiry)";
                     $toastType = "success";
@@ -228,7 +236,7 @@ try {
                     $toastMessage = "Password reset but email failed to send. Temp password: " . $tempPassword;
                     $toastType = "warning";
                 }
-                
+
                 $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
                 $stmt->execute([$userId]);
                 $user = $stmt->fetch();
@@ -241,8 +249,11 @@ try {
                 } else {
                     $stmt = $pdo->prepare("UPDATE users SET deleted_at = NOW(), deleted_by = ? WHERE id = ?");
                     $stmt->execute([$adminName, $userId]);
-                    header("Location: " . BASE_URL . "/Privatepages/Admin_dashboard/PHP/Frontend/admin_users_list.php?view=deleted&success=deleted");
-                    exit();
+                    $toastMessage = "User moved to trash successfully";
+                    $toastType = "success";
+                    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+                    $stmt->execute([$userId]);
+                    $user = $stmt->fetch();
                 }
                 break;
 
@@ -268,7 +279,7 @@ try {
                     } else {
                         $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
                         $stmt->execute([$userId]);
-                        header("Location: " . BASE_URL . "/Privatepages/Admin_dashboard/PHP/Frontend/admin_users_list.php?success=permanently_deleted");
+                        header("Location: " . BASE_URL . "/Private/User_management/PHP/Frontend/User_management.php?status=trash&success=permanently_deleted");
                         exit();
                     }
                 }
@@ -278,7 +289,7 @@ try {
                 $privacyAgreed = in_array($_POST['privacy_agreed'] ?? '', $validYesNo) ? $_POST['privacy_agreed'] : 'no';
                 $termsAgreed = in_array($_POST['terms_agreed'] ?? '', $validYesNo) ? $_POST['terms_agreed'] : 'no';
                 $agreementAgreed = in_array($_POST['agreement_agreed'] ?? '', $validYesNo) ? $_POST['agreement_agreed'] : 'no';
-                
+
                 $privacyAgreedAt = $privacyAgreed === 'yes' ? ($user['privacy_agreed_at'] ?? date('Y-m-d H:i:s')) : null;
                 $termsAgreedAt = $termsAgreed === 'yes' ? ($user['terms_agreed_at'] ?? date('Y-m-d H:i:s')) : null;
                 $agreementAgreedAt = $agreementAgreed === 'yes' ? ($user['agreement_agreed_at'] ?? date('Y-m-d H:i:s')) : null;
@@ -291,7 +302,108 @@ try {
                 $stmt->execute([$userId]);
                 $user = $stmt->fetch();
                 break;
+
+            case 'clear_certificate_acceptance':
+                $certId = intval($_POST['certificate_id'] ?? 0);
+                if ($certId <= 0) {
+                    $toastMessage = "Invalid certificate request";
+                    $toastType = "error";
+                    break;
+                }
+                try {
+                    $hasCerts = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch();
+                    $hasAccept = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
+                    if ($hasCerts && $hasAccept) {
+                        $del = $pdo->prepare("DELETE FROM security_certificate_acceptances WHERE certificate_id = ? AND user_id = ? LIMIT 1");
+                        $del->execute([$certId, $user['user_id']]);
+                        $toastMessage = "Certificate acceptance cleared. User will be asked to sign again.";
+                        $toastType = "success";
+                    } else {
+                        $toastMessage = "Certificates feature is not available in this environment.";
+                        $toastType = "warning";
+                    }
+                } catch (Exception $e) {
+                    error_log("Clear certificate acceptance error: " . $e->getMessage());
+                    $toastMessage = "Failed to clear certificate acceptance.";
+                    $toastType = "error";
+                }
+                break;
+
+            case 'clear_all_certificate_acceptances':
+                try {
+                    $hasCerts = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch();
+                    $hasAccept = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
+                    if ($hasCerts && $hasAccept) {
+                        $del = $pdo->prepare("DELETE FROM security_certificate_acceptances WHERE user_id = ?");
+                        $del->execute([$user['user_id']]);
+                        $toastMessage = "All certificate acceptances cleared. User will be asked to sign again.";
+                        $toastType = "success";
+                    } else {
+                        $toastMessage = "Certificates feature is not available in this environment.";
+                        $toastType = "warning";
+                    }
+                } catch (Exception $e) {
+                    error_log("Clear all certificate acceptances error: " . $e->getMessage());
+                    $toastMessage = "Failed to clear certificate acceptances.";
+                    $toastType = "error";
+                }
+                break;
         }
+    }
+
+    // Certificates overview for this user (optional feature)
+    $userCertificates = [];
+    $userCertificatesAvailable = false;
+    try {
+        $userCertificatesAvailable = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch()
+            && (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
+        if ($userCertificatesAvailable) {
+            // Include active, non-trashed certificates only
+            $certWhereDeleted = '';
+            try {
+                $cols = $pdo->query("SHOW COLUMNS FROM security_certificates LIKE 'deleted_at'")->fetch();
+                if ($cols) {
+                    $certWhereDeleted = " AND (c.deleted_at IS NULL)";
+                }
+            } catch (Exception $e) {
+                $certWhereDeleted = '';
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT
+                    c.id,
+                    c.title,
+                    c.target_type,
+                    c.target_value,
+                    c.is_active,
+                    c.created_at,
+                    a.accepted_at
+                FROM security_certificates c
+                LEFT JOIN security_certificate_acceptances a
+                    ON a.certificate_id = c.id AND a.user_id = :uid
+                WHERE c.is_active = 'yes'
+                  {$certWhereDeleted}
+                  AND (
+                        c.target_type = 'everyone'
+                        OR (c.target_type = 'role' AND c.target_value = :role)
+                        OR (c.target_type = 'user_id' AND c.target_value = :uid2)
+                        OR (c.target_type = 'username' AND c.target_value = :uname)
+                  )
+                ORDER BY c.created_at DESC
+                LIMIT 100
+            ");
+            // Important: separate params for native prepares (no reuse issues)
+            $stmt->execute([
+                ':uid' => $user['user_id'],
+                ':uid2' => $user['user_id'],
+                ':role' => $user['role'],
+                ':uname' => $user['user_name']
+            ]);
+            $userCertificates = $stmt->fetchAll();
+        }
+    } catch (Exception $e) {
+        $userCertificatesAvailable = false;
+        $userCertificates = [];
     }
 
 } catch (Exception $e) {
@@ -302,32 +414,37 @@ try {
 }
 
 // Helper functions
-function formatDate($date) {
+function formatDate($date)
+{
     return $date ? date('F j, Y \a\t g:i A', strtotime($date)) : 'Never';
 }
 
-function getYesNoColor($value) {
+function getYesNoColor($value)
+{
     return $value === 'yes' ? 'var(--sq-success)' : 'var(--sq-danger)';
 }
 
-function getYesNoIcon($value) {
+function getYesNoIcon($value)
+{
     return $value === 'yes' ? 'fa-check-circle' : 'fa-times-circle';
 }
 
 // Profile photo URL helper - same as admin_users_list.php
-function getProfilePhotoUrl($profilePhoto, $firstName, $surname) {
+function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
+{
     if (!empty($profilePhoto)) {
         // Images are in ScanQuotient.v2/ScanQuotient.B folder
         $photoPath = ltrim($profilePhoto, '/');
         return STORAGE_URL . '/' . $photoPath;
     }
-    
+
     // Fallback to UI Avatars
     return 'https://ui-avatars.com/api/?name=' . urlencode($firstName . '+' . $surname) . '&background=8b5cf6&color=fff&size=200';
 }
 
 // Send password reset email
-function sendPasswordResetEmail($toEmail, $firstName, $tempPassword) {
+function sendPasswordResetEmail($toEmail, $firstName, $tempPassword)
+{
     try {
         $mail = new PHPMailer(true);
 
@@ -406,11 +523,13 @@ If you did not request this reset, contact your administrator immediately.
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo $user ? htmlspecialchars($user['first_name'] . ' ' . $user['surname']) : 'User'; ?> | ScanQuotient Admin</title>
-       <link rel="icon" type="image/png" href="../../../../Storage/Public_images/page_icon.png" />
+    <title><?php echo $user ? htmlspecialchars($user['first_name'] . ' ' . $user['surname']) : 'User'; ?> | ScanQuotient
+        Admin</title>
+    <link rel="icon" type="image/png" href="../../../../Storage/Public_images/page_icon.png" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="../../CSS/user_detail.css" />
     <style>
@@ -435,7 +554,7 @@ If you did not request this reset, contact your administrator immediately.
             gap: 12px;
             min-width: 300px;
             max-width: 400px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
             animation: sq-toast-in 0.3s ease;
             backdrop-filter: blur(10px);
         }
@@ -460,6 +579,7 @@ If you did not request this reset, contact your administrator immediately.
                 transform: translateX(100%);
                 opacity: 0;
             }
+
             to {
                 transform: translateX(0);
                 opacity: 1;
@@ -471,6 +591,7 @@ If you did not request this reset, contact your administrator immediately.
                 transform: translateX(0);
                 opacity: 1;
             }
+
             to {
                 transform: translateX(100%);
                 opacity: 0;
@@ -559,6 +680,7 @@ If you did not request this reset, contact your administrator immediately.
                 opacity: 0;
                 transform: translateY(-20px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -705,23 +827,91 @@ If you did not request this reset, contact your administrator immediately.
         body.sq-dark .sq-user-avatar-large {
             border-color: var(--sq-border-dark, #4b5563);
         }
+
+        /* Edit toggle (read-only on load for better UX) */
+        .sq-edit-fab {
+            position: fixed;
+            right: 22px;
+            bottom: 22px;
+            z-index: 1200;
+            border-radius: 999px;
+            border: none;
+            background: #3b82f6;
+            color: #fff;
+            height: 46px;
+            padding: 0 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 12px 26px rgba(59, 130, 246, 0.35);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .sq-edit-fab:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 14px 30px rgba(59, 130, 246, 0.45);
+        }
+
+        .sq-requires-edit[disabled] {
+            opacity: 0.58;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        .sq-readonly-scope input:disabled,
+        .sq-readonly-scope select:disabled,
+        .sq-readonly-scope textarea:disabled {
+            opacity: 0.72;
+            cursor: not-allowed;
+        }
+
+        .sq-edit-mode-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(59, 130, 246, 0.28);
+            background: rgba(59, 130, 246, 0.1);
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
+        }
+
+        .sq-edit-mode-pill--editable {
+            border-color: rgba(16, 185, 129, 0.32);
+            background: rgba(16, 185, 129, 0.14);
+            color: #047857;
+        }
     </style>
 </head>
+
 <body>
 
     <!-- Toast Container -->
     <div class="sq-toast-container" id="sqToastContainer"></div>
- <header class="sq-admin-header">
+    <?php if ($user && empty($user['deleted_at'])): ?>
+        <button type="button" id="sqEditFab" class="sq-edit-fab" title="Enable edit mode">
+            <i class="fas fa-pen"></i>
+            <span>Edit</span>
+        </button>
+    <?php endif; ?>
+    <header class="sq-admin-header">
         <div class="sq-admin-header-left">
-            <a href="../../../../Private/Admin_dashboard/PHP/Frontend/Admin_dashboard.php" class="sq-admin-back-btn">
+            <a href="/ScanQuotient.v2/ScanQuotient.B/Private/User_management/PHP/Frontend/User_management.php"
+                class="sq-admin-back-btn">
                 <i class="fas fa-arrow-left"></i>
             </a>
             <div class="brand-wrapper">
-               <a href="#" class="sq-admin-brand" style="color:#6c63ff;">ScanQuotient</a>
+                <a href="#" class="sq-admin-brand" style="color:#6c63ff;">ScanQuotient</a>
                 <p class="sq-admin-tagline">Quantifying Risk. Strengthening Security.</p>
             </div>
         </div>
         <div class="sq-admin-header-right">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo">
             <div class="sq-admin-user">
                 <i class="fas fa-user-shield"></i>
                 <span>
@@ -740,8 +930,10 @@ If you did not request this reset, contact your administrator immediately.
     <!-- Confirmation Modals -->
     <div class="sq-modal" id="sqDeleteModal">
         <div class="sq-modal-content">
-            <h3 class="sq-modal-title"><i class="fas fa-exclamation-triangle" style="color: var(--sq-danger);"></i> Move to Trash?</h3>
-            <p class="sq-modal-text">This will soft delete the user account. They will not be able to log in, but the data can be restored later.</p>
+            <h3 class="sq-modal-title"><i class="fas fa-exclamation-triangle" style="color: var(--sq-danger);"></i> Move
+                to Trash?</h3>
+            <p class="sq-modal-text">This will soft delete the user account. They will not be able to log in, but the
+                data can be restored later.</p>
             <div class="sq-modal-actions">
                 <button class="sq-btn sq-btn-secondary" onclick="sqCloseModal('sqDeleteModal')">Cancel</button>
                 <form method="POST" style="display: inline;">
@@ -756,8 +948,10 @@ If you did not request this reset, contact your administrator immediately.
 
     <div class="sq-modal" id="sqPermanentDeleteModal">
         <div class="sq-modal-content">
-            <h3 class="sq-modal-title"><i class="fas fa-exclamation-circle" style="color: var(--sq-danger);"></i> Permanently Delete?</h3>
-            <p class="sq-modal-text">This action cannot be undone. All user data will be permanently removed from the database.</p>
+            <h3 class="sq-modal-title"><i class="fas fa-exclamation-circle" style="color: var(--sq-danger);"></i>
+                Permanently Delete?</h3>
+            <p class="sq-modal-text">This action cannot be undone. All user data will be permanently removed from the
+                database.</p>
             <div class="sq-modal-actions">
                 <button class="sq-btn sq-btn-secondary" onclick="sqCloseModal('sqPermanentDeleteModal')">Cancel</button>
                 <form method="POST" style="display: inline;">
@@ -777,7 +971,7 @@ If you did not request this reset, contact your administrator immediately.
                 <i class="fas fa-camera"></i> Update Profile Photo
             </h3>
             <p class="sq-upload-modal-subtitle">Drag and drop an image or click to browse</p>
-            
+
             <div class="sq-upload-dropzone" id="sqDropzone">
                 <div class="sq-upload-dropzone-content" id="sqDropzoneContent">
                     <i class="fas fa-cloud-upload-alt sq-upload-dropzone-icon"></i>
@@ -796,7 +990,8 @@ If you did not request this reset, contact your administrator immediately.
                 <button type="button" class="sq-btn sq-btn-secondary" onclick="sqCloseUploadModal()">
                     <i class="fas fa-times"></i> Cancel
                 </button>
-                <button type="button" class="sq-btn sq-btn-primary" id="sqSavePhotoBtn" onclick="sqSavePhoto()" disabled>
+                <button type="button" class="sq-btn sq-btn-primary" id="sqSavePhotoBtn" onclick="sqSavePhoto()"
+                    disabled>
                     <i class="fas fa-save"></i> Save Photo
                 </button>
             </div>
@@ -808,23 +1003,21 @@ If you did not request this reset, contact your administrator immediately.
         <?php if ($user): ?>
             <!-- User Header -->
             <div class="sq-user-header">
-                <?php 
+                <?php
                 // FIXED: Use helper function to get correct image URL
                 $avatarUrl = getProfilePhotoUrl($user['profile_photo'], $user['first_name'], $user['surname']);
                 ?>
-                
+
                 <!-- Profile Image with Hover Effect -->
                 <div class="sq-profile-image-container" onclick="sqOpenUploadModal()" title="Click to change photo">
-                    <img src="<?php echo htmlspecialchars($avatarUrl); ?>" 
-                         alt="" 
-                         class="sq-user-avatar-large"
-                         id="sqCurrentAvatar"
-                         onerror="this.src='https://ui-avatars.com/api/?name=<?php echo urlencode($user['first_name'] . '+' . $user['surname']); ?>&background=8b5cf6&color=fff&size=200'">
+                    <img src="<?php echo htmlspecialchars($avatarUrl); ?>" alt="" class="sq-user-avatar-large"
+                        id="sqCurrentAvatar"
+                        onerror="this.src='https://ui-avatars.com/api/?name=<?php echo urlencode($user['first_name'] . '+' . $user['surname']); ?>&background=8b5cf6&color=fff&size=200'">
                     <div class="sq-profile-image-overlay">
                         <i class="fas fa-camera sq-profile-image-icon"></i>
                     </div>
                 </div>
-                
+
                 <div class="sq-user-header-info">
                     <h1 class="sq-user-header-name">
                         <?php echo htmlspecialchars($user['first_name'] . ' ' . ($user['middle_name'] ? $user['middle_name'] . ' ' : '') . $user['surname']); ?>
@@ -832,25 +1025,35 @@ If you did not request this reset, contact your administrator immediately.
                             <span style="color: var(--sq-danger); font-size: 18px;">(DELETED)</span>
                         <?php endif; ?>
                     </h1>
-                    
+
                     <div class="sq-user-header-meta">
-                        <span class="sq-user-header-badge" style="background: <?php echo $user['role'] === 'super_admin' ? 'rgba(239,68,68,0.1)' : ($user['role'] === 'admin' ? 'rgba(245,158,11,0.1)' : 'rgba(59,130,246,0.1)'); ?>; color: <?php echo $user['role'] === 'super_admin' ? 'var(--sq-danger)' : ($user['role'] === 'admin' ? 'var(--sq-warning)' : 'var(--sq-brand)'); ?>;">
-                            <i class="fas <?php echo $user['role'] === 'super_admin' ? 'fa-crown' : ($user['role'] === 'admin' ? 'fa-user-shield' : 'fa-user'); ?>"></i>
+                        <span class="sq-user-header-badge"
+                            style="background: <?php echo $user['role'] === 'super_admin' ? 'rgba(239,68,68,0.1)' : ($user['role'] === 'admin' ? 'rgba(245,158,11,0.1)' : 'rgba(59,130,246,0.1)'); ?>; color: <?php echo $user['role'] === 'super_admin' ? 'var(--sq-danger)' : ($user['role'] === 'admin' ? 'var(--sq-warning)' : 'var(--sq-brand)'); ?>;">
+                            <i
+                                class="fas <?php echo $user['role'] === 'super_admin' ? 'fa-crown' : ($user['role'] === 'admin' ? 'fa-user-shield' : 'fa-user'); ?>"></i>
                             <?php echo ucfirst(str_replace('_', ' ', $user['role'])); ?>
                         </span>
-                        
-                        <span class="sq-user-header-badge" style="background: <?php echo $user['account_active'] === 'yes' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'; ?>; color: <?php echo $user['account_active'] === 'yes' ? 'var(--sq-success)' : 'var(--sq-danger)'; ?>;">
+
+                        <span class="sq-user-header-badge"
+                            style="background: <?php echo $user['account_active'] === 'yes' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'; ?>; color: <?php echo $user['account_active'] === 'yes' ? 'var(--sq-success)' : 'var(--sq-danger)'; ?>;">
                             <i class="fas <?php echo $user['account_active'] === 'yes' ? 'fa-check' : 'fa-times'; ?>"></i>
                             <?php echo $user['account_active'] === 'yes' ? 'Active' : 'Inactive'; ?>
                         </span>
-                        
-                        <span class="sq-user-header-badge" style="background: rgba(59,130,246,0.1); color: var(--sq-brand);">
+
+                        <span class="sq-user-header-badge"
+                            style="background: rgba(59,130,246,0.1); color: var(--sq-brand);">
                             <i class="fas fa-id-card"></i>
                             ID: <?php echo htmlspecialchars($user['user_id']); ?>
                         </span>
                     </div>
-                    
+
                     <div class="sq-user-actions">
+                        <?php if (empty($user['deleted_at'])): ?>
+                            <span id="sqEditModePill" class="sq-edit-mode-pill">
+                                <i class="fas fa-lock"></i>
+                                <span>Read-only mode</span>
+                            </span>
+                        <?php endif; ?>
                         <?php if ($user['deleted_at']): ?>
                             <form method="POST" style="display: inline;">
                                 <input type="hidden" name="action" value="restore">
@@ -862,7 +1065,7 @@ If you did not request this reset, contact your administrator immediately.
                                 <i class="fas fa-trash-alt"></i> Delete Forever
                             </button>
                         <?php else: ?>
-                            <button type="button" class="sq-btn sq-btn-warning" onclick="sqOpenModal('sqDeleteModal')">
+                            <button type="button" class="sq-btn sq-btn-warning sq-requires-edit" onclick="sqOpenModal('sqDeleteModal')">
                                 <i class="fas fa-trash"></i> Deactivate user
                             </button>
                         <?php endif; ?>
@@ -872,7 +1075,7 @@ If you did not request this reset, contact your administrator immediately.
 
             <!-- Edit Sections -->
             <div class="sq-sections-grid">
-                
+
                 <!-- Profile Information -->
                 <div class="sq-section">
                     <div class="sq-section-header">
@@ -881,40 +1084,47 @@ If you did not request this reset, contact your administrator immediately.
                         </div>
                         <h2 class="sq-section-title">Profile Information</h2>
                     </div>
-                    
+
                     <form method="POST">
                         <input type="hidden" name="action" value="update_profile">
                         <div class="sq-form-grid">
                             <div class="sq-form-group">
                                 <label class="sq-form-label">First Name</label>
-                                <input type="text" name="first_name" class="sq-form-input" value="<?php echo htmlspecialchars($user['first_name']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
+                                <input type="text" name="first_name" class="sq-form-input"
+                                    value="<?php echo htmlspecialchars($user['first_name']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Surname</label>
-                                <input type="text" name="surname" class="sq-form-input" value="<?php echo htmlspecialchars($user['surname']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
+                                <input type="text" name="surname" class="sq-form-input"
+                                    value="<?php echo htmlspecialchars($user['surname']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Middle Name</label>
-                                <input type="text" name="middle_name" class="sq-form-input" value="<?php echo htmlspecialchars($user['middle_name'] ?? ''); ?>" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
+                                <input type="text" name="middle_name" class="sq-form-input"
+                                    value="<?php echo htmlspecialchars($user['middle_name'] ?? ''); ?>" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Gender</label>
                                 <select name="gender" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
-                                    <option value="male" <?php echo $user['gender'] === 'male' ? 'selected' : ''; ?>>Male</option>
-                                    <option value="female" <?php echo $user['gender'] === 'female' ? 'selected' : ''; ?>>Female</option>
-                                    <option value="other" <?php echo $user['gender'] === 'other' ? 'selected' : ''; ?>>Other</option>
+                                    <option value="male" <?php echo $user['gender'] === 'male' ? 'selected' : ''; ?>>Male
+                                    </option>
+                                    <option value="female" <?php echo $user['gender'] === 'female' ? 'selected' : ''; ?>>
+                                        Female</option>
+                                    <option value="other" <?php echo $user['gender'] === 'other' ? 'selected' : ''; ?>>Other
+                                    </option>
                                 </select>
                             </div>
-                            
+
                             <div class="sq-form-group sq-form-group--full">
                                 <label class="sq-form-label">Phone Number</label>
-                                <input type="tel" name="phone_number" class="sq-form-input" value="<?php echo htmlspecialchars($user['phone_number']); ?>" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
+                                <input type="tel" name="phone_number" class="sq-form-input"
+                                    value="<?php echo htmlspecialchars($user['phone_number']); ?>" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                             </div>
                         </div>
-                        
+
                         <?php if (!$user['deleted_at']): ?>
                             <div style="margin-top: 24px;">
                                 <button type="submit" class="sq-btn sq-btn-primary">
@@ -933,56 +1143,66 @@ If you did not request this reset, contact your administrator immediately.
                         </div>
                         <h2 class="sq-section-title">Account Settings</h2>
                     </div>
-                    
+
                     <form method="POST">
                         <input type="hidden" name="action" value="update_account">
                         <div class="sq-form-grid">
                             <div class="sq-form-group sq-form-group--full">
                                 <label class="sq-form-label">Primary Email</label>
-                                <input type="email" name="email" class="sq-form-input" value="<?php echo htmlspecialchars($user['email']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
+                                <input type="email" name="email" class="sq-form-input"
+                                    value="<?php echo htmlspecialchars($user['email']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                             </div>
-                            
+
                             <div class="sq-form-group sq-form-group--full">
                                 <label class="sq-form-label">Recovery Email</label>
-                                <input type="email" name="recovery_email" class="sq-form-input" value="<?php echo htmlspecialchars($user['recovery_email']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
+                                <input type="email" name="recovery_email" class="sq-form-input"
+                                    value="<?php echo htmlspecialchars($user['recovery_email']); ?>" required <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Username</label>
-                                <input type="text" name="user_name" class="sq-form-input" value="<?php echo htmlspecialchars($user['user_name'] ?? ''); ?>" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
+                                <input type="text" name="user_name" class="sq-form-input"
+                                    value="<?php echo htmlspecialchars($user['user_name'] ?? ''); ?>" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Role</label>
                                 <select name="role" class="sq-form-select" <?php echo ($user['deleted_at'] || ($user['role'] === 'super_admin' && $adminRole !== 'super_admin')) ? 'disabled' : ''; ?>>
-                                    <option value="user" <?php echo $user['role'] === 'user' ? 'selected' : ''; ?>>User</option>
-                                    <option value="admin" <?php echo $user['role'] === 'admin' ? 'selected' : ''; ?>>Admin</option>
+                                    <option value="user" <?php echo $user['role'] === 'user' ? 'selected' : ''; ?>>User
+                                    </option>
+                                    <option value="admin" <?php echo $user['role'] === 'admin' ? 'selected' : ''; ?>>Admin
+                                    </option>
                                     <?php if ($adminRole === 'super_admin'): ?>
                                         <option value="super_admin" <?php echo $user['role'] === 'super_admin' ? 'selected' : ''; ?>>Super Admin</option>
                                     <?php endif; ?>
                                 </select>
                                 <?php if ($user['role'] === 'super_admin' && $adminRole !== 'super_admin'): ?>
-                                    <span class="sq-form-hint" style="color: var(--sq-danger);">Only super admins can change this</span>
+                                    <span class="sq-form-hint" style="color: var(--sq-danger);">Only super admins can change
+                                        this</span>
                                 <?php endif; ?>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Account Active</label>
                                 <select name="account_active" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
-                                    <option value="yes" <?php echo $user['account_active'] === 'yes' ? 'selected' : ''; ?>>Yes</option>
-                                    <option value="no" <?php echo $user['account_active'] === 'no' ? 'selected' : ''; ?>>No</option>
+                                    <option value="yes" <?php echo $user['account_active'] === 'yes' ? 'selected' : ''; ?>>Yes
+                                    </option>
+                                    <option value="no" <?php echo $user['account_active'] === 'no' ? 'selected' : ''; ?>>No
+                                    </option>
                                 </select>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Email Verified</label>
                                 <select name="email_verified" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
-                                    <option value="yes" <?php echo $user['email_verified'] === 'yes' ? 'selected' : ''; ?>>Yes</option>
-                                    <option value="no" <?php echo $user['email_verified'] === 'no' ? 'selected' : ''; ?>>No</option>
+                                    <option value="yes" <?php echo $user['email_verified'] === 'yes' ? 'selected' : ''; ?>>Yes
+                                    </option>
+                                    <option value="no" <?php echo $user['email_verified'] === 'no' ? 'selected' : ''; ?>>No
+                                    </option>
                                 </select>
                             </div>
                         </div>
-                        
+
                         <?php if (!$user['deleted_at']): ?>
                             <div style="margin-top: 24px;">
                                 <button type="submit" class="sq-btn sq-btn-primary">
@@ -1001,7 +1221,7 @@ If you did not request this reset, contact your administrator immediately.
                         </div>
                         <h2 class="sq-section-title">Security Settings</h2>
                     </div>
-                    
+
                     <form method="POST">
                         <input type="hidden" name="action" value="update_security">
                         <div class="sq-form-grid">
@@ -1009,10 +1229,11 @@ If you did not request this reset, contact your administrator immediately.
                                 <label class="sq-form-label">Two-Factor Auth</label>
                                 <select name="two_factor_enabled" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
                                     <option value="yes" <?php echo $user['two_factor_enabled'] === 'yes' ? 'selected' : ''; ?>>Enabled</option>
-                                    <option value="no" <?php echo $user['two_factor_enabled'] === 'no' ? 'selected' : ''; ?>>Disabled</option>
+                                    <option value="no" <?php echo $user['two_factor_enabled'] === 'no' ? 'selected' : ''; ?>>
+                                        Disabled</option>
                                 </select>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Password Reset Required</label>
                                 <select name="password_reset_status" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
@@ -1021,7 +1242,7 @@ If you did not request this reset, contact your administrator immediately.
                                 </select>
                             </div>
                         </div>
-                        
+
                         <?php if (!$user['deleted_at']): ?>
                             <div style="margin-top: 24px;">
                                 <button type="submit" class="sq-btn sq-btn-primary">
@@ -1030,13 +1251,14 @@ If you did not request this reset, contact your administrator immediately.
                             </div>
                         <?php endif; ?>
                     </form>
-                    
+
                     <!-- Single Password Reset Button -->
                     <?php if (!$user['deleted_at']): ?>
                         <div style="margin-top: 16px;">
-                            <form method="POST" style="display: inline;" onsubmit="return confirm('Generate temporary password? User will be forced to reset on next login.')">
+                            <form method="POST" style="display: inline;"
+                                onsubmit="return confirm('Generate temporary password? User will be forced to reset on next login.')">
                                 <input type="hidden" name="action" value="reset_password">
-                                <button type="submit" class="sq-btn sq-btn-warning">
+                                <button type="submit" class="sq-btn sq-btn-warning sq-requires-edit">
                                     <i class="fas fa-key"></i> Generate Temp Password
                                 </button>
                             </form>
@@ -1052,44 +1274,53 @@ If you did not request this reset, contact your administrator immediately.
                         </div>
                         <h2 class="sq-section-title">Legal Agreements</h2>
                     </div>
-                    
+
                     <form method="POST">
                         <input type="hidden" name="action" value="update_agreements">
                         <div class="sq-form-grid">
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Privacy Policy</label>
                                 <select name="privacy_agreed" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
-                                    <option value="yes" <?php echo $user['privacy_agreed'] === 'yes' ? 'selected' : ''; ?>>Agreed</option>
-                                    <option value="no" <?php echo $user['privacy_agreed'] === 'no' ? 'selected' : ''; ?>>Not Agreed</option>
+                                    <option value="yes" <?php echo $user['privacy_agreed'] === 'yes' ? 'selected' : ''; ?>>
+                                        Agreed</option>
+                                    <option value="no" <?php echo $user['privacy_agreed'] === 'no' ? 'selected' : ''; ?>>Not
+                                        Agreed</option>
                                 </select>
                                 <?php if ($user['privacy_agreed_at']): ?>
-                                    <span class="sq-form-hint">Agreed on: <?php echo formatDate($user['privacy_agreed_at']); ?></span>
+                                    <span class="sq-form-hint">Agreed on:
+                                        <?php echo formatDate($user['privacy_agreed_at']); ?></span>
                                 <?php endif; ?>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Terms of Service</label>
                                 <select name="terms_agreed" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
-                                    <option value="yes" <?php echo $user['terms_agreed'] === 'yes' ? 'selected' : ''; ?>>Agreed</option>
-                                    <option value="no" <?php echo $user['terms_agreed'] === 'no' ? 'selected' : ''; ?>>Not Agreed</option>
+                                    <option value="yes" <?php echo $user['terms_agreed'] === 'yes' ? 'selected' : ''; ?>>
+                                        Agreed</option>
+                                    <option value="no" <?php echo $user['terms_agreed'] === 'no' ? 'selected' : ''; ?>>Not
+                                        Agreed</option>
                                 </select>
                                 <?php if ($user['terms_agreed_at']): ?>
-                                    <span class="sq-form-hint">Agreed on: <?php echo formatDate($user['terms_agreed_at']); ?></span>
+                                    <span class="sq-form-hint">Agreed on:
+                                        <?php echo formatDate($user['terms_agreed_at']); ?></span>
                                 <?php endif; ?>
                             </div>
-                            
+
                             <div class="sq-form-group">
                                 <label class="sq-form-label">User Agreement</label>
                                 <select name="agreement_agreed" class="sq-form-select" <?php echo $user['deleted_at'] ? 'disabled' : ''; ?>>
-                                    <option value="yes" <?php echo $user['agreement_agreed'] === 'yes' ? 'selected' : ''; ?>>Agreed</option>
-                                    <option value="no" <?php echo $user['agreement_agreed'] === 'no' ? 'selected' : ''; ?>>Not Agreed</option>
+                                    <option value="yes" <?php echo $user['agreement_agreed'] === 'yes' ? 'selected' : ''; ?>>
+                                        Agreed</option>
+                                    <option value="no" <?php echo $user['agreement_agreed'] === 'no' ? 'selected' : ''; ?>>Not
+                                        Agreed</option>
                                 </select>
                                 <?php if ($user['agreement_agreed_at']): ?>
-                                    <span class="sq-form-hint">Agreed on: <?php echo formatDate($user['agreement_agreed_at']); ?></span>
+                                    <span class="sq-form-hint">Agreed on:
+                                        <?php echo formatDate($user['agreement_agreed_at']); ?></span>
                                 <?php endif; ?>
                             </div>
                         </div>
-                        
+
                         <?php if (!$user['deleted_at']): ?>
                             <div style="margin-top: 24px;">
                                 <button type="submit" class="sq-btn sq-btn-primary">
@@ -1100,6 +1331,83 @@ If you did not request this reset, contact your administrator immediately.
                     </form>
                 </div>
 
+                <!-- Certificates -->
+                <div class="sq-section">
+                    <div class="sq-section-header">
+                        <div class="sq-section-icon">
+                            <i class="fas fa-file-signature"></i>
+                        </div>
+                        <h2 class="sq-section-title">Certificates</h2>
+                    </div>
+
+                    <?php if (!$userCertificatesAvailable): ?>
+                        <div class="sq-form-hint" style="color: var(--sq-text-light);">
+                            Certificates are not enabled in this environment.
+                        </div>
+                    <?php elseif (empty($userCertificates)): ?>
+                        <div class="sq-form-hint" style="color: var(--sq-text-light);">
+                            No active certificates currently apply to this user.
+                        </div>
+                    <?php else: ?>
+                        <div style="overflow:auto;">
+                            <table class="sq-data-table" style="min-width: 720px;">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Title</th>
+                                        <th>Target</th>
+                                        <th>Signed</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($userCertificates as $c): ?>
+                                        <tr>
+                                            <td>#<?php echo (int) $c['id']; ?></td>
+                                            <td><?php echo htmlspecialchars($c['title']); ?></td>
+                                            <td style="color: var(--sq-text-light); font-size: 12px;">
+                                                <?php echo htmlspecialchars($c['target_type']); ?>
+                                                <?php echo !empty($c['target_value']) ? (': ' . htmlspecialchars($c['target_value'])) : ''; ?>
+                                            </td>
+                                            <td>
+                                                <?php if (!empty($c['accepted_at'])): ?>
+                                                    <span style="color: var(--sq-success); font-weight: 800;">
+                                                        <i class="fas fa-check-circle"></i>
+                                                        <?php echo htmlspecialchars(date('M j, Y', strtotime($c['accepted_at']))); ?>
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span style="color: var(--sq-danger); font-weight: 800;">
+                                                        <i class="fas fa-times-circle"></i> No
+                                                    </span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <form method="POST" style="display:inline;" onsubmit="return confirm('Clear this certificate acceptance? User will be required to sign again.')">
+                                                    <input type="hidden" name="action" value="clear_certificate_acceptance">
+                                                    <input type="hidden" name="certificate_id" value="<?php echo (int) $c['id']; ?>">
+                                                    <button type="submit" class="sq-btn sq-btn-warning sq-requires-edit">
+                                                        <i class="fas fa-rotate-left"></i> Clear
+                                                    </button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div style="margin-top: 14px; display:flex; justify-content:flex-end; gap: 10px; flex-wrap: wrap;">
+                            <form method="POST" style="display:inline;"
+                                onsubmit="return confirm('Clear all certificate acceptances for this user? They will be required to sign again.')">
+                                <input type="hidden" name="action" value="clear_all_certificate_acceptances">
+                                <button type="submit" class="sq-btn sq-btn-danger sq-requires-edit">
+                                    <i class="fas fa-broom"></i> Clear All
+                                </button>
+                            </form>
+                        </div>
+                    <?php endif; ?>
+                </div>
+
                 <!-- System Information (Read Only) -->
                 <div class="sq-section">
                     <div class="sq-section-header">
@@ -1108,58 +1416,60 @@ If you did not request this reset, contact your administrator immediately.
                         </div>
                         <h2 class="sq-section-title">System Information</h2>
                     </div>
-                    
+
                     <div class="sq-info-grid">
                         <div class="sq-info-item">
                             <span class="sq-info-label">User ID</span>
                             <span class="sq-info-value"><?php echo htmlspecialchars($user['user_id']); ?></span>
                         </div>
-                        
+
                         <div class="sq-info-item">
                             <span class="sq-info-label">Database ID</span>
                             <span class="sq-info-value">#<?php echo $user['id']; ?></span>
                         </div>
-                        
+
                         <div class="sq-info-item">
                             <span class="sq-info-label">Created At</span>
                             <span class="sq-info-value"><?php echo formatDate($user['created_at']); ?></span>
                         </div>
-                        
+
                         <div class="sq-info-item">
                             <span class="sq-info-label">Last Updated</span>
                             <span class="sq-info-value"><?php echo formatDate($user['updated_at']); ?></span>
                         </div>
-                        
+
                         <?php if ($user['created_by']): ?>
                             <div class="sq-info-item">
                                 <span class="sq-info-label">Created By</span>
                                 <span class="sq-info-value"><?php echo htmlspecialchars($user['created_by']); ?></span>
                             </div>
                         <?php endif; ?>
-                        
+
                         <?php if ($user['updated_by']): ?>
                             <div class="sq-info-item">
                                 <span class="sq-info-label">Last Updated By</span>
                                 <span class="sq-info-value"><?php echo htmlspecialchars($user['updated_by']); ?></span>
                             </div>
                         <?php endif; ?>
-                        
+
                         <?php if ($user['last_password_change']): ?>
                             <div class="sq-info-item">
                                 <span class="sq-info-label">Last Password Change</span>
                                 <span class="sq-info-value"><?php echo formatDate($user['last_password_change']); ?></span>
                             </div>
                         <?php endif; ?>
-                        
+
                         <?php if ($user['deleted_at']): ?>
                             <div class="sq-info-item">
                                 <span class="sq-info-label" style="color: var(--sq-danger);">Deleted At</span>
-                                <span class="sq-info-value" style="color: var(--sq-danger);"><?php echo formatDate($user['deleted_at']); ?></span>
+                                <span class="sq-info-value"
+                                    style="color: var(--sq-danger);"><?php echo formatDate($user['deleted_at']); ?></span>
                             </div>
-                            
+
                             <div class="sq-info-item">
                                 <span class="sq-info-label" style="color: var(--sq-danger);">Deleted By</span>
-                                <span class="sq-info-value" style="color: var(--sq-danger);"><?php echo htmlspecialchars($user['deleted_by']); ?></span>
+                                <span class="sq-info-value"
+                                    style="color: var(--sq-danger);"><?php echo htmlspecialchars($user['deleted_by']); ?></span>
                             </div>
                         <?php endif; ?>
                     </div>
@@ -1173,8 +1483,10 @@ If you did not request this reset, contact your administrator immediately.
                     <i class="fas fa-user-times"></i>
                 </div>
                 <h2 style="color: var(--sq-text-main); margin-bottom: 8px;">User Not Found</h2>
-                <p style="color: var(--sq-text-light);">The requested user could not be found or you don't have permission to view them.</p>
-                <a href="<?php echo BASE_URL; ?>/Privatepages/Admin_dashboard/PHP/Frontend/admin_users_list.php" class="sq-btn sq-btn-primary" style="margin-top: 24px;">
+                <p style="color: var(--sq-text-light);">The requested user could not be found or you don't have permission
+                    to view them.</p>
+                <a href="<?php echo BASE_URL; ?>/Privatepages/Admin_dashboard/PHP/Frontend/admin_users_list.php"
+                    class="sq-btn sq-btn-primary" style="margin-top: 24px;">
                     <i class="fas fa-arrow-left"></i> Back to Users List
                 </a>
             </div>
@@ -1208,17 +1520,17 @@ If you did not request this reset, contact your administrator immediately.
             const container = document.getElementById('sqToastContainer');
             const toast = document.createElement('div');
             toast.className = `sq-toast sq-toast--${type}`;
-            
-            const icon = type === 'success' ? 'fa-check-circle' : 
-                        type === 'error' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle';
-            
+
+            const icon = type === 'success' ? 'fa-check-circle' :
+                type === 'error' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle';
+
             toast.innerHTML = `
                 <i class="fas ${icon}"></i>
                 <span>${message}</span>
             `;
-            
+
             container.appendChild(toast);
-            
+
             // Auto remove after 5 seconds
             setTimeout(() => {
                 toast.classList.add('hiding');
@@ -1261,6 +1573,59 @@ If you did not request this reset, contact your administrator immediately.
                 });
             }
         });
+
+        // Read-only on load; edit icon toggles full editable behavior.
+        (function () {
+            const editFab = document.getElementById('sqEditFab');
+            if (!editFab) return;
+            const managedActions = new Set(['update_profile', 'update_account', 'update_security', 'update_agreements', 'reset_password']);
+            const managedForms = Array.from(document.querySelectorAll('form')).filter((f) => {
+                const actionInput = f.querySelector('input[name="action"]');
+                return actionInput && managedActions.has(actionInput.value || '');
+            });
+
+            const controls = managedForms.flatMap((form) =>
+                Array.from(form.querySelectorAll('input, select, textarea, button[type="submit"]'))
+            );
+            const editOnlyControls = Array.from(document.querySelectorAll('.sq-requires-edit'));
+            const modePill = document.getElementById('sqEditModePill');
+
+            const applyMode = (editable) => {
+                managedForms.forEach((form) => form.classList.toggle('sq-readonly-scope', !editable));
+                controls.forEach((el) => {
+                    if (!el.dataset.initialDisabled) {
+                        el.dataset.initialDisabled = el.disabled ? '1' : '0';
+                    }
+                    const initiallyDisabled = el.dataset.initialDisabled === '1';
+                    if (editable) {
+                        el.disabled = initiallyDisabled;
+                    } else {
+                        if (!initiallyDisabled) el.disabled = true;
+                    }
+                });
+                editOnlyControls.forEach((el) => {
+                    el.disabled = !editable;
+                });
+                editFab.innerHTML = editable
+                    ? '<i class="fas fa-lock-open"></i><span>Editing enabled</span>'
+                    : '<i class="fas fa-pen"></i><span>Edit</span>';
+                editFab.title = editable ? 'Editing enabled' : 'Enable edit mode';
+                editFab.style.background = editable ? '#10b981' : '#3b82f6';
+
+                if (modePill) {
+                    modePill.classList.toggle('sq-edit-mode-pill--editable', editable);
+                    modePill.innerHTML = editable
+                        ? '<i class="fas fa-lock-open"></i><span>Edit mode enabled</span>'
+                        : '<i class="fas fa-lock"></i><span>Read-only mode</span>';
+                }
+            };
+
+            applyMode(false);
+            editFab.addEventListener('click', () => {
+                const currentlyEditable = editFab.title === 'Editing enabled';
+                applyMode(!currentlyEditable);
+            });
+        })();
 
         // Profile Image Upload Functionality
         let selectedFile = null;
@@ -1321,7 +1686,7 @@ If you did not request this reset, contact your administrator immediately.
         sqDropzone.addEventListener('drop', (e) => {
             e.preventDefault();
             sqDropzone.classList.remove('sq-dragover');
-            
+
             if (e.dataTransfer.files && e.dataTransfer.files[0]) {
                 const file = e.dataTransfer.files[0];
                 if (file.type.startsWith('image/')) {
@@ -1340,7 +1705,7 @@ If you did not request this reset, contact your administrator immediately.
             }
 
             selectedFile = file;
-            
+
             // Show preview
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -1371,24 +1736,24 @@ If you did not request this reset, contact your administrator immediately.
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // Update the avatar image
-                    document.getElementById('sqCurrentAvatar').src = data.photoUrl;
-                    sqCloseUploadModal();
-                    showToast('Profile photo updated successfully', 'success');
-                } else {
-                    showToast(data.message || 'Failed to upload photo', 'error');
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                showToast('An error occurred while uploading the photo', 'error');
-            })
-            .finally(() => {
-                sqSavePhotoBtn.innerHTML = '<i class="fas fa-save"></i> Save Photo';
-            });
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Update the avatar image
+                        document.getElementById('sqCurrentAvatar').src = data.photoUrl;
+                        sqCloseUploadModal();
+                        showToast('Profile photo updated successfully', 'success');
+                    } else {
+                        showToast(data.message || 'Failed to upload photo', 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showToast('An error occurred while uploading the photo', 'error');
+                })
+                .finally(() => {
+                    sqSavePhotoBtn.innerHTML = '<i class="fas fa-save"></i> Save Photo';
+                });
         }
 
         // Close upload modal on outside click
@@ -1398,5 +1763,55 @@ If you did not request this reset, contact your administrator immediately.
             }
         });
     </script>
+
+    <button id="backToTopBtn" class="sq-back-to-top" title="Back to top" aria-label="Back to top" type="button">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+    <style>
+        .sq-back-to-top{
+            position: fixed;
+            right: 24px;
+            bottom: 86px; /* sits above the edit FAB */
+            width: 44px;
+            height: 44px;
+            border-radius: 999px;
+            border: none;
+            background: var(--sq-success, #10b981);
+            color: white;
+            box-shadow: 0 10px 24px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            z-index: 1100;
+        }
+        body.sq-dark .sq-back-to-top{
+            background: #059669;
+            box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+        }
+        .sq-back-to-top.sq-back-to-top--visible{
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-2px);
+        }
+    </style>
+    <script>
+        (function () {
+            const backToTopBtn = document.getElementById('backToTopBtn');
+            if (!backToTopBtn) return;
+            const onScroll = function () {
+                backToTopBtn.classList.toggle('sq-back-to-top--visible', window.scrollY > 400);
+            };
+            window.addEventListener('scroll', onScroll);
+            onScroll();
+            backToTopBtn.addEventListener('click', function () {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        })();
+    </script>
 </body>
+
 </html>

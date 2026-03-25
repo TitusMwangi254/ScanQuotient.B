@@ -105,17 +105,77 @@ function sqCloseModal() {
   sqBody.style.overflow = "";
 }
 
+// Confirm modal for destructive actions (replaces native confirm/alert)
+const sqActionConfirmModal = document.getElementById("sqActionConfirmModal");
+const sqActionConfirmTitle = document.getElementById("sqActionConfirmTitle");
+const sqActionConfirmMessage = document.getElementById("sqActionConfirmMessage");
+const sqActionConfirmBtn = document.getElementById("sqActionConfirmBtn");
+const sqActionCancelBtn = document.getElementById("sqActionCancelBtn");
+const sqActionConfirmClose = document.getElementById("sqActionConfirmClose");
+let sqPendingForm = null;
+
+function sqOpenActionConfirm(formEl) {
+  if (!sqActionConfirmModal || !formEl) return;
+  sqPendingForm = formEl;
+  const title = formEl.dataset.confirmTitle || "Confirm action";
+  const message = formEl.dataset.confirmMessage || "Are you sure you want to continue?";
+  const btnText = formEl.dataset.confirmBtn || "Confirm";
+
+  if (sqActionConfirmTitle) {
+    sqActionConfirmTitle.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${escapeHtml(title)}`;
+  }
+  if (sqActionConfirmMessage) {
+    sqActionConfirmMessage.textContent = message;
+  }
+  if (sqActionConfirmBtn) {
+    sqActionConfirmBtn.innerHTML = `<i class="fas fa-trash"></i> ${escapeHtml(btnText)}`;
+  }
+
+  sqActionConfirmModal.classList.add("sq-modal--active");
+  sqBody.style.overflow = "hidden";
+}
+
+function sqCloseActionConfirm() {
+  if (!sqActionConfirmModal) return;
+  sqActionConfirmModal.classList.remove("sq-modal--active");
+  sqPendingForm = null;
+  sqBody.style.overflow = "";
+}
+
 // Close modal on outside click
 sqViewModal?.addEventListener("click", (e) => {
   if (e.target === sqViewModal) sqCloseModal();
 });
+sqActionConfirmModal?.addEventListener("click", (e) => {
+  if (e.target === sqActionConfirmModal) sqCloseActionConfirm();
+});
+
+sqActionCancelBtn?.addEventListener("click", sqCloseActionConfirm);
+sqActionConfirmClose?.addEventListener("click", sqCloseActionConfirm);
+sqActionConfirmBtn?.addEventListener("click", () => {
+  if (!sqPendingForm) return;
+  const formToSubmit = sqPendingForm;
+  sqCloseActionConfirm();
+  formToSubmit.submit();
+});
+
+document.querySelectorAll(".js-confirm-action").forEach((formEl) => {
+  formEl.addEventListener("submit", (e) => {
+    e.preventDefault();
+    sqOpenActionConfirm(formEl);
+  });
+});
 
 // Escape key to close modal
 document.addEventListener("keydown", (e) => {
-  if (
-    e.key === "Escape" &&
-    sqViewModal.classList.contains("sq-modal--active")
-  ) {
+  if (e.key !== "Escape") return;
+
+  if (sqActionConfirmModal?.classList.contains("sq-modal--active")) {
+    sqCloseActionConfirm();
+    return;
+  }
+
+  if (sqViewModal.classList.contains("sq-modal--active")) {
     sqCloseModal();
   }
 });

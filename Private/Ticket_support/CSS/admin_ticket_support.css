@@ -431,9 +431,18 @@ body.sq-dark .sq-btn-primary:hover {
     transition: all 0.2s ease;
 }
 
+.sq-data-table tbody tr.ticket-row--deleted {
+    cursor: default;
+}
+
 .sq-data-table tbody tr:hover {
     background: rgba(59, 130, 246, 0.08);
     transform: translateX(4px);
+}
+
+.sq-data-table tbody tr.ticket-row--deleted:hover {
+    background: transparent;
+    transform: none;
 }
 
 body.sq-dark .sq-data-table tbody tr:hover {
@@ -453,6 +462,66 @@ body.sq-dark .sq-data-table tbody tr:hover {
 /* Prevent text selection when clicking row */
 .sq-data-table tbody {
     user-select: none;
+}
+
+/* Deleted-ticket action controls */
+.ticket-actions-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.ticket-action-btn {
+    min-width: 138px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.ticket-action-btn--restore {
+    background: rgba(16, 185, 129, 0.14);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #047857;
+}
+
+.ticket-action-btn--restore:hover {
+    background: rgba(16, 185, 129, 0.22);
+    transform: translateY(-1px);
+}
+
+.ticket-action-btn--danger {
+    background: rgba(239, 68, 68, 0.14);
+    border: 1px solid rgba(239, 68, 68, 0.32);
+    color: #b91c1c;
+}
+
+.ticket-action-btn--danger:hover {
+    background: rgba(239, 68, 68, 0.22);
+    transform: translateY(-1px);
+}
+
+body.sq-dark .ticket-action-btn--restore {
+    color: #6ee7b7;
+}
+
+body.sq-dark .ticket-action-btn--danger {
+    color: #fca5a5;
+}
+
+/* Ensure action buttons are active (override generic disabled danger style) */
+.ticket-action-btn,
+.ticket-action-btn--restore,
+.ticket-action-btn--danger {
+    cursor: pointer !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
 }
 
 /* Re-enable text selection for specific elements if needed */
@@ -731,6 +800,57 @@ body.sq-dark .sq-data-table tbody tr:hover {
     margin-bottom: 12px;
 }
 
+/* Fallback modal (used when SweetAlert is unavailable) */
+.sq-fallback-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    z-index: 3000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+
+.sq-fallback-modal__dialog {
+    width: min(460px, 96vw);
+    background: var(--sq-bg-card);
+    border: 1px solid var(--sq-border);
+    border-radius: 14px;
+    box-shadow: var(--sq-shadow-lg);
+    padding: 20px 20px 16px;
+    text-align: center;
+}
+
+.sq-fallback-modal__icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+    color: var(--sq-brand);
+}
+
+.sq-fallback-modal__title {
+    font-size: 20px;
+    font-weight: 800;
+    margin: 0;
+    color: var(--sq-text-main);
+}
+
+.sq-fallback-modal__text {
+    margin: 10px 0 0 0;
+    color: var(--sq-text-light);
+    line-height: 1.55;
+}
+
+.sq-fallback-modal__actions {
+    margin-top: 18px;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
 /* ============================================
    RESPONSIVE DESIGN
    ============================================ */
@@ -770,4 +890,19 @@ body.sq-dark .sq-data-table tbody tr:hover {
     .sq-data-table tbody tr:hover {
         transform: none;
     }
+}
+
+.header-profile-photo {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px;
+    min-height: 38px;
+    max-width: 38px !important;
+    max-height: 38px !important;
+    display: block;
+    flex: 0 0 38px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid rgba(59, 130, 246, 0.35);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
 }

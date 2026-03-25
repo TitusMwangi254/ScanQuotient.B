@@ -106,16 +106,25 @@ body {
 
 /* Header Styles */
 .site-header {
-    background: var(--header-gradient);
-    /* Apply theme header gradient */
+    background: rgba(255, 255, 255, 0.16);
     color: var(--text-color);
-    /* Apply theme text color */
     padding: 0.5rem 1rem;
-    /* Padding around header content */
-    position: relative;
-    /* For potential absolute positioning of children */
+    position: sticky;
+    top: 0;
+    z-index: 120;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.28);
     transition: background var(--transition), color var(--transition);
-    /* Smooth theme transition */
+}
+
+body.dark-theme .site-header {
+    background: rgba(15, 23, 42, 0.22);
+    border-bottom-color: rgba(148, 163, 184, 0.28);
+}
+
+body.light-theme .site-header {
+    background: rgba(255, 255, 255, 0.16);
 }
 
 .header-container {

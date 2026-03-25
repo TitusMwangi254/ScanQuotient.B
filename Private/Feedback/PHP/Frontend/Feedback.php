@@ -28,11 +28,28 @@ define('DB_CHARSET', 'utf8mb4');
 // Admin user identification
 $adminId = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 'unknown';
 $adminName = $_SESSION['user_name'] ?? 'Admin';
+$profile_photo = $_SESSION['profile_photo'] ?? null;
+if (!empty($profile_photo)) {
+    $photo_path = ltrim((string) $profile_photo, '/');
+    $base_url = '/ScanQuotient.v2/ScanQuotient.B';
+    $avatar_url = $base_url . '/' . $photo_path;
+} else {
+    $avatar_url = '/ScanQuotient.v2/ScanQuotient.B/Storage/Public_images/default-avatar.png';
+}
 $successMessage = '';
 $errorMessage = '';
 
 // Pagination settings
-define('ITEMS_PER_PAGE', 10);
+define('DEFAULT_PER_PAGE', 10);
+
+$perPageParam = (string) DEFAULT_PER_PAGE;
+$effectivePerPage = (int) DEFAULT_PER_PAGE;
+$totalItems = 0;
+$totalPages = 0;
+$offset = 0;
+$recordsStart = 0;
+$recordsEnd = 0;
+$searchableColumns = [];
 
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
@@ -128,6 +145,12 @@ try {
     $status = $_GET['status'] ?? 'all'; // viewed, unviewed, all
     $search = $_GET['search'] ?? '';
     $page = max(1, intval($_GET['page'] ?? 1));
+    $perPageParam = $_GET['per_page'] ?? (string) DEFAULT_PER_PAGE;
+    $allowedPerPage = ['5', '10', '20', '50', '100', '200', 'all'];
+    if (!in_array($perPageParam, $allowedPerPage, true)) {
+        $perPageParam = (string) DEFAULT_PER_PAGE;
+    }
+    $effectivePerPage = $perPageParam === 'all' ? null : (int) $perPageParam;
 
     // Build query
     $whereConditions = [];
@@ -145,10 +168,44 @@ try {
         $whereConditions[] = "is_viewed = 'no'";
     }
 
-    if (!empty($search)) {
-        $whereConditions[] = "(name LIKE ? OR email LIKE ? OR subject LIKE ? OR message LIKE ?)";
+    // Global search across all non-system columns.
+    // Also used to compute the dynamic "Matched In" column.
+    $systemSearchColumns = [
+        'id',
+        'created_at',
+        'updated_at',
+        'deleted_at',
+        'deleted_by',
+        'submitted_at',
+        'viewed_at',
+        'viewed_by',
+        // searched via filters already
+        'is_viewed',
+    ];
+
+    $searchableColumns = [];
+    try {
+        $columnsMeta = $pdo->query("SHOW COLUMNS FROM customer_feedback")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($columnsMeta as $meta) {
+            $col = $meta['Field'] ?? '';
+            if (!$col) continue;
+            if (!preg_match('/^[A-Za-z0-9_]+$/', $col)) continue;
+            if (in_array($col, $systemSearchColumns, true)) continue;
+            $searchableColumns[] = $col;
+        }
+    } catch (Exception $e) {
+        // Fallback to the previously supported fields.
+        $searchableColumns = ['name', 'email', 'subject', 'message'];
+    }
+
+    if (!empty($search) && !empty($searchableColumns)) {
         $searchTerm = "%$search%";
-        $params = array_merge($params, [$searchTerm, $searchTerm, $searchTerm, $searchTerm]);
+        $orParts = [];
+        foreach ($searchableColumns as $col) {
+            $orParts[] = "CAST($col AS CHAR) LIKE ?";
+            $params[] = $searchTerm;
+        }
+        $whereConditions[] = "(" . implode(" OR ", $orParts) . ")";
     }
 
     $whereClause = !empty($whereConditions) ? 'WHERE ' . implode(' AND ', $whereConditions) : '';
@@ -157,11 +214,16 @@ try {
     $countStmt = $pdo->prepare("SELECT COUNT(*) FROM customer_feedback $whereClause");
     $countStmt->execute($params);
     $totalItems = $countStmt->fetchColumn();
-    $totalPages = ceil($totalItems / ITEMS_PER_PAGE);
-    $offset = ($page - 1) * ITEMS_PER_PAGE;
+    $totalPages = ($effectivePerPage === null || (int) $totalItems === 0) ? 1 : (int) ceil($totalItems / $effectivePerPage);
+    $offset = $effectivePerPage === null ? 0 : ($page - 1) * $effectivePerPage;
+    $recordsStart = (int) $totalItems === 0 ? 0 : ($offset + 1);
+    $recordsEnd = $effectivePerPage === null ? (int) $totalItems : (int) min($offset + $effectivePerPage, $totalItems);
 
     // Get feedback entries
-    $query = "SELECT * FROM customer_feedback $whereClause ORDER BY submitted_at DESC LIMIT " . ITEMS_PER_PAGE . " OFFSET $offset";
+    $queryBase = "SELECT * FROM customer_feedback $whereClause ORDER BY submitted_at DESC";
+    $query = $effectivePerPage === null
+        ? $queryBase
+        : ($queryBase . " LIMIT " . (int) $effectivePerPage . " OFFSET " . (int) $offset);
     $stmt = $pdo->prepare($query);
     $stmt->execute($params);
     $feedbackList = $stmt->fetchAll();
@@ -180,6 +242,13 @@ try {
     $feedbackList = [];
     $stats = ['total' => 0, 'viewed' => 0, 'unviewed' => 0, 'trash' => 0];
     $totalPages = 0;
+    $totalItems = 0;
+    $searchableColumns = [];
+    $perPageParam = (string) DEFAULT_PER_PAGE;
+    $effectivePerPage = (int) DEFAULT_PER_PAGE;
+    $offset = 0;
+    $recordsStart = 0;
+    $recordsEnd = 0;
 }
 ?>
 <!DOCTYPE html>
@@ -207,6 +276,7 @@ try {
             </div>
         </div>
         <div class="sq-admin-header-right">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo">
             <div class="sq-admin-user">
                 <i class="fas fa-user-shield"></i>
                 <span>
@@ -237,6 +307,29 @@ try {
             </div>
             <div class="sq-modal-footer">
                 <button class="sq-btn sq-btn-secondary" onclick="sqCloseModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Confirm Modal -->
+    <div class="sq-modal" id="sqActionConfirmModal">
+        <div class="sq-modal-content" style="max-width: 520px;">
+            <div class="sq-modal-header">
+                <h3 class="sq-modal-title" id="sqActionConfirmTitle"><i class="fas fa-exclamation-triangle"></i> Confirm action</h3>
+                <button class="sq-modal-close" type="button" id="sqActionConfirmClose">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="sq-modal-body">
+                <p id="sqActionConfirmMessage" style="color: var(--sq-text-main); line-height: 1.6; margin: 4px 0 0 0;">
+                    Are you sure you want to continue?
+                </p>
+            </div>
+            <div class="sq-modal-footer">
+                <button class="sq-btn sq-btn-secondary" type="button" id="sqActionCancelBtn">Cancel</button>
+                <button class="sq-btn sq-btn-danger" type="button" id="sqActionConfirmBtn">
+                    <i class="fas fa-trash"></i> Confirm
+                </button>
             </div>
         </div>
     </div>
@@ -434,6 +527,9 @@ try {
                                 <th>Sender</th>
                                 <th>Subject</th>
                                 <th>Message</th>
+                                <?php if (!empty($search)): ?>
+                                    <th class="sq-matched-in-col">Matched In</th>
+                                <?php endif; ?>
                                 <th>Status</th>
                                 <th>Date</th>
                                 <th width="150">Actions</th>
@@ -465,6 +561,25 @@ try {
                                             <?php echo htmlspecialchars($item['message']); ?>
                                         </div>
                                     </td>
+                                    <?php
+                                    $matchedInStr = '-';
+                                    if (!empty($search) && !empty($searchableColumns)) {
+                                        $matchedCols = [];
+                                        foreach ($searchableColumns as $col) {
+                                            $val = $item[$col] ?? null;
+                                            if ($val === null) continue;
+                                            if (stripos((string) $val, $search) !== false) {
+                                                $matchedCols[] = $col;
+                                            }
+                                        }
+                                        if (!empty($matchedCols)) {
+                                            $matchedInStr = implode(', ', $matchedCols);
+                                        }
+                                    }
+                                    ?>
+                                    <?php if (!empty($search)): ?>
+                                        <td class="sq-matched-in-col"><?php echo htmlspecialchars($matchedInStr); ?></td>
+                                    <?php endif; ?>
                                     <td>
                                         <?php if ($item['is_viewed'] === 'yes'): ?>
                                             <span class="sq-status-badge sq-status-viewed">
@@ -499,8 +614,10 @@ try {
                                                         <i class="fas fa-undo"></i>
                                                     </button>
                                                 </form>
-                                                <form method="POST" style="display: inline;"
-                                                    onsubmit="return confirm('Permanently delete this feedback? This cannot be undone.')">
+                                                <form method="POST" style="display: inline;" class="js-confirm-action"
+                                                    data-confirm-title="Delete feedback permanently?"
+                                                    data-confirm-message="This will permanently delete this feedback and cannot be undone."
+                                                    data-confirm-btn="Delete forever">
                                                     <input type="hidden" name="action" value="permanent_delete">
                                                     <input type="hidden" name="feedback_id" value="<?php echo $item['id']; ?>">
                                                     <button type="submit" class="sq-action-btn sq-action-delete"
@@ -528,8 +645,10 @@ try {
                                                         </button>
                                                     </form>
                                                 <?php endif; ?>
-                                                <form method="POST" style="display: inline;"
-                                                    onsubmit="return confirm('Move this feedback to trash?')">
+                                                <form method="POST" style="display: inline;" class="js-confirm-action"
+                                                    data-confirm-title="Move feedback to trash?"
+                                                    data-confirm-message="This feedback will be moved to trash. You can restore it later."
+                                                    data-confirm-btn="Move to trash">
                                                     <input type="hidden" name="action" value="soft_delete">
                                                     <input type="hidden" name="feedback_id" value="<?php echo $item['id']; ?>">
                                                     <button type="submit" class="sq-action-btn sq-action-delete"
@@ -545,11 +664,37 @@ try {
                         </tbody>
                     </table>
 
+                    <?php if (!empty($totalItems) && (int) $totalItems > 0): ?>
+                        <div class="sq-per-page-row"
+                            style="display:flex; justify-content:center; align-items:center; gap:12px; flex-wrap:wrap; padding: 10px 0 0; border-top: 1px solid var(--sq-border);">
+                            <label style="color: var(--sq-text-light); font-size: 13px; font-weight: 700;">
+                                Records
+                                <select id="sqPerPageSelect"
+                                    style="margin: 0 8px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--sq-border); background: var(--sq-bg-card); color: var(--sq-text-main);"
+                                    onchange="sqUpdatePerPage(this.value)">
+                                    <?php
+                                    $perPageOptions = ['5', '10', '20', '50', '100', '200', 'all'];
+                                    foreach ($perPageOptions as $opt):
+                                        $selected = ((string) $perPageParam === (string) $opt) ? 'selected' : '';
+                                        ?>
+                                        <option value="<?php echo htmlspecialchars($opt); ?>" <?php echo $selected; ?>>
+                                            <?php echo $opt === 'all' ? 'All' : $opt; ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                per page
+                            </label>
+                            <span style="color: var(--sq-text-light); font-size: 12px;">
+                                Showing <?php echo (int) $recordsStart; ?>–<?php echo (int) $recordsEnd; ?> of <?php echo number_format((int) $totalItems); ?>
+                            </span>
+                        </div>
+                    <?php endif; ?>
+
                     <!-- Pagination -->
                     <?php if ($totalPages > 1): ?>
                         <div class="sq-pagination">
                             <?php if ($page > 1): ?>
-                                <a href="?view=<?php echo $view; ?>&status=<?php echo $status; ?>&search=<?php echo urlencode($search); ?>&page=<?php echo $page - 1; ?>"
+                                <a href="?view=<?php echo $view; ?>&status=<?php echo $status; ?>&search=<?php echo urlencode($search); ?>&per_page=<?php echo urlencode((string) $perPageParam); ?>&page=<?php echo $page - 1; ?>"
                                     class="sq-page-btn">
                                     <i class="fas fa-chevron-left"></i>
                                 </a>
@@ -563,7 +708,7 @@ try {
                                         <?php echo $i; ?>
                                     </span>
                                 <?php else: ?>
-                                    <a href="?view=<?php echo $view; ?>&status=<?php echo $status; ?>&search=<?php echo urlencode($search); ?>&page=<?php echo $i; ?>"
+                                    <a href="?view=<?php echo $view; ?>&status=<?php echo $status; ?>&search=<?php echo urlencode($search); ?>&per_page=<?php echo urlencode((string) $perPageParam); ?>&page=<?php echo $i; ?>"
                                         class="sq-page-btn">
                                         <?php echo $i; ?>
                                     </a>
@@ -571,7 +716,7 @@ try {
                             <?php endfor; ?>
 
                             <?php if ($page < $totalPages): ?>
-                                <a href="?view=<?php echo $view; ?>&status=<?php echo $status; ?>&search=<?php echo urlencode($search); ?>&page=<?php echo $page + 1; ?>"
+                                <a href="?view=<?php echo $view; ?>&status=<?php echo $status; ?>&search=<?php echo urlencode($search); ?>&per_page=<?php echo urlencode((string) $perPageParam); ?>&page=<?php echo $page + 1; ?>"
                                     class="sq-page-btn">
                                     <i class="fas fa-chevron-right"></i>
                                 </a>
@@ -596,6 +741,66 @@ try {
             </p>
         </footer>
     </main>
+
+    <button id="backToTopBtn" class="sq-back-to-top" title="Back to top" aria-label="Back to top" type="button">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+
+    <style>
+        .sq-back-to-top{
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
+            width: 44px;
+            height: 44px;
+            border-radius: 999px;
+            border: none;
+            background: #10b981;
+            color: white;
+            box-shadow: 0 10px 24px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            z-index: 1000;
+        }
+        body.sq-dark .sq-back-to-top{
+            box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+        }
+        .sq-back-to-top.sq-back-to-top--visible{
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-2px);
+        }
+    </style>
+
+    <script>
+        function sqUpdatePerPage(perPageValue) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('per_page', perPageValue);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
+        (function () {
+            const backToTopBtn = document.getElementById('backToTopBtn');
+            if (!backToTopBtn) return;
+
+            const onScroll = function () {
+                backToTopBtn.classList.toggle('sq-back-to-top--visible', window.scrollY > 400);
+            };
+
+            window.addEventListener('scroll', onScroll);
+            onScroll();
+
+            backToTopBtn.addEventListener('click', function () {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        })();
+    </script>
 
     <script src="../../Javascript/feedback.js" defer></script>
 </body>

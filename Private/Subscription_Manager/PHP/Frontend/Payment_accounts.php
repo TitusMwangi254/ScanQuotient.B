@@ -26,12 +26,27 @@ define('DB_PASS', '');
 define('DB_CHARSET', 'utf8mb4');
 
 // Pagination settings
-define('ITEMS_PER_PAGE', 15);
+define('DEFAULT_PER_PAGE', 10);
 
 $adminId = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 'unknown';
 $adminName = $_SESSION['user_name'] ?? 'Admin';
+$profile_photo = $_SESSION['profile_photo'] ?? null;
+if (!empty($profile_photo)) {
+    $photo_path = ltrim((string) $profile_photo, '/');
+    $base_url = '/ScanQuotient.v2/ScanQuotient.B';
+    $avatar_url = $base_url . '/' . $photo_path;
+} else {
+    $avatar_url = '/ScanQuotient.v2/ScanQuotient.B/Storage/Public_images/default-avatar.png';
+}
 $successMessage = '';
 $errorMessage = '';
+$perPageParam = (string) DEFAULT_PER_PAGE;
+$effectivePerPage = (int) DEFAULT_PER_PAGE;
+$totalItems = 0;
+$totalPages = 0;
+$offset = 0;
+$recordsStart = 0;
+$recordsEnd = 0;
 
 // Valid enums for status, payment_method, package, and account_status
 $validStatuses = ['pending', 'completed', 'failed', 'refunded', 'cancelled'];
@@ -183,10 +198,17 @@ try {
     $accountStatusFilter = $_GET['account_status'] ?? 'all';
     $search = $_GET['search'] ?? '';
     $page = max(1, intval($_GET['page'] ?? 1));
+    $perPageParam = $_GET['per_page'] ?? (string) DEFAULT_PER_PAGE;
+    $allowedPerPage = ['5', '10', '20', '50', '100', '200', 'all'];
+    if (!in_array($perPageParam, $allowedPerPage, true)) {
+        $perPageParam = (string) DEFAULT_PER_PAGE;
+    }
+    $effectivePerPage = $perPageParam === 'all' ? null : (int) $perPageParam;
 
     // Build query
     $whereConditions = [];
     $params = [];
+    $paymentSearchFields = [];
 
     if ($view === 'active') {
         $whereConditions[] = "p.deleted_at IS NULL";
@@ -205,27 +227,66 @@ try {
     }
 
     if (!empty($search)) {
-        $whereConditions[] = "(p.email LIKE ? OR p.package LIKE ? OR p.transaction_id LIKE ?)";
-        $searchTerm = "%$search%";
-        $params = array_merge($params, [$searchTerm, $searchTerm, $searchTerm]);
+        // Global search across all non-system columns (used for both filtering and "Matched In").
+        $systemSearchColumns = ['id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by'];
+
+        $searchExprMap = [];
+        try {
+            $colsMeta = $pdo->query("SHOW COLUMNS FROM payments")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($colsMeta as $meta) {
+                $col = $meta['Field'] ?? '';
+                if (!$col) continue;
+                if (!preg_match('/^[A-Za-z0-9_]+$/', $col)) continue;
+                if (in_array($col, $systemSearchColumns, true)) continue;
+                $searchExprMap['p.' . $col] = $col;
+            }
+        } catch (Exception $e) {
+            // Fallback: previous fields
+            $searchExprMap = ['p.email' => 'email', 'p.package' => 'package', 'p.transaction_id' => 'transaction_id'];
+        }
+
+        // Include joined user fields as searchable (not system columns).
+        $searchExprMap['u.first_name'] = 'first_name';
+        $searchExprMap['u.surname'] = 'surname';
+
+        $paymentSearchFields = array_values($searchExprMap);
+
+        if (!empty($searchExprMap)) {
+            $searchTerm = "%$search%";
+            $orParts = [];
+            foreach ($searchExprMap as $expr => $_key) {
+                $orParts[] = "CAST($expr AS CHAR) LIKE ?";
+                $params[] = $searchTerm;
+            }
+            $whereConditions[] = "(" . implode(" OR ", $orParts) . ")";
+        }
     }
 
     $whereClause = !empty($whereConditions) ? 'WHERE ' . implode(' AND ', $whereConditions) : '';
 
-    // Get total count
-    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM payments p $whereClause");
+    // Get total count (must include same joins used by search)
+    $countStmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM payments p
+        LEFT JOIN users u ON p.email = u.email
+        $whereClause
+    ");
     $countStmt->execute($params);
     $totalItems = $countStmt->fetchColumn();
-    $totalPages = ceil($totalItems / ITEMS_PER_PAGE);
-    $offset = ($page - 1) * ITEMS_PER_PAGE;
+    $totalPages = ($effectivePerPage === null || (int) $totalItems === 0) ? 1 : (int) ceil($totalItems / $effectivePerPage);
+    $offset = $effectivePerPage === null ? 0 : ($page - 1) * $effectivePerPage;
+    $recordsStart = (int) $totalItems === 0 ? 0 : ($offset + 1);
+    $recordsEnd = $effectivePerPage === null ? (int) $totalItems : (int) min($offset + $effectivePerPage, $totalItems);
 
     // Get payments
-    $query = "SELECT p.*, u.first_name, u.surname 
-              FROM payments p 
-              LEFT JOIN users u ON p.email = u.email 
-              $whereClause 
-              ORDER BY p.created_at DESC 
-              LIMIT " . ITEMS_PER_PAGE . " OFFSET $offset";
+    $queryBase = "SELECT p.*, u.first_name, u.surname 
+                  FROM payments p 
+                  LEFT JOIN users u ON p.email = u.email 
+                  $whereClause 
+                  ORDER BY p.created_at DESC";
+    $query = $effectivePerPage === null
+        ? $queryBase
+        : ($queryBase . " LIMIT " . (int) $effectivePerPage . " OFFSET " . (int) $offset);
     $stmt = $pdo->prepare($query);
     $stmt->execute($params);
     $payments = $stmt->fetchAll();
@@ -240,12 +301,62 @@ try {
         'trash' => $pdo->query("SELECT COUNT(*) FROM payments WHERE deleted_at IS NOT NULL")->fetchColumn()
     ];
 
+    // Metrics chart: last 14 days payments count + completed revenue
+    $paymentsMetricsLabels = [];
+    $paymentsMetricsCounts = [];
+    $paymentsMetricsRevenue = [];
+    try {
+        $days = 14;
+        $metricsStmt = $pdo->prepare("
+            SELECT
+                DATE(p.created_at) AS d,
+                COUNT(*) AS cnt,
+                COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount ELSE 0 END), 0) AS revenue
+            FROM payments p
+            WHERE p.deleted_at IS NULL
+              AND p.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+            GROUP BY DATE(p.created_at)
+            ORDER BY d ASC
+        ");
+        $metricsStmt->execute([$days - 1]);
+        $rows = $metricsStmt->fetchAll();
+        $byDay = [];
+        foreach ($rows as $r) {
+            $key = (string) ($r['d'] ?? '');
+            if ($key === '') continue;
+            $byDay[$key] = [
+                'cnt' => (int) ($r['cnt'] ?? 0),
+                'revenue' => (float) ($r['revenue'] ?? 0),
+            ];
+        }
+        for ($i = $days - 1; $i >= 0; $i--) {
+            $day = date('Y-m-d', strtotime("-{$i} days"));
+            $paymentsMetricsLabels[] = date('M j', strtotime($day));
+            $paymentsMetricsCounts[] = (int) ($byDay[$day]['cnt'] ?? 0);
+            $paymentsMetricsRevenue[] = (float) ($byDay[$day]['revenue'] ?? 0);
+        }
+    } catch (Exception $e) {
+        $paymentsMetricsLabels = [];
+        $paymentsMetricsCounts = [];
+        $paymentsMetricsRevenue = [];
+    }
+
 } catch (Exception $e) {
     error_log("Payments Admin Error: " . $e->getMessage());
     $errorMessage = "Database error: " . $e->getMessage();
     $payments = [];
     $stats = ['total' => 0, 'total_revenue' => 0, 'pending' => 0, 'completed' => 0, 'failed' => 0, 'trash' => 0];
     $totalPages = 0;
+    $totalItems = 0;
+    $perPageParam = (string) DEFAULT_PER_PAGE;
+    $effectivePerPage = (int) DEFAULT_PER_PAGE;
+    $offset = 0;
+    $recordsStart = 0;
+    $recordsEnd = 0;
+    $paymentSearchFields = [];
+    $paymentsMetricsLabels = [];
+    $paymentsMetricsCounts = [];
+    $paymentsMetricsRevenue = [];
 }
 
 // Helper functions
@@ -293,6 +404,7 @@ function formatCurrency($amount)
     <link rel="icon" type="image/png" href="../../../../Storage/Public_images/page_icon.png" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="../../CSS/payment_accounts.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         /* Local polish for view/edit/confirm modals */
         .sq-modal .sq-modal-content {
@@ -475,6 +587,38 @@ function formatCurrency($amount)
             background: rgba(148, 163, 184, 0.06);
             border-color: rgba(148, 163, 184, 0.14);
         }
+
+        .sq-metrics-card{
+            background: var(--sq-bg-card);
+            border: 1px solid var(--sq-border);
+            border-radius: 16px;
+            box-shadow: var(--sq-shadow);
+            padding: 18px;
+            margin: 18px 0 22px;
+        }
+        .sq-metrics-head{
+            display:flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+        .sq-metrics-title{
+            font-weight: 900;
+            letter-spacing: 0.2px;
+            display:flex;
+            align-items:center;
+            gap: 10px;
+            color: var(--sq-text-main);
+        }
+        .sq-metrics-sub{
+            color: var(--sq-text-light);
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .sq-metrics-canvas-wrap{
+            height: 280px;
+        }
     </style>
 </head>
 
@@ -491,6 +635,7 @@ function formatCurrency($amount)
             </div>
         </div>
         <div class="sq-admin-header-right">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo" style="width:38px;height:38px;min-width:38px;min-height:38px;max-width:38px;max-height:38px;object-fit:cover;border-radius:50%;display:block;flex:0 0 38px;">
             <div class="sq-admin-user">
                 <i class="fas fa-user-shield"></i>
                 <span><?php echo htmlspecialchars($adminName); ?></span>
@@ -745,6 +890,21 @@ function formatCurrency($amount)
             </div>
         </div>
 
+        <div class="sq-metrics-card">
+            <div class="sq-metrics-head">
+                <div>
+                    <div class="sq-metrics-title">
+                        <i class="fas fa-chart-line" style="color: var(--sq-accent, #8b5cf6);"></i>
+                        Payments trend
+                    </div>
+                    <div class="sq-metrics-sub">Last 14 days • payments count + completed revenue</div>
+                </div>
+            </div>
+            <div class="sq-metrics-canvas-wrap">
+                <canvas id="sqPaymentsMetricsChart"></canvas>
+            </div>
+        </div>
+
         <!-- Filters -->
         <div class="sq-controls-section">
             <form method="GET" class="sq-controls-grid">
@@ -857,6 +1017,9 @@ function formatCurrency($amount)
                                 <th>Transaction</th>
                                 <th>Created</th>
                                 <th>Expires</th>
+                                <?php if (!empty($search)): ?>
+                                    <th>Matched In</th>
+                                <?php endif; ?>
                                 <th width="140">Actions</th>
                             </tr>
                         </thead>
@@ -865,6 +1028,20 @@ function formatCurrency($amount)
                                 $statusColor = getStatusColor($payment['status']);
                                 $statusIcon = getStatusIcon($payment['status']);
                                 $accountStatusColor = getAccountStatusColor($payment['account_status']);
+                                $matchedInStr = '-';
+                                if (!empty($search) && !empty($paymentSearchFields)) {
+                                    $matchedCols = [];
+                                    foreach ($paymentSearchFields as $col) {
+                                        $val = $payment[$col] ?? null;
+                                        if ($val === null) continue;
+                                        if (stripos((string) $val, $search) !== false) {
+                                            $matchedCols[] = $col;
+                                        }
+                                    }
+                                    if (!empty($matchedCols)) {
+                                        $matchedInStr = implode(', ', $matchedCols);
+                                    }
+                                }
                                 ?>
                                 <tr class="<?php echo $payment['deleted_at'] ? 'deleted' : ''; ?>"
                                     data-id="<?php echo $payment['id']; ?>">
@@ -960,6 +1137,9 @@ function formatCurrency($amount)
                                             <span style="color: var(--sq-text-light);">Never</span>
                                         <?php endif; ?>
                                     </td>
+                                    <?php if (!empty($search)): ?>
+                                        <td><?php echo htmlspecialchars($matchedInStr); ?></td>
+                                    <?php endif; ?>
                                     <td>
                                         <div class="sq-actions">
                                             <button type="button" class="sq-action-btn sq-action-view"
@@ -1010,11 +1190,37 @@ function formatCurrency($amount)
                         </tbody>
                     </table>
 
+                    <?php if (!empty($totalItems) && (int) $totalItems > 0): ?>
+                        <div class="sq-per-page-row"
+                            style="display:flex; justify-content:center; align-items:center; gap:12px; flex-wrap:wrap; padding: 10px 0 0; border-top: 1px solid var(--sq-border);">
+                            <label style="color: var(--sq-text-light); font-size: 13px; font-weight: 700;">
+                                Records
+                                <select id="sqPerPageSelect"
+                                    style="margin: 0 8px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--sq-border); background: var(--sq-bg-card); color: var(--sq-text-main);"
+                                    onchange="sqUpdatePerPage(this.value)">
+                                    <?php
+                                    $perPageOptions = ['5', '10', '20', '50', '100', '200', 'all'];
+                                    foreach ($perPageOptions as $opt):
+                                        $selected = ((string) $perPageParam === (string) $opt) ? 'selected' : '';
+                                        ?>
+                                        <option value="<?php echo htmlspecialchars($opt); ?>" <?php echo $selected; ?>>
+                                            <?php echo $opt === 'all' ? 'All' : $opt; ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                per page
+                            </label>
+                            <span style="color: var(--sq-text-light); font-size: 12px;">
+                                Showing <?php echo (int) $recordsStart; ?>–<?php echo (int) $recordsEnd; ?> of <?php echo number_format((int) $totalItems); ?>
+                            </span>
+                        </div>
+                    <?php endif; ?>
+
                     <!-- Pagination -->
                     <?php if ($totalPages > 1): ?>
                         <div class="sq-pagination">
                             <?php
-                            $queryParams = "view=$view&status=$status&account_status=$accountStatusFilter&search=" . urlencode($search);
+                            $queryParams = "view=$view&status=$status&account_status=$accountStatusFilter&search=" . urlencode($search) . "&per_page=" . urlencode((string) $perPageParam);
 
                             if ($page > 1): ?>
                                 <a href="?<?php echo $queryParams; ?>&page=<?php echo $page - 1; ?>" class="sq-page-btn">
@@ -1074,11 +1280,46 @@ function formatCurrency($amount)
             <p style="margin-top: 8px; font-size: 12px;">
                 Logged in as
                 <?php echo htmlspecialchars($adminName); ?> •
-                <a href="/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php"
+                <a href="../../../../Public/Login_page/PHP/Frontend/Login_page_site.php"
                     style="color: var(--sq-brand); text-decoration: none;">Logout</a>
             </p>
         </footer>
     </main>
+
+    <button id="backToTopBtn" class="sq-back-to-top" title="Back to top" aria-label="Back to top" type="button">
+        <i class="fas fa-arrow-up"></i>
+    </button>
+
+    <style>
+        .sq-back-to-top{
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
+            width: 44px;
+            height: 44px;
+            border-radius: 999px;
+            border: none;
+            background: #10b981;
+            color: white;
+            box-shadow: 0 10px 24px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+            z-index: 1000;
+        }
+        body.sq-dark .sq-back-to-top{
+            box-shadow: 0 10px 24px rgba(0,0,0,0.4);
+        }
+        .sq-back-to-top.sq-back-to-top--visible{
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateY(-2px);
+        }
+    </style>
 
     <!-- Floating Add Button -->
     <button class="sq-add-btn" onclick="sqOpenCreateModal()" title="Add New Payment">
@@ -1412,6 +1653,90 @@ function formatCurrency($amount)
                 setTimeout(() => alert.remove(), 300);
             }, 5000);
         });
+    </script>
+
+    <script>
+        function sqUpdatePerPage(perPageValue) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('per_page', perPageValue);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
+        (function () {
+            const backToTopBtn = document.getElementById('backToTopBtn');
+            if (!backToTopBtn) return;
+
+            const onScroll = function () {
+                backToTopBtn.classList.toggle('sq-back-to-top--visible', window.scrollY > 400);
+            };
+
+            window.addEventListener('scroll', onScroll);
+            onScroll();
+
+            backToTopBtn.addEventListener('click', function () {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        })();
+    </script>
+
+    <script>
+        (function () {
+            const el = document.getElementById('sqPaymentsMetricsChart');
+            if (!el || typeof Chart === 'undefined') return;
+
+            const labels = <?php echo json_encode($paymentsMetricsLabels ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            const counts = <?php echo json_encode($paymentsMetricsCounts ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            const revenue = <?php echo json_encode($paymentsMetricsRevenue ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            if (!labels.length) return;
+
+            const isDark = document.body.classList.contains('sq-dark');
+            const grid = isDark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(148, 163, 184, 0.22)';
+            const ticks = isDark ? '#cbd5e1' : '#475569';
+
+            new Chart(el.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [
+                        {
+                            label: 'Payments',
+                            data: counts,
+                            borderColor: isDark ? '#a78bfa' : '#3b82f6',
+                            backgroundColor: isDark ? 'rgba(167, 139, 250, 0.18)' : 'rgba(59, 130, 246, 0.14)',
+                            tension: 0.35,
+                            fill: true,
+                            pointRadius: 2,
+                            yAxisID: 'y',
+                        },
+                        {
+                            label: 'Completed revenue',
+                            data: revenue,
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                            tension: 0.35,
+                            fill: false,
+                            pointRadius: 2,
+                            yAxisID: 'y1',
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: ticks, font: { weight: '700' } } },
+                        tooltip: { intersect: false, mode: 'index' }
+                    },
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        x: { grid: { color: grid }, ticks: { color: ticks, font: { weight: '700' } } },
+                        y: { grid: { color: grid }, ticks: { color: ticks }, beginAtZero: true, title: { display: true, text: 'Payments', color: ticks, font: { weight: '800' } } },
+                        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: ticks }, beginAtZero: true, title: { display: true, text: 'Revenue', color: ticks, font: { weight: '800' } } }
+                    }
+                }
+            });
+        })();
     </script>
 </body>
 

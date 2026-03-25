@@ -66,7 +66,7 @@
             </a><br>
 
             <button class="sign-in-btn"
-                onclick="window.location.href='../../../Login_page/PHP/Frontend/Login_page_site.php'">
+                onclick="window.location.href='/ScanQuotient.v2/ScanQuotient.B/Public/Login_page/PHP/Frontend/Login_page_site.php'">
                 <i class="fas fa-sign-in-alt"></i> Sign In
             </button>
         </div>

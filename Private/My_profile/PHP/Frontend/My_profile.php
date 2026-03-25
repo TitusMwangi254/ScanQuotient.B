@@ -47,9 +47,22 @@ if (isset($_SESSION['user_id'])) {
 }
 
 $userName = $_SESSION['user_name'] ?? 'User';
+$userRole = $_SESSION['role'] ?? 'user';
+$profile_photo = $_SESSION['profile_photo'] ?? null;
+if (!empty($profile_photo)) {
+    $photo_path = ltrim((string) $profile_photo, '/');
+    $base_url = '/ScanQuotient.v2/ScanQuotient.B';
+    $avatar_url = $base_url . '/' . $photo_path;
+} else {
+    $avatar_url = '/ScanQuotient.v2/ScanQuotient.B/Storage/Public_images/default-avatar.png';
+}
 $successMessage = '';
 $errorMessage = '';
 $user = null;
+
+$safeBackUrl = ($userRole === 'admin' || $userRole === 'super_admin')
+    ? BASE_URL . '/Private/Admin_dashboard/PHP/Frontend/Admin_dashboard.php'
+    : BASE_URL . '/Private/User_dashboard/PHP/Frontend/User_dashboard.php';
 
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
@@ -266,7 +279,7 @@ function generateBackupCodes()
 
     <header class="sq-admin-header">
         <div class="sq-admin-header-left">
-            <a href="javascript:history.back()" class="sq-admin-back-btn" title="Previous Page">
+            <a href="<?php echo htmlspecialchars($safeBackUrl, ENT_QUOTES, 'UTF-8'); ?>" class="sq-admin-back-btn" title="Back to dashboard">
                 <i class="fas fa-arrow-left"></i>
             </a>
             <div class="brand-wrapper">
@@ -275,6 +288,8 @@ function generateBackupCodes()
             </div>
         </div>
         <div class="sq-admin-header-right">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo"
+                style="width:38px;height:38px;min-width:38px;min-height:38px;max-width:38px;max-height:38px;object-fit:cover;border-radius:50%;display:block;flex:0 0 38px;">
             <div class="sq-admin-user">
                 <i class="fas fa-user-shield"></i>
                 <span>

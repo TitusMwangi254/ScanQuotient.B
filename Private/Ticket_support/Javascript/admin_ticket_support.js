@@ -51,6 +51,7 @@ function initClickableRows() {
 
   // Use event delegation on the table body [^38^][^44^]
   table.addEventListener("click", function (event) {
+    if (event.target.closest(".ticket-action-btn")) return;
     // Find the closest row that was clicked
     const row = event.target.closest("tbody tr.clickable-row");
 
@@ -97,7 +98,7 @@ function initClickableRows() {
 // Pagination and Filtering Logic
 // ============================================
 let currentPage = 1;
-let rowsPerPage = 25;
+let rowsPerPage = 10;
 let filteredRows = [];
 
 function filterTable() {
@@ -108,11 +109,45 @@ function filterTable() {
     document.querySelectorAll("#tickets-table tbody tr"),
   ).filter((tr) => !tr.querySelector(".sq-empty-state"));
 
+  const sqMatchedHeader = document.getElementById("sqMatchedInHeader");
+  const showMatchedIn = searchInput.length > 0;
+  if (sqMatchedHeader) {
+    sqMatchedHeader.style.display = showMatchedIn ? "" : "none";
+  }
+  document.querySelectorAll(".sq-matched-in-cell").forEach((td) => {
+    td.style.display = showMatchedIn ? "table-cell" : "none";
+  });
+
   filteredRows = allRows.filter((tr) => {
     const rowStatus = tr.dataset.status;
-    const text = tr.textContent.toLowerCase();
     const matchesStatus = statusSelect === "all" || rowStatus === statusSelect;
-    const matchesSearch = text.includes(searchInput);
+    const uniqueIdText = (tr.children[2]?.innerText || "").toLowerCase();
+    const emailText = (tr.children[3]?.innerText || "").toLowerCase();
+    const categoryText = (tr.children[4]?.innerText || "").toLowerCase();
+    const priorityText = (tr.children[5]?.innerText || "").toLowerCase();
+    const statusText = (tr.children[6]?.innerText || "").toLowerCase();
+
+    const matchesSearch = [uniqueIdText, emailText, categoryText, priorityText, statusText].some(
+      (t) => t.includes(searchInput),
+    );
+
+    // Populate matched-in column (shown only when search is non-empty).
+    const matchedCell = tr.querySelector(".sq-matched-in-cell");
+    if (matchedCell) {
+      if (!showMatchedIn) {
+        matchedCell.textContent = "";
+      } else {
+        const matchedCols = [];
+        if (uniqueIdText.includes(searchInput)) matchedCols.push("unique_id");
+        if (emailText.includes(searchInput)) matchedCols.push("email");
+        if (categoryText.includes(searchInput)) matchedCols.push("category");
+        if (priorityText.includes(searchInput)) matchedCols.push("priority");
+        if (statusText.includes(searchInput)) matchedCols.push("status");
+
+        matchedCell.textContent = matchedCols.length ? matchedCols.join(", ") : "-";
+      }
+    }
+
     return matchesStatus && matchesSearch;
   });
 
@@ -130,10 +165,11 @@ function filterTable() {
 
   if (filteredRows.length === 0) {
     if (!existingEmpty) {
+      const columnCount = document.querySelectorAll("#tickets-table thead th").length || 9;
       const tr = document.createElement("tr");
       tr.className = "sq-empty-row";
       tr.innerHTML = `
-                <td colspan="8" class="sq-empty-state">
+                <td colspan="${columnCount}" class="sq-empty-state">
                     <div class="sq-empty-icon">
                         <i class="fas fa-search"></i>
                     </div>
@@ -188,9 +224,236 @@ function renderPagination() {
 
 function clearFilters() {
   document.getElementById("search").value = "";
-  document.getElementById("statusFilter").value = "open";
+  const view = document.getElementById("viewFilter")?.value || "active";
+  document.getElementById("statusFilter").value = view === "active" ? "open" : "all";
   filterTable();
 }
+
+function changeTicketView(view) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", view);
+  window.location.href = url.toString();
+}
+
+let sqFallbackResolver = null;
+
+function getFallbackModalEls() {
+  return {
+    root: document.getElementById("sqFallbackModal"),
+    icon: document.getElementById("sqFallbackModalIcon"),
+    title: document.getElementById("sqFallbackModalTitle"),
+    text: document.getElementById("sqFallbackModalText"),
+    actions: document.getElementById("sqFallbackModalActions"),
+    cancel: document.getElementById("sqFallbackModalCancel"),
+    confirm: document.getElementById("sqFallbackModalConfirm"),
+  };
+}
+
+function closeFallbackModal(result) {
+  const els = getFallbackModalEls();
+  if (els.root) els.root.style.display = "none";
+  const resolver = sqFallbackResolver;
+  sqFallbackResolver = null;
+  if (resolver) resolver(result);
+}
+
+async function modalConfirm(options) {
+  if (window.Swal && typeof window.Swal.fire === "function") {
+    return window.Swal.fire(options);
+  }
+  const els = getFallbackModalEls();
+  if (!els.root) return { isConfirmed: false };
+  if (els.icon) els.icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+  if (els.title) els.title.textContent = options?.title || "Confirm action";
+  if (els.text) els.text.textContent = options?.text || "Are you sure you want to continue?";
+  if (els.cancel) {
+    els.cancel.style.display = "";
+    els.cancel.textContent = "Cancel";
+    els.cancel.onclick = () => closeFallbackModal({ isConfirmed: false });
+  }
+  if (els.confirm) {
+    els.confirm.className = "sq-btn sq-btn-primary";
+    els.confirm.textContent = options?.confirmButtonText || "Confirm";
+    // Apply custom confirm color when provided (e.g. red for destructive actions)
+    if (options?.confirmButtonColor) {
+      els.confirm.style.background = options.confirmButtonColor;
+      els.confirm.style.borderColor = options.confirmButtonColor;
+      els.confirm.style.color = "#fff";
+    } else {
+      els.confirm.style.background = "";
+      els.confirm.style.borderColor = "";
+      els.confirm.style.color = "";
+    }
+    els.confirm.onclick = () => closeFallbackModal({ isConfirmed: true });
+  }
+  els.root.style.display = "flex";
+  return new Promise((resolve) => {
+    sqFallbackResolver = resolve;
+  });
+}
+
+async function modalNotice(options) {
+  if (window.Swal && typeof window.Swal.fire === "function") {
+    return window.Swal.fire(options);
+  }
+  const els = getFallbackModalEls();
+  if (!els.root) return { isConfirmed: true };
+  const isError = (options?.icon || "").toLowerCase() === "error";
+  if (els.icon) {
+    els.icon.innerHTML = isError
+      ? '<i class="fas fa-times-circle"></i>'
+      : '<i class="fas fa-check-circle"></i>';
+  }
+  if (els.title) els.title.textContent = options?.title || (isError ? "Error" : "Done");
+  if (els.text) els.text.textContent = options?.text || "";
+  if (els.cancel) {
+    els.cancel.style.display = "none";
+    els.cancel.onclick = null;
+  }
+  if (els.confirm) {
+    els.confirm.className = "sq-btn sq-btn-primary";
+    els.confirm.textContent = "OK";
+    els.confirm.style.background = "";
+    els.confirm.style.borderColor = "";
+    els.confirm.style.color = "";
+    els.confirm.onclick = () => closeFallbackModal({ isConfirmed: true });
+  }
+  els.root.style.display = "flex";
+  return new Promise((resolve) => {
+    sqFallbackResolver = resolve;
+  });
+}
+
+async function restoreTicket(uniqueId, btnEl) {
+  const result = await modalConfirm({
+    title: "Restore ticket?",
+    text: "This ticket will be moved back to active tickets.",
+    icon: "question",
+    showCancelButton: true,
+    confirmButtonColor: "#10b981",
+    cancelButtonColor: "#3b82f6",
+    confirmButtonText: "Yes, restore",
+  });
+
+  if (!result.isConfirmed) return;
+
+  const originalHtml = btnEl ? btnEl.innerHTML : "";
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Restoring...';
+  }
+
+  try {
+    const res = await fetch("../../PHP/Backend/ticket_actions.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "restore", unique_id: uniqueId }),
+    }).then((r) => r.json());
+
+    if (res.status === "ok") {
+      await modalNotice({
+        title: "Restored",
+        text: res.message || "Ticket restored successfully.",
+        icon: "success",
+        timer: 1400,
+        showConfirmButton: false,
+      });
+
+      const row = btnEl?.closest("tr");
+      if (row) row.remove();
+      filterTable();
+      return;
+    }
+
+    modalNotice({
+      title: "Error",
+      text: res.message || "Failed to restore ticket.",
+      icon: "error",
+    });
+  } catch (e) {
+    modalNotice({
+      title: "Error",
+      text: "Request failed. Please try again.",
+      icon: "error",
+    });
+  } finally {
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.innerHTML = originalHtml;
+    }
+  }
+}
+
+async function permanentDeleteTicket(uniqueId, btnEl) {
+  const result = await modalConfirm({
+    title: "Delete permanently?",
+    text: "This will remove the ticket forever and cannot be undone.",
+    icon: "warning",
+    showCancelButton: true,
+    confirmButtonColor: "#ef4444",
+    cancelButtonColor: "#3b82f6",
+    confirmButtonText: "Yes, delete forever",
+  });
+
+  if (!result.isConfirmed) return;
+
+  const originalHtml = btnEl ? btnEl.innerHTML : "";
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+  }
+
+  try {
+    const res = await fetch("../../PHP/Backend/ticket_actions.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "permanent_delete", unique_id: uniqueId }),
+    }).then((r) => r.json());
+
+    if (res.status === "ok") {
+      await modalNotice({
+        title: "Deleted",
+        text: res.message || "Ticket permanently deleted.",
+        icon: "success",
+        timer: 1400,
+        showConfirmButton: false,
+      });
+
+      const row = btnEl?.closest("tr");
+      if (row) row.remove();
+      filterTable();
+      return;
+    }
+
+    modalNotice({
+      title: "Error",
+      text: res.message || "Failed to delete ticket permanently.",
+      icon: "error",
+    });
+  } catch (e) {
+    modalNotice({
+      title: "Error",
+      text: "Request failed. Please try again.",
+      icon: "error",
+    });
+  } finally {
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.innerHTML = originalHtml;
+    }
+  }
+}
+
+// Ensure inline onclick handlers can always resolve these functions.
+window.restoreTicket = restoreTicket;
+window.permanentDeleteTicket = permanentDeleteTicket;
+window.changeTicketView = changeTicketView;
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && sqFallbackResolver) {
+    closeFallbackModal({ isConfirmed: false });
+  }
+});
 
 // Event Listeners
 document.getElementById("search").addEventListener("keyup", filterTable);

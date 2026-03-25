@@ -43,23 +43,21 @@ $surname = $_SESSION['surname'] ?? '';
                 <h1>ScanQuotient</h1>
                 <span class="tagline">Quantifying risk. Strengthening security.</span>
             </div>
-         <div class="header-actions">
+            <div class="header-actions">
 
-    <div class="theme-switch-wrapper">
-        <label class="theme-switch" for="theme-toggle" title="Toggle theme">
-            <input type="checkbox" id="theme-toggle">
-        </label>
-    </div>
-    
-    <a href="../../../Help_center/PHP/Frontend/Help_center.php"
-        class="icon-btn" title="Help">
-        <i class="fas fa-question-circle"></i>
-    </a>
-    <a href="../../../Homepage/PHP/Frontend/Homepage.php" class="icon-btn"
-        title="Home">
-        <i class="fas fa-home"></i>
-    </a>
-</div>
+                <div class="theme-switch-wrapper">
+                    <label class="theme-switch" for="theme-toggle" title="Toggle theme">
+                        <input type="checkbox" id="theme-toggle">
+                    </label>
+                </div>
+
+                <a href="../../../Help_center/PHP/Frontend/Help_center.php" class="icon-btn" title="Help">
+                    <i class="fas fa-question-circle"></i>
+                </a>
+                <a href="../../../Homepage/PHP/Frontend/Homepage.php" class="icon-btn" title="Home">
+                    <i class="fas fa-home"></i>
+                </a>
+            </div>
         </div>
     </header>
 
@@ -114,7 +112,7 @@ $surname = $_SESSION['surname'] ?? '';
                 </div>
 
                 <form id="completionForm"
-                    action="../../PHP/Backend/complete_registration.php"
+                    action="/ScanQuotient.v2/ScanQuotient.B/Public/Registration_completion_page/PHP/Backend/complete_registration.php"
                     method="POST">
                     <input type="hidden" name="user_id" value="<?php echo htmlspecialchars($pendingUserId); ?>">
 
@@ -321,7 +319,7 @@ $surname = $_SESSION['surname'] ?? '';
                 <p>Quantifying risk. Strengthening security.</p>
             </div>
 
-           
+
 
             <div class="footer-social">
                 <a href="#" title="Twitter"><i class="fab fa-twitter"></i></a>
@@ -337,6 +335,7 @@ $surname = $_SESSION['surname'] ?? '';
     </footer>
 
 </body>
-<script src="../../Javascript/registration_completion.js" defer></script>
+<script src="/ScanQuotient.v2/ScanQuotient.B/Public/Registration_completion_page/Javascript/registration_completion.js"
+    defer></script>
 
 </html>

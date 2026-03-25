@@ -1,0 +1,9 @@
+## Secrets
+/config/secrets.php
+/.env
+
+## Generated / local artefacts
+/Storage/Scan_results/
+/Storage/User_Profile_images/
+/Storage/Public_images/User_Profiles/
+

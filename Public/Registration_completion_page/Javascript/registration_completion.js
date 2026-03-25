@@ -237,7 +237,7 @@ document
 
     // Send AJAX request
     fetch(
-      "/ScanQuotient/ScanQuotient/Publicpages/Registration_completion_page/PHP/Backend/complete_registration.php",
+      "/ScanQuotient.v2/ScanQuotient.B/Public/Registration_completion_page/PHP/Backend/complete_registration.php",
       {
         method: "POST",
         body: formData,

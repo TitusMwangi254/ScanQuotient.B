@@ -204,20 +204,98 @@ try {
     $pdo = new PDO("mysql:host=127.0.0.1;dbname=scanquotient.a1;charset=utf8mb4", "root", "");
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
+    // Certificates (agreement gating)
+    // IMPORTANT: Do not run certificate DDL here.
+    // Certificates tables are created/managed via the admin Site Security page.
+    // 2FA completion should only attempt a best-effort read and never fail if certificates are unused.
+
     // Update last activity
     $stmt = $pdo->prepare("UPDATE users SET updated_at = NOW() WHERE user_id = ?");
     $stmt->execute([$_SESSION['2fa_user_id']]);
 
+    // Before completing login, enforce certificate agreement if needed
+    // Safe: if tables are missing or query fails, skip gating (do not break login).
+    try {
+        $hasCerts = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch();
+        $hasAccept = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
+        if ($hasCerts && $hasAccept) {
+            $pendingCertStmt = $pdo->prepare("
+                SELECT c.id
+                FROM security_certificates c
+                WHERE c.is_active = 'yes'
+                  AND (
+                        c.target_type = 'everyone'
+                        OR (c.target_type = 'role' AND c.target_value = :role)
+                        OR (c.target_type = 'user_id' AND c.target_value = :uid)
+                        OR (c.target_type = 'username' AND c.target_value = :uname)
+                  )
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM security_certificate_acceptances a
+                        WHERE a.certificate_id = c.id AND a.user_id = :uid_check
+                  )
+                ORDER BY c.created_at DESC
+                LIMIT 1
+            ");
+            $pendingCertStmt->execute([
+                ':uid' => $_SESSION['2fa_user_id'],
+                ':uid_check' => $_SESSION['2fa_user_id'],
+                ':role' => $_SESSION['2fa_role'],
+                ':uname' => $_SESSION['2fa_username']
+            ]);
+            $pendingCert = $pendingCertStmt->fetch(PDO::FETCH_ASSOC);
+            if ($pendingCert) {
+                $_SESSION['auth_mode'] = 'certificate_agreement';
+                $_SESSION['cert_id'] = (int) $pendingCert['id'];
+                $_SESSION['cert_user_id'] = $_SESSION['2fa_user_id'];
+                $_SESSION['cert_role'] = $_SESSION['2fa_role'];
+                $_SESSION['cert_username'] = $_SESSION['2fa_username'];
+                $_SESSION['cert_email'] = $_SESSION['2fa_email'];
+
+                // Clear 2FA data
+                unset($_SESSION['2fa_pending']);
+                unset($_SESSION['2fa_code']);
+                unset($_SESSION['2fa_expires']);
+                unset($_SESSION['2fa_user_id']);
+                unset($_SESSION['2fa_username']);
+                unset($_SESSION['2fa_email']);
+                unset($_SESSION['2fa_role']);
+
+                echo json_encode([
+                    'status' => 'success',
+                    'message' => 'Certificate agreement required',
+                    'redirect' => '../../../Certificate_agreement/PHP/Frontend/Certificate_agreement.php'
+                ]);
+                exit();
+            }
+        }
+    } catch (Throwable $e) {
+        error_log("Certificate gating warning (non-fatal) in verify_2fa: " . $e->getMessage());
+    }
+
     // Regenerate session ID for security
     session_regenerate_id(true);
 
-    // Set authenticated session
+    // Fetch full user record so session matches normal login_handler.php shape
+    $uStmt = $pdo->prepare("SELECT * FROM users WHERE user_id = ? LIMIT 1");
+    $uStmt->execute([$_SESSION['2fa_user_id']]);
+    $user = $uStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$user) {
+        throw new Exception('User not found after 2FA.');
+    }
+
+    // Set authenticated session - keep same keys used across the app
     $_SESSION['authenticated'] = true;
-    $_SESSION['user_id'] = $_SESSION['2fa_user_id'];
-    $_SESSION['username'] = $_SESSION['2fa_username'];
-    $_SESSION['email'] = $_SESSION['2fa_email'];
-    $_SESSION['role'] = $_SESSION['2fa_role'];
     $_SESSION['login_time'] = time();
+    $_SESSION['ip_address'] = $_SERVER['REMOTE_ADDR'] ?? null;
+    $_SESSION['user_agent'] = $_SERVER['HTTP_USER_AGENT'] ?? null;
+
+    $_SESSION['role'] = $user['role'];
+    $_SESSION['user_pk'] = $user['id'];
+    $_SESSION['user_id'] = $user['user_id'];
+    $_SESSION['user_name'] = $user['user_name'];
+    $_SESSION['profile_photo'] = $user['profile_photo'];
+    $_SESSION['user_email'] = $user['email'];
 
     // Clear 2FA data
     unset($_SESSION['auth_mode']);
@@ -240,7 +318,7 @@ try {
     }
 
     // Determine redirect
-    $redirect = ($_SESSION['role'] === 'admin' || $_SESSION['role'] === 'super_admin')
+    $redirect = ($user['role'] === 'admin' || $user['role'] === 'super_admin')
         ? '../../../../Private/Admin_dashboard/PHP/Frontend/Admin_dashboard.php'
         : '../../../../Private/User_dashboard/PHP/Frontend/User_dashboard.php';
 

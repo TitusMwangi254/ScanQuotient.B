@@ -19,6 +19,14 @@ if (!isset($_SESSION['role']) || !in_array($_SESSION['role'], $allowed_roles)) {
 
 $user_name = $_SESSION['user_name'] ?? 'User';
 $userRole = $_SESSION['role'] ?? 'user';
+$profile_photo = $_SESSION['profile_photo'] ?? null;
+if (!empty($profile_photo)) {
+    $photo_path = ltrim((string) $profile_photo, '/');
+    $base_url = '/ScanQuotient.v2/ScanQuotient.B';
+    $avatar_url = $base_url . '/' . $photo_path;
+} else {
+    $avatar_url = '/ScanQuotient.v2/ScanQuotient.B/Storage/Public_images/default-avatar.png';
+}
 $_SESSION['LAST_ACTIVITY'] = time();
 
 /* --- DB Connection --- */
@@ -107,6 +115,7 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
             </div>
         </div>
         <div class="sq-admin-header-right">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo" style="width:38px;height:38px;min-width:38px;min-height:38px;max-width:38px;max-height:38px;object-fit:cover;border-radius:50%;display:block;flex:0 0 38px;">
             <div class="sq-admin-user">
                 <i class="fas fa-user-shield"></i>
                     <span>
@@ -446,13 +455,12 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
         <p>ScanQuotient Security Platform • Quantifying Risk. Strengthening Security.</p>
         <p>
             Logged in as <?php echo htmlspecialchars($user_name); ?> •
-                <a
-                    href="/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Backend/logout_from_the_system.php">Logout</a>
-                </p>
-                <p style="margin-top: 8px; font-size: 12px;">
-                    <a href="mailto:elevateecomai@gmail.com?subject=Support%20Request">info@ScanQuotientsupport.com</a>
-                </p>
-                </footer>
+            <a href="../../../../Public/Login_page/PHP/Frontend/Login_page_site.php">Logout</a>
+        </p>
+        <p style="margin-top: 8px; font-size: 12px;">
+            <a href="mailto:elevateecomai@gmail.com?subject=Support%20Request">info@ScanQuotientsupport.com</a>
+        </p>
+    </footer>
 
                 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
                 <script>
@@ -649,46 +657,49 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
                         }
                     });
 
-                    // Delete
-                    document.getElementById('deleteBtn').addEventListener('click', () => {
-                        Swal.fire({
-                            title: 'Delete this ticket?',
-                            text: 'This action cannot be undone!',
-                            icon: 'warning',
-                            showCancelButton: true,
-                            confirmButtonColor: '#ef4444',
-                            cancelButtonColor: '#3b82f6',
-                            confirmButtonText: 'Yes, delete it!'
-                        }).then((result) => {
-                            if (result.isConfirmed) {
-                                const btn = document.getElementById('deleteBtn');
-                                btn.disabled = true;
-                                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+                    // Soft delete
+                    const deleteBtn = document.getElementById('deleteBtn');
+                    if (deleteBtn) {
+                        deleteBtn.addEventListener('click', () => {
+                            Swal.fire({
+                                title: 'Move ticket to trash?',
+                                text: 'You can restore it later from deleted tickets.',
+                                icon: 'warning',
+                                showCancelButton: true,
+                                confirmButtonColor: '#ef4444',
+                                cancelButtonColor: '#3b82f6',
+                                confirmButtonText: 'Yes, move to trash'
+                            }).then((result) => {
+                                if (result.isConfirmed) {
+                                    deleteBtn.disabled = true;
+                                    deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
 
-                                postAction('', {
-                                    action: 'delete',
-                                    unique_id: '<?php echo esc($ticket['unique_id']); ?>'
-                    }).then(res => {
+                                    postAction('../../PHP/Backend/ticket_actions.php', {
+                                        action: 'delete',
+                                        unique_id: '<?php echo esc($ticket['unique_id']); ?>'
+                                    }).then(res => {
                                         Swal.fire({
-                                            title: res.status === 'ok' ? 'Deleted!' : 'Error!',
+                                            title: res.status === 'ok' ? 'Moved to Trash' : 'Error!',
                                             text: res.message,
                                             icon: res.status === 'ok' ? 'success' : 'error',
                                             timer: 1500,
                                             showConfirmButton: false
                                         }).then(() => {
                                             if (res.status === 'ok') {
-                                                window.location.href = '../../PHP/Frontend/Admin_ticket_support.php';
+                                                window.location.href = '../../PHP/Frontend/Admin_ticket_support.php?view=deleted';
                                             }
                                         });
                                     }).catch(() => {
                                         Swal.fire({ title: 'Error!', text: 'Failed to delete', icon: 'error', timer: 1500, showConfirmButton: false });
                                     }).finally(() => {
-                                        btn.disabled = false;
-                                        btn.innerHTML = '<i class="fas fa-trash-alt"></i> Delete Ticket';
+                                        deleteBtn.disabled = false;
+                                        deleteBtn.innerHTML = '<i class="fas fa-trash-alt"></i> Delete Ticket';
                                     });
-                            }
+                                }
+                            });
                         });
-                    });
+                    }
+
                 </script>
 </body>
 

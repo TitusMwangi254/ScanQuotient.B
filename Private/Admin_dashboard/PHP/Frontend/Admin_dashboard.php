@@ -114,7 +114,7 @@ if (!empty($profile_photo)) {
                     <li>
                         <i class="fas fa-shield-alt"></i>
                         <div>
-                            <strong>Security Logs</strong>
+                            <strong>Site Security</strong>
                             <span>Monitor login activity, system alerts, and other security-related events.</span>
                         </div>
                     </li>
@@ -169,7 +169,7 @@ if (!empty($profile_photo)) {
                 </a>
 
                 <!-- Report Management -->
-                <a href="/ScanQuotient/ScanQuotient/Privatepages/Admin_dashboard/PHP/Frontend/admin_data_management.php"
+                <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PHP/Frontend/admin_data_management.php"
                     class="nav-btn">
                     <i class="fas fa-file-alt"></i>
                     <span>Report Management</span>
@@ -178,7 +178,7 @@ if (!empty($profile_photo)) {
                 <!-- Security -->
                 <a href="../../../../Private/Site_security/PHP/Frontend/Site_security.php" class="nav-btn">
                     <i class="fas fa-shield-alt"></i>
-                    <span>Security_logs</span>
+                    <span>Site Security</span>
                 </a>
                 <!-- Payments -->
                 <a href="../../../../Private/Subscription_Manager/PHP/Frontend/Payment_accounts.php" class="nav-btn">
@@ -200,8 +200,7 @@ if (!empty($profile_photo)) {
                 <div class="nav-divider"></div>
                 <a href="../../../../Private/Ticket_support/PHP/Frontend/Admin_ticket_support.php" class="nav-btn"><i
                         class="fas fa-headset"></i><span>Help Center</span></a>
-                <a href="../../../../Private/User_account/PHP/Frontend/User_subscription.php" class="nav-btn"><i
-                        class="fas fa-user-cog"></i><span>Account</span></a>
+
                 <button id="themeToggle" class="nav-btn theme-toggle-btn">
                     <i class="fas fa-sun"></i><span>Toggle Theme</span>
                 </button>

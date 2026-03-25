@@ -266,6 +266,38 @@ switch ($action) {
         $stmt->close();
         break;
 
+    // ---------------- RESTORE TICKET ----------------
+    case 'restore':
+        $stmt = $conn->prepare("UPDATE support_tickets SET deleted_at = NULL, deleted_by = NULL, updated_at = NOW() WHERE unique_id = ? AND deleted_at IS NOT NULL");
+        $stmt->bind_param("s", $unique_id);
+        if ($stmt->execute()) {
+            if ($stmt->affected_rows > 0) {
+                echo json_encode(['status' => 'ok', 'message' => 'Ticket restored successfully']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Ticket is not in deleted state']);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Failed to restore ticket']);
+        }
+        $stmt->close();
+        break;
+
+    // ---------------- PERMANENT DELETE (only from deleted tickets) ----------------
+    case 'permanent_delete':
+        $stmt = $conn->prepare("DELETE FROM support_tickets WHERE unique_id = ? AND deleted_at IS NOT NULL");
+        $stmt->bind_param("s", $unique_id);
+        if ($stmt->execute()) {
+            if ($stmt->affected_rows > 0) {
+                echo json_encode(['status' => 'ok', 'message' => 'Ticket permanently deleted']);
+            } else {
+                echo json_encode(['status' => 'error', 'message' => 'Ticket must be in deleted state before permanent delete']);
+            }
+        } else {
+            echo json_encode(['status' => 'error', 'message' => 'Failed to permanently delete ticket']);
+        }
+        $stmt->close();
+        break;
+
     default:
         echo json_encode(['status' => 'error', 'message' => 'Unknown action']);
         break;

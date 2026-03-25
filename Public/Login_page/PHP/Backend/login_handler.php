@@ -63,6 +63,13 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
 
+    // ------------------------------------------------------------
+    // Certificates (agreement gating)
+    // ------------------------------------------------------------
+    // IMPORTANT: Do not run certificate DDL here.
+    // Certificates tables are created/managed via the admin Site Security page.
+    // Login should only attempt a best-effort read and never fail if certificates are unused.
+
     $ipAddress = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
     $nowTs = time();
 
@@ -73,14 +80,16 @@ try {
     };
 
     $isLocked = function (?array $row) use ($nowTs) {
-        if (!$row || empty($row['locked_until'])) return false;
+        if (!$row || empty($row['locked_until']))
+            return false;
         return strtotime($row['locked_until']) > $nowTs;
     };
 
     $minsRemaining = function (?array $row) use ($nowTs) {
-        if (!$row || empty($row['locked_until'])) return 0;
+        if (!$row || empty($row['locked_until']))
+            return 0;
         $diff = strtotime($row['locked_until']) - $nowTs;
-        return $diff > 0 ? (int)ceil($diff / 60) : 0;
+        return $diff > 0 ? (int) ceil($diff / 60) : 0;
     };
 
     // Check existing locks before doing any auth work
@@ -128,7 +137,7 @@ try {
             // rolling window: if last failure was more than 10 minutes ago, reset
             $resetUserWindow = (strtotime($userRow['last_fail_at']) < ($nowTs - 10 * 60));
         }
-        $userFails = $resetUserWindow ? 0 : (int)($userRow['fail_count'] ?? 0);
+        $userFails = $resetUserWindow ? 0 : (int) ($userRow['fail_count'] ?? 0);
         $userFails++;
         $userLockUntil = null;
         $userReason = null;
@@ -160,7 +169,7 @@ try {
             // rolling window: if last failure was more than 15 minutes ago, reset
             $resetIpWindow = (strtotime($ipRow['last_fail_at']) < ($nowTs - 15 * 60));
         }
-        $ipFails = $resetIpWindow ? 0 : (int)($ipRow['fail_count'] ?? 0);
+        $ipFails = $resetIpWindow ? 0 : (int) ($ipRow['fail_count'] ?? 0);
         $ipFails++;
         $ipLockUntil = null;
         $ipReason = null;
@@ -192,8 +201,9 @@ try {
 
     // --- USER FOUND & PASSWORD CORRECT - BEGIN SECURITY CHECKS ---
 
-    // UNIFIED: Always set user_id in session for all subsequent checks
-    $_SESSION['user_id'] = $user['user_id'];
+    // Store both the external user identifier (e.g. UIDWRB3O1P) and the internal numeric ID.
+    // The external ID is used for application data like scan history.
+    $_SESSION['user_uid'] = $user['user_id'];   // public UID style identifier
     $_SESSION['user_email'] = $user['email'];
     $_SESSION['user_name'] = $user['user_name'];
 
@@ -258,7 +268,7 @@ try {
         $_SESSION['auth_stage'] = 'pending_completion';
 
         logSecurityEvent($pdo, $username, 'INCOMPLETE_ACCOUNT', 'Redirecting to account completion');
-        header('Location: ../../../Registration_completion_page/PHP/Frontend/Registration_completion_site.php');
+        header('Location: /ScanQuotient.v2/ScanQuotient.B/Public/Registration_completion_page/PHP/Frontend/Registration_completion_site.php');
         exit;
     }
 
@@ -323,6 +333,56 @@ try {
         exit;
     }
 
+    // CHECK 7: Certificate agreement (must accept before dashboard)
+    // Must be the very last "gate" before redirect. Also must never break login.
+    try {
+        // Only attempt if the tables exist. (Avoids exceptions on fresh DBs.)
+        $hasCerts = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch();
+        $hasAccept = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
+
+        if ($hasCerts && $hasAccept) {
+            $pendingCertStmt = $pdo->prepare("
+                SELECT c.id
+                FROM security_certificates c
+                WHERE c.is_active = 'yes'
+                  AND (
+                        c.target_type = 'everyone'
+                        OR (c.target_type = 'role' AND c.target_value = :role)
+                        OR (c.target_type = 'user_id' AND c.target_value = :uid)
+                        OR (c.target_type = 'username' AND c.target_value = :uname)
+                  )
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM security_certificate_acceptances a
+                        WHERE a.certificate_id = c.id AND a.user_id = :uid_check
+                  )
+                ORDER BY c.created_at DESC
+                LIMIT 1
+            ");
+            $pendingCertStmt->execute([
+                ':uid' => $user['user_id'],
+                ':uid_check' => $user['user_id'],
+                ':role' => $user['role'],
+                ':uname' => $user['user_name']
+            ]);
+            $pendingCert = $pendingCertStmt->fetch(PDO::FETCH_ASSOC);
+            if ($pendingCert) {
+                $_SESSION['auth_mode'] = 'certificate_agreement';
+                $_SESSION['cert_id'] = (int) $pendingCert['id'];
+                $_SESSION['cert_user_id'] = $user['user_id'];
+                $_SESSION['cert_role'] = $user['role'];
+                $_SESSION['cert_username'] = $user['user_name'];
+                $_SESSION['cert_email'] = $user['email'];
+                logSecurityEvent($pdo, $username, 'CERTIFICATE_REQUIRED', 'Certificate agreement required before access');
+                header('Location: ../../../Certificate_agreement/PHP/Frontend/Certificate_agreement.php');
+                exit;
+            }
+        }
+    } catch (Throwable $e) {
+        // Absolutely non-fatal.
+        error_log("Certificate gating warning (non-fatal): " . $e->getMessage());
+    }
+
     // --- ALL CHECKS PASSED - LOGIN SUCCESSFUL ---
 
     // Clear user lock on successful login (keep IP record but reset count)
@@ -355,7 +415,10 @@ try {
     $_SESSION['ip_address'] = $_SERVER['REMOTE_ADDR'];
     $_SESSION['user_agent'] = $_SERVER['HTTP_USER_AGENT'];
     $_SESSION['role'] = $user['role'];
-    $_SESSION['user_id'] = $user['id'];
+    // Keep numeric primary key available separately for admin/analytics if needed
+    $_SESSION['user_pk'] = $user['id'];
+    // Preserve the public UID-style identifier as the main user_id used across the app
+    $_SESSION['user_id'] = $user['user_id'];
     $_SESSION['user_name'] = $user['user_name'];
     $_SESSION['profile_photo'] = $user['profile_photo'];
 

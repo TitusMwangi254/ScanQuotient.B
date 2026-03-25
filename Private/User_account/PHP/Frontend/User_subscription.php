@@ -11,6 +11,14 @@ if (!isset($_SESSION['authenticated']) || $_SESSION['authenticated'] !== true) {
 $userId = $_SESSION['user_id'] ?? null;
 $userEmail = $_SESSION['user_email'] ?? '';
 $userName = $_SESSION['user_name'] ?? 'User';
+$profile_photo = $_SESSION['profile_photo'] ?? null;
+if (!empty($profile_photo)) {
+    $photo_path = ltrim((string) $profile_photo, '/');
+    $base_url = '/ScanQuotient.v2/ScanQuotient.B';
+    $avatar_url = $base_url . '/' . $photo_path;
+} else {
+    $avatar_url = '/ScanQuotient.v2/ScanQuotient.B/Storage/Public_images/default-avatar.png';
+}
 
 // Database configuration
 define('DB_HOST', '127.0.0.1');
@@ -207,6 +215,7 @@ function getDaysRemaining($expiresAt)
             </div>
         </div>
         <div class="sq-admin-header-right">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo">
 
             <button class="sq-admin-theme-toggle" id="sqThemeToggle" title="Toggle Theme">
                 <i class="fas fa-sun"></i>

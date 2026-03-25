@@ -907,3 +907,18 @@ body.sq-dark .form-textarea:focus {
         justify-content: center;
     }
 }
+
+.header-profile-photo {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px;
+    min-height: 38px;
+    max-width: 38px !important;
+    max-height: 38px !important;
+    display: block;
+    flex: 0 0 38px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid rgba(59, 130, 246, 0.35);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+}
