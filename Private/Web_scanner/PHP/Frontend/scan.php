@@ -33,7 +33,8 @@ if (!empty($profile_photo)) {
             <span class="header-tagline">Quantifying Risk. Strengthening Security.</span>
         </div>
         <div class="header-right">
-            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile"
+                class="header-profile-photo">
             <span class="welcome-text">
                 <?php echo htmlspecialchars($currentUserName, ENT_QUOTES, 'UTF-8'); ?> |
                 <span id="current-date"></span> |
@@ -98,6 +99,11 @@ if (!empty($profile_photo)) {
                                     <i class="fas fa-crosshairs scan-btn-icon" aria-hidden="true"></i>
                                     Start Scan
                                 </button>
+                                <button type="button" id="clearFindingCacheBtn" class="scan-cancel-btn"
+                                    style="display:none;">
+                                    <i class="fas fa-broom"></i>
+                                    Clear report
+                                </button>
                                 <button type="button" id="cancelScanBtn" class="scan-cancel-btn" style="display:none;">
                                     <i class="fas fa-stop-circle"></i>
                                     Cancel
@@ -120,7 +126,9 @@ if (!empty($profile_photo)) {
                                     <span id="scanStageLabel">Preparing scan...</span>
                                     <span id="scanElapsed">0s</span>
                                 </div>
-                                <div class="scan-progress-track"><div id="scanProgressBar" class="scan-progress-bar"></div></div>
+                                <div class="scan-progress-track">
+                                    <div id="scanProgressBar" class="scan-progress-bar"></div>
+                                </div>
                             </div>
                         </div>
 
@@ -172,23 +180,33 @@ if (!empty($profile_photo)) {
                             <div id="scanRunTimelineWrap" class="scan-run-timeline-wrap" style="display:none;">
                                 <div class="scan-run-timeline-head">
                                     <div>
-                                        <h3 class="scan-run-timeline-title"><i class="fas fa-stream"></i> Scan run timeline</h3>
-                                        <p id="scanRunTimelineSub" class="scan-run-timeline-sub">Saved scans for this target — compare risk score movement and what changed between runs.</p>
+                                        <h3 class="scan-run-timeline-title"><i class="fas fa-stream"></i> Scan run
+                                            timeline</h3>
+                                        <p id="scanRunTimelineSub" class="scan-run-timeline-sub">Saved scans for this
+                                            target — compare risk score movement and what changed between runs.</p>
                                     </div>
                                     <div class="scan-run-timeline-actions">
-                                        <button type="button" id="scanRunTimelineRefresh" class="scan-run-timeline-refresh" title="Refresh timeline" aria-label="Refresh timeline">
+                                        <button type="button" id="scanRunTimelineRefresh"
+                                            class="scan-run-timeline-refresh" title="Refresh timeline"
+                                            aria-label="Refresh timeline">
                                             <i class="fas fa-rotate"></i>
                                         </button>
-                                        <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php" class="scan-run-timeline-history-link">Full history <i class="fas fa-arrow-right"></i></a>
+                                        <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php"
+                                            class="scan-run-timeline-history-link">Full history <i
+                                                class="fas fa-arrow-right"></i></a>
                                     </div>
                                 </div>
                                 <div id="scanRunTimelineBody" class="scan-run-timeline-body"></div>
-                                <div id="scanRunTimelineViewAll" class="scan-run-timeline-viewall" style="display:none;">
-                                    <button type="button" id="scanRunTimelineViewAllBtn" class="scan-run-timeline-viewall-btn">
+                                <div id="scanRunTimelineViewAll" class="scan-run-timeline-viewall"
+                                    style="display:none;">
+                                    <button type="button" id="scanRunTimelineViewAllBtn"
+                                        class="scan-run-timeline-viewall-btn">
                                         <i class="fas fa-expand-alt"></i> View full timeline
                                     </button>
                                 </div>
-                                <p id="scanRunTimelineEmpty" class="scan-run-timeline-empty" style="display:none;">No saved scans for this host yet. After your report is stored, repeat scans will appear here with score deltas and new or resolved findings.</p>
+                                <p id="scanRunTimelineEmpty" class="scan-run-timeline-empty" style="display:none;">No
+                                    saved scans for this host yet. After your report is stored, repeat scans will appear
+                                    here with score deltas and new or resolved findings.</p>
                             </div>
 
                             <!-- SSL, Headers, Server & Crawler Summary -->
@@ -272,8 +290,7 @@ if (!empty($profile_photo)) {
                                             <i class="fas fa-brain"></i><span>AI Overview</span>
                                         </button>
                                         <button type="button" id="shareResultsBtn" class="artefact-btn share-btn"
-                                            title="Share by email"
-                                            style="display:inline-flex;">
+                                            title="Share by email" style="display:inline-flex;">
                                             <i class="fas fa-share-alt"></i><span>Share</span>
                                         </button>
                                     </div>
@@ -679,6 +696,7 @@ if (!empty($profile_photo)) {
         const findingReportCache = {};
         const WARMUP_CONCURRENCY = 4;
         const warmupInFlight = new Set();
+        const inFlightPromises = new Map();
         let scanFindingsAll = [];
         let findingWarmupPromise = null;
         let recommendationStemsSeen = new Set();
@@ -692,16 +710,36 @@ if (!empty($profile_photo)) {
         let scanSyntheticStartMs = 0;
         let lastBackendProgress = { progress: 0, stage: '', status: '' };
         let sqTimelineRunsStore = [];
+        let reportReconcileTimer = null;
+        let reportReconcileTicks = 0;
+        const manualRegenInFlight = new Set();
+        const manualRegenCount = new Map(); // cacheKey -> times user regenerated
+        const autoRegenAttempts = new Map();
+        const autoRegenLastTryAt = new Map();
+        const autoRegenFirstSeenAt = new Map();
         let currentFindingEvidenceRaw = '';
         let activeFindingModalToken = 0;
         const readyReportToastShown = new Set();
         const reportSourceTelemetrySent = new Set();
         const severityRank = { critical: 5, high: 4, medium: 3, low: 2, info: 1, secure: 0 };
+        function quickStableHash(input) {
+            const str = String(input || '');
+            let h = 2166136261;
+            for (let i = 0; i < str.length; i++) {
+                h ^= str.charCodeAt(i);
+                h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24);
+            }
+            return (h >>> 0).toString(16);
+        }
         function makeCacheKey(vuln) {
             const uid = vuln?._sq_uid || '';
+            const run = String(currentScanRunId || '');
             const name = vuln?.name || '';
             const sev = vuln?.severity || '';
-            return `${uid}|${name}|${sev}`;
+            const desc = vuln?.description || '';
+            const ev = vuln?.evidence || '';
+            const fp = quickStableHash(`${name}|${sev}|${desc}|${ev}`);
+            return `${run}|${uid}|${fp}`;
         }
         function sortByPriority(vulns) {
             return [...(vulns || [])].sort((a, b) => {
@@ -768,10 +806,14 @@ if (!empty($profile_photo)) {
                 ? (vuln.description || '').slice(0, 165) + '...'
                 : (vuln.description || '');
             const cvssHint = vuln.cvss_score ? `CVSS ${esc(String(vuln.cvss_score))}` : '';
+            const cacheKey = makeCacheKey(vuln);
+            const isReady = !!findingReportCache[cacheKey]?.report;
+            const btnStateClass = isReady ? 'ready' : 'pending';
+            const btnLabel = isReady ? 'Open Report' : 'Preparing...';
 
             return `
         <div class="vuln-card ${vuln.severity}" id="vuln-${index}">
-            <div class="vuln-header" onclick="openFindingReportModal(${index})">
+            <div class="vuln-header">
                 <div class="vuln-title-section">
                     <div class="vuln-icon" style="color: ${config.color}">
                         <i class="fas ${icon}"></i>
@@ -783,8 +825,11 @@ if (!empty($profile_photo)) {
                 </div>
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <span class="vuln-severity">${vuln.severity}</span>
-                    <button type="button" class="view-finding-btn pending" data-vuln-index="${index}" data-vuln-uid="${esc(String(vuln._sq_uid || ''))}" data-vuln-name="${esc(String(vuln.name || 'Security Finding'))}">
-                        <i class="fas fa-file-shield"></i> <span class="btn-label">Preparing...</span>
+                    <button type="button" class="view-finding-btn ${btnStateClass}" data-vuln-index="${index}" data-vuln-uid="${esc(String(vuln._sq_uid || ''))}" data-vuln-name="${esc(String(vuln.name || 'Security Finding'))}">
+                        <i class="fas fa-file-shield"></i> <span class="btn-label">${btnLabel}</span>
+                    </button>
+                    <button type="button" class="regen-finding-btn" data-vuln-index="${index}" data-vuln-uid="${esc(String(vuln._sq_uid || ''))}" title="Regenerate this report">
+                        <i class="fas fa-rotate-right"></i> <span class="btn-label">Regenerate</span>
                     </button>
                 </div>
             </div>
@@ -1092,70 +1137,87 @@ if (!empty($profile_photo)) {
             toggleCard('findingCardState', report.state || '');
 
             const impacts = document.getElementById('findingImpactList');
-            if (impacts) impacts.innerHTML = toListHtml(report.potential_impact);
+            const rawImpact = report.potential_impact;
+            const impactItems = Array.isArray(rawImpact) && rawImpact.length > 0
+                ? rawImpact
+                : (Array.isArray(vuln.potential_impact) && vuln.potential_impact.length > 0 ? vuln.potential_impact : []);
+            if (impacts) impacts.innerHTML = toListHtml(impactItems);
             const recs = document.getElementById('findingRecommendations');
-            if (recs) recs.innerHTML = toListHtml(report.recommendations);
+            const rawRecs = report.recommendations;
+            const recommendationItems = Array.isArray(rawRecs) && rawRecs.length > 0
+                ? rawRecs
+                : (Array.isArray(vuln.recommendations) && vuln.recommendations.length > 0
+                    ? vuln.recommendations
+                    : (vuln.remediation ? [vuln.remediation] : []));
+            if (recs) recs.innerHTML = toListHtml(recommendationItems);
             window.currentFindingContext = { report: report || {}, vuln: vuln || {} };
         }
-        async function fetchFindingReport(vulnInput) {
+        async function fetchFindingReport(vulnInput, opts = {}) {
+            const forceFetch = !!opts.forceFetch;
+            const useAi = !!opts.useAi;
+            const bypassAiCache = !!opts.bypassAiCache;
+            const disableRecommendationDiversity = !!opts.disableRecommendationDiversity;
             const vuln = typeof vulnInput === 'number' ? (lastVulnerabilities || [])[vulnInput] : vulnInput;
             if (!vuln) return null;
             const cacheKey = makeCacheKey(vuln);
-            if (findingReportCache[cacheKey]) return findingReportCache[cacheKey];
-            if (warmupInFlight.has(cacheKey)) {
-                return new Promise(resolve => {
-                    const poll = setInterval(() => {
-                        if (findingReportCache[cacheKey]) {
-                            clearInterval(poll);
-                            resolve(findingReportCache[cacheKey]);
-                        } else if (!warmupInFlight.has(cacheKey)) {
-                            clearInterval(poll);
-                            resolve(null);
-                        }
-                    }, 80);
-                });
-            }
-            warmupInFlight.add(cacheKey);
-            const stemsSnapshot = Array.from(recommendationStemsSeen);
+            const inFlightKey = useAi ? cacheKey + '|ai' : cacheKey + '|rule';
+            if (!forceFetch && findingReportCache[cacheKey]) return findingReportCache[cacheKey];
 
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 35000);
-                const r = await fetch('../Backend/finding_ai_report.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'same-origin',
-                    signal: controller.signal,
-                    body: JSON.stringify({
-                        vulnerability: vuln,
-                        vulnerability_uid: vuln._sq_uid || '',
-                        scan_run_id: currentScanRunId,
-                        recommendation_stems_seen: stemsSnapshot,
-                        scan_data: {
-                            target: lastScanData?.target || '',
-                            timestamp: lastScanData?.timestamp || '',
-                            summary: lastScanData?.summary || {}
-                        }
-                    })
-                });
-                clearTimeout(timeoutId);
-                if (!r.ok) return null;
-                const data = await r.json();
-                const payload = (data && data.ok && data.report) ? {
-                    report: data.report,
-                    source: data.source || 'unknown',
-                    quality: data.quality || null
-                } : null;
-                const stems = Array.isArray(payload?.report?.recommendation_stems) ? payload.report.recommendation_stems : [];
-                stems.forEach(s => recommendationStemsSeen.add(String(s || '')));
-                if (payload) trackFindingReportSourceEvent(vuln, payload.source, payload.quality);
-                if (payload) findingReportCache[cacheKey] = payload;
-                return payload;
-            } catch (e) {
-                return null;
-            } finally {
-                warmupInFlight.delete(cacheKey);
+            if (!forceFetch && inFlightPromises.has(inFlightKey)) {
+                return inFlightPromises.get(inFlightKey);
             }
+
+            warmupInFlight.add(cacheKey);
+            const stemsSnapshot = disableRecommendationDiversity ? [] : Array.from(recommendationStemsSeen);
+
+            const fetchPromise = (async () => {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 35000);
+                    const r = await fetch('../Backend/finding_ai_report.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        signal: controller.signal,
+                        body: JSON.stringify({
+                            vulnerability: vuln,
+                            vulnerability_uid: vuln._sq_uid || '',
+                            scan_run_id: currentScanRunId,
+                            use_ai: useAi ? true : false,
+                            bypass_cache: bypassAiCache ? true : false,
+                            recommendation_stems_seen: stemsSnapshot,
+                            scan_data: {
+                                target: lastScanData?.target || '',
+                                timestamp: lastScanData?.timestamp || '',
+                                summary: lastScanData?.summary || {}
+                            }
+                        })
+                    });
+                    clearTimeout(timeoutId);
+                    if (!r.ok) return null;
+                    const data = await r.json();
+                    const payload = (data && data.ok && data.report) ? {
+                        report: data.report,
+                        source: data.source || 'unknown',
+                        quality: data.quality || null
+                    } : null;
+                    const stems = Array.isArray(payload?.report?.recommendation_stems) ? payload.report.recommendation_stems : [];
+                    stems.forEach(s => recommendationStemsSeen.add(String(s || '')));
+                    if (payload) trackFindingReportSourceEvent(vuln, payload.source, payload.quality);
+                    if (payload) findingReportCache[cacheKey] = payload;
+                    if (payload) syncClearCacheButton();
+                    if (payload?.report) syncReadyButtonsFromCache();
+                    return payload;
+                } catch (e) {
+                    return null;
+                }
+            })();
+
+            inFlightPromises.set(inFlightKey, fetchPromise);
+            return fetchPromise.finally(() => {
+                warmupInFlight.delete(cacheKey);
+                inFlightPromises.delete(inFlightKey);
+            });
         }
         function markFindingButtonReady(vulnIndex, ok, source, vuln) {
             const uid = String(vuln?._sq_uid || '');
@@ -1180,6 +1242,86 @@ if (!empty($profile_photo)) {
                 showToast('Report ready', `${findingName} is ready to open.`, 'success');
             }
         }
+        function syncReadyButtonsFromCache() {
+            const buttons = Array.from(document.querySelectorAll('.view-finding-btn'));
+            if (!buttons.length) return;
+            buttons.forEach(btn => {
+                const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
+                if (Number.isNaN(idx) || idx < 0) return;
+                const vuln = (lastVulnerabilities || [])[idx];
+                if (!vuln) return;
+                const key = makeCacheKey(vuln);
+                const hasReady = !!findingReportCache[key]?.report;
+                if (!hasReady) return;
+                btn.classList.remove('pending', 'fallback');
+                btn.classList.add('ready');
+                const label = btn.querySelector('.btn-label');
+                if (label) label.textContent = 'Open Report';
+            });
+        }
+        function stopReportReconcileWindow() {
+            if (reportReconcileTimer) {
+                clearInterval(reportReconcileTimer);
+                reportReconcileTimer = null;
+            }
+            reportReconcileTicks = 0;
+        }
+        function startReportReconcileWindow() {
+            stopReportReconcileWindow();
+            reportReconcileTicks = 0;
+            reportReconcileTimer = setInterval(function () {
+                reportReconcileTicks += 1;
+                syncReadyButtonsFromCache();
+                syncClearCacheButton();
+                if (reportReconcileTicks % 4 === 0) {
+                    const pendingButtons = Array.from(document.querySelectorAll('.view-finding-btn.pending'));
+                    pendingButtons.forEach(btn => {
+                        const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
+                        if (Number.isNaN(idx) || idx < 0) return;
+                        const vuln = (lastVulnerabilities || [])[idx];
+                        if (!vuln) return;
+                        const key = makeCacheKey(vuln);
+                        const ruleInFlightKey = key + '|rule';
+                        const aiInFlightKey = key + '|ai';
+                        if (findingReportCache[key]?.report || inFlightPromises.has(ruleInFlightKey) || inFlightPromises.has(aiInFlightKey) || manualRegenInFlight.has(key)) return;
+                        const tries = autoRegenAttempts.get(key) || 0;
+                        if (tries >= 3) return;
+                        const now = Date.now();
+                        const firstSeenAt = autoRegenFirstSeenAt.get(key) || now;
+                        autoRegenFirstSeenAt.set(key, firstSeenAt);
+                        // Wait a bit before the first auto retry to avoid hammering.
+                        const AUTO_RETRY_FIRST_DELAY_MS = 8000;
+                        if (now < firstSeenAt + AUTO_RETRY_FIRST_DELAY_MS) return;
+                        const lastTry = autoRegenLastTryAt.get(key) || 0;
+                        const RETRY_BASE_MS = 600;
+                        const backoffMs = (RETRY_BASE_MS * Math.pow(2, tries)) + Math.random() * 500;
+                        if ((now - lastTry) < backoffMs) return;
+                        autoRegenLastTryAt.set(key, Date.now());
+                        autoRegenAttempts.set(key, tries + 1);
+                        fetchFindingReport(vuln, { forceFetch: true }).then(payload => {
+                            if (payload?.report) {
+                                markFindingButtonReady(idx, true, payload?.source, vuln);
+                                autoRegenAttempts.delete(key);
+                                autoRegenLastTryAt.delete(key);
+                                autoRegenFirstSeenAt.delete(key);
+                            }
+                        }).catch(() => { });
+                    });
+                }
+                const pendingCount = document.querySelectorAll('.view-finding-btn.pending').length;
+                if (pendingCount === 0 || reportReconcileTicks >= 20) {
+                    stopReportReconcileWindow();
+                }
+            }, 500);
+        }
+
+        function calcWarmupConcurrency(findingCount) {
+            const MIN_WARMUP = 2;
+            const MAX_WARMUP = 8;
+            if (findingCount <= 4) return Math.max(MIN_WARMUP, Math.min(4, MAX_WARMUP));
+            if (findingCount <= 10) return Math.max(MIN_WARMUP, Math.min(6, MAX_WARMUP));
+            return MAX_WARMUP;
+        }
         async function warmFindingReports() {
             if (!Array.isArray(lastVulnerabilities) || lastVulnerabilities.length === 0) return;
             const queue = sortByPriority(lastVulnerabilities.map((v, i) => ({ vuln: v, idx: i })));
@@ -1189,15 +1331,21 @@ if (!empty($profile_photo)) {
                     if (!item) return;
                     const { vuln, idx } = item;
                     try {
-                        const payload = await fetchFindingReport(vuln);
-                        markFindingButtonReady(idx, !!payload?.report, payload?.source, vuln);
+                        let payload = await fetchFindingReport(vuln);
+                        if (!payload?.report) {
+                            await new Promise(resolve => setTimeout(resolve, 700));
+                            payload = await fetchFindingReport(vuln, { forceFetch: true });
+                        }
+                        if (payload?.report) markFindingButtonReady(idx, true, payload?.source, vuln);
                     } catch (e) {
-                        markFindingButtonReady(idx, false, null, vuln);
+                        // Keep pending state; explicit click can still force-fetch this report.
                     }
                 }
             }
-            const workers = Array.from({ length: Math.min(WARMUP_CONCURRENCY, queue.length) }, () => worker());
+            const concurrency = calcWarmupConcurrency(queue.length);
+            const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker());
             await Promise.allSettled(workers);
+            syncReadyButtonsFromCache();
         }
         async function openFindingReportModal(vulnIndex) {
             const modal = document.getElementById('findingReportModal');
@@ -1206,6 +1354,7 @@ if (!empty($profile_photo)) {
             if (!modal || !body) return;
             const vuln = (lastVulnerabilities || [])[vulnIndex];
             if (!vuln) return;
+            window.currentFindingModalIndex = vulnIndex;
             activeFindingModalToken += 1;
             const modalToken = activeFindingModalToken;
             const cacheKey = makeCacheKey(vuln);
@@ -1219,26 +1368,49 @@ if (!empty($profile_photo)) {
                 setFindingModalContent(cached.report || {}, vuln, cached.source, cached.quality);
                 return;
             }
-            body.style.display = 'none';
-            if (loading) {
-                loading.style.display = 'flex';
-                loading.innerHTML = renderFindingModalSkeleton();
-            }
+            // Fix 4: render deterministic fallback immediately so the user
+            // sees real content while the AI report is fetched.
+            body.style.display = 'grid';
+            if (loading) loading.style.display = 'none';
+            const fallbackReport = {
+                title: vuln.name || 'Security Finding',
+                severity: vuln.severity || '-',
+                category: vuln.category || 'Security Finding',
+                target: lastScanData?.target || '',
+                detection_time: lastScanData?.timestamp || '',
+                description: vuln.description || '-',
+                evidence: vuln.evidence || '',
+                risk_explanation: vuln.indicates || '-',
+                likelihood: '-',
+                remediation_priority: '-',
+                result_status: 'Preparing...',
+                ip_address: vuln.ip_address || '',
+                port: vuln.port || '',
+                service_detected: vuln.service_detected || '',
+                state: vuln.state || ''
+            };
+            setFindingModalContent(fallbackReport, vuln, 'loading', null);
             try {
-                const payload = await fetchFindingReport(vuln);
+                let payload = await fetchFindingReport(vuln);
+                if (!payload?.report) {
+                    payload = await fetchFindingReport(vuln, { forceFetch: true });
+                }
                 if (modalToken !== activeFindingModalToken) return;
                 const report = payload?.report || {};
                 setFindingModalContent(report, vuln, payload?.source, payload?.quality);
+                if (payload?.report) {
+                    markFindingButtonReady(vulnIndex, true, payload?.source, vuln);
+                } else {
+                    markFindingButtonReady(vulnIndex, false, null, vuln);
+                }
             } catch (e) {
                 if (modalToken !== activeFindingModalToken) return;
                 setFindingModalContent({}, vuln, 'fallback', null);
+                markFindingButtonReady(vulnIndex, false, null, vuln);
             } finally {
                 if (modalToken !== activeFindingModalToken) return;
-                if (loading) {
-                    loading.style.display = 'none';
-                    loading.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Building detailed report...';
-                }
                 body.style.display = 'grid';
+                if (loading) loading.style.display = 'none';
             }
         }
         function closeFindingReportModal() {
@@ -1542,6 +1714,13 @@ if (!empty($profile_photo)) {
         document.addEventListener('click', function (e) {
             const btn = e.target.closest('.view-finding-btn');
             if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (btn.classList.contains('pending')) {
+                const findingName = String(btn.getAttribute('data-vuln-name') || 'This finding');
+                showToast('Preparing report', `${findingName} is still preparing. Please wait a moment.`, 'warning');
+                return;
+            }
             const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
             if (!Number.isNaN(idx) && idx >= 0) openFindingReportModal(idx);
         });
@@ -2013,9 +2192,18 @@ if (!empty($profile_photo)) {
                     const stamp = Date.now();
                     currentScanRunId = `${stamp}`;
                     recommendationStemsSeen = new Set();
+                    stopReportReconcileWindow();
+                    autoRegenAttempts.clear();
+                    autoRegenLastTryAt.clear();
+                    autoRegenFirstSeenAt.clear();
+                    Object.keys(findingReportCache).forEach(k => delete findingReportCache[k]);
+                    warmupInFlight.clear();
+                    readyReportToastShown.clear();
+                    reportSourceTelemetrySent.clear();
                     scanFindingsAll = data.vulnerabilities.map((v, idx) => ({ ...v, _sq_uid: `${stamp}-${idx}` }));
                     populateCategoryFilter();
                     applyFindingsFilters();
+                    startReportReconcileWindow();
                 } else {
                     const vulnsList = document.getElementById('vulnerabilitiesList');
                     scanFindingsAll = [];
@@ -2112,6 +2300,7 @@ if (!empty($profile_photo)) {
                 if (cancelBtn2) cancelBtn2.style.display = 'none';
                 stopScanProgressTimer();
                 stopScanStagePolling();
+                stopReportReconcileWindow();
                 if (String(err && err.name) === 'AbortError') {
                     if (errTextEl2) errTextEl2.textContent = 'Scan cancelled.';
                     if (errMsgEl2) errMsgEl2.classList.add('active');
@@ -2575,9 +2764,15 @@ ${headHtml}
                 lastScanId = st.lastScanId || null;
                 lastDownloadUrls = st.lastDownloadUrls || {};
                 lastHumanReportText = st.lastHumanReportText || '';
+                currentScanRunId = String(lastScanData?.scan_id || lastScanData?.timestamp || st.savedAt || Date.now());
                 scanFindingsAll = Array.isArray(st.scanFindingsAll)
                     ? st.scanFindingsAll
                     : (Array.isArray(lastScanData.vulnerabilities) ? lastScanData.vulnerabilities : []);
+                const restoreStamp = String(st.savedAt || Date.now());
+                scanFindingsAll = scanFindingsAll.map((v, idx) => {
+                    if (v && v._sq_uid) return v;
+                    return { ...v, _sq_uid: `${restoreStamp}-${idx}` };
+                });
                 try {
                     const tb = document.getElementById('targetBadge');
                     if (tb) tb.textContent = new URL(lastScanData.target).hostname;
@@ -2864,16 +3059,147 @@ ${headHtml}
             }
         }
         document.getElementById('shareSubmitBtn')?.addEventListener('click', submitShareScan);
-        function showToast(title, message, type) {
-            type = type || 'info';
-            var container = document.getElementById('toastContainer');
-            if (!container) return;
-            var toast = document.createElement('div');
+        const toastQueue = [];
+        let toastActive = false;
+        function processToastQueue() {
+            if (toastActive || toastQueue.length === 0) return;
+            const container = document.getElementById('toastContainer');
+            if (!container) {
+                toastQueue.length = 0;
+                return;
+            }
+            toastActive = true;
+            const next = toastQueue.shift();
+            const type = next.type || 'info';
+            const toast = document.createElement('div');
             toast.className = 'share-toast';
-            var icon = type === 'success' ? 'fa-check-circle' : (type === 'error' ? 'fa-times-circle' : 'fa-info-circle');
-            toast.innerHTML = '<div class="share-toast-icon ' + type + '"><i class="fas ' + icon + '"></i></div><div class="share-toast-content"><h4>' + (title || '') + '</h4><p>' + (message || '') + '</p></div>';
+            const icon = type === 'success'
+                ? 'fa-check-circle'
+                : (type === 'error'
+                    ? 'fa-times-circle'
+                    : (type === 'warning' ? 'fa-triangle-exclamation' : 'fa-info-circle'));
+            toast.innerHTML = '<div class="share-toast-icon ' + type + '"><i class="fas ' + icon + '"></i></div><div class="share-toast-content"><h4>' + (next.title || '') + '</h4><p>' + (next.message || '') + '</p></div>';
             container.appendChild(toast);
-            setTimeout(function () { toast.classList.add('hide'); setTimeout(function () { toast.remove(); }, 300); }, 4000);
+            setTimeout(function () {
+                toast.classList.add('hide');
+                setTimeout(function () {
+                    toast.remove();
+                    toastActive = false;
+                    processToastQueue();
+                }, 320);
+            }, 2600);
+        }
+        function showToast(title, message, type) {
+            toastQueue.push({ title: title || '', message: message || '', type: type || 'info' });
+            processToastQueue();
+        }
+        function copyTextToClipboard(text) {
+            const raw = String(text || '').trim();
+            if (!raw || raw === '-') return Promise.resolve(false);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(raw).then(() => true).catch(() => false);
+            }
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = raw;
+                ta.setAttribute('readonly', 'readonly');
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return Promise.resolve(!!ok);
+            } catch (e) {
+                return Promise.resolve(false);
+            }
+        }
+        function syncClearCacheButton() {
+            const btn = document.getElementById('clearFindingCacheBtn');
+            if (!btn) return;
+            const hasRenderedReport = !!(lastScanData && lastScanData.target);
+            btn.style.display = hasRenderedReport ? 'inline-flex' : 'none';
+        }
+        function clearFindingReportCache() {
+            Object.keys(findingReportCache).forEach(k => delete findingReportCache[k]);
+            warmupInFlight.clear();
+            manualRegenInFlight.clear();
+            autoRegenAttempts.clear();
+            autoRegenLastTryAt.clear();
+            autoRegenFirstSeenAt.clear();
+            readyReportToastShown.clear();
+            reportSourceTelemetrySent.clear();
+            recommendationStemsSeen = new Set();
+            currentScanRunId = '';
+            lastVulnerabilities = [];
+            scanFindingsAll = [];
+            lastScanData = null;
+            lastScanId = null;
+            lastDownloadUrls = {};
+            lastHumanReportText = '';
+            stopReportReconcileWindow();
+            try { sessionStorage.removeItem(scanStateStorageKey); } catch (e) { }
+            window.location.href = window.location.pathname;
+        }
+        async function regenerateFindingReport(vulnIndex) {
+            const vuln = (lastVulnerabilities || [])[vulnIndex];
+            if (!vuln) return;
+            const key = makeCacheKey(vuln);
+            const MAX_MANUAL_REGEN_PER_FINDING = 2;
+            const prevCount = manualRegenCount.get(key) || 0;
+            if (prevCount >= MAX_MANUAL_REGEN_PER_FINDING) {
+                showToast('Regenerate limit reached', 'You can regenerate a finding report at most twice per issue.', 'warning');
+                return;
+            }
+            if (manualRegenInFlight.has(key)) {
+                showToast('Regenerating', 'This report is already being regenerated. Please wait.', 'warning');
+                return;
+            }
+            manualRegenInFlight.add(key);
+            manualRegenCount.set(key, prevCount + 1);
+            document.querySelectorAll('.view-finding-btn').forEach(btn => {
+                const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
+                if (idx !== vulnIndex) return;
+                btn.classList.remove('ready', 'fallback');
+                btn.classList.add('pending');
+                const label = btn.querySelector('.btn-label');
+                if (label) label.textContent = 'Regenerating...';
+            });
+            delete findingReportCache[key];
+            warmupInFlight.delete(key);
+            showToast('Regenerating', `${String(vuln.name || 'Finding')} report is being regenerated…`, 'info');
+            try {
+                const payload = await fetchFindingReport(vuln, { forceFetch: true, useAi: true, bypassAiCache: true, disableRecommendationDiversity: true });
+                if (payload?.report) {
+                    const src = String(payload?.source || '');
+                    markFindingButtonReady(vulnIndex, true, payload?.source, vuln);
+                    // If the modal is open, update it in-place with the AI result.
+                    const modal = document.getElementById('findingReportModal');
+                    if (modal && modal.style.display !== 'none') {
+                        const bodyEl = document.getElementById('findingReportBody');
+                        if (bodyEl && bodyEl.style.display !== 'none') {
+                            setFindingModalContent(payload.report, vuln, payload.source, payload.quality);
+                        }
+                    }
+                    if (src === 'ai' || src === 'ai_corrected') {
+                        showToast('Regenerated', `${String(vuln.name || 'Finding')} report regenerated — ScanQuotient.`, 'success');
+                    } else {
+                        // AI route returned something else (usually deterministic fallback).
+                        showToast(
+                            'Regenerated',
+                            `${String(vuln.name || 'Finding')} report regenerated — ScanQuotient (fallback: ${src || 'unknown'}).`,
+                            'warning'
+                        );
+                    }
+                } else {
+                    showToast('Regenerate failed', 'Report did not return valid content yet. Try again.', 'warning');
+                }
+            } catch (e) {
+                showToast('Regenerate failed', 'Could not regenerate this report right now.', 'error');
+            } finally {
+                manualRegenInFlight.delete(key);
+                syncReadyButtonsFromCache();
+            }
         }
         async function copyEvidenceToClipboard() {
             const fullEl = document.getElementById('evidenceRawPlain');
@@ -2884,20 +3210,8 @@ ${headHtml}
                 return;
             }
             try {
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    await navigator.clipboard.writeText(text);
-                } else {
-                    const ta = document.createElement('textarea');
-                    ta.value = text;
-                    ta.setAttribute('readonly', 'readonly');
-                    ta.style.position = 'fixed';
-                    ta.style.left = '-9999px';
-                    document.body.appendChild(ta);
-                    ta.select();
-                    const ok = document.execCommand('copy');
-                    document.body.removeChild(ta);
-                    if (!ok) throw new Error('Copy command failed');
-                }
+                const ok = await copyTextToClipboard(text);
+                if (!ok) throw new Error('Copy command failed');
                 showToast('Copied', 'Evidence copied to clipboard.', 'success');
             } catch (e) {
                 showToast('Copy failed', 'Could not copy evidence automatically.', 'error');
@@ -2907,6 +3221,46 @@ ${headHtml}
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!(t instanceof Element)) return;
+            if (t.closest('#findingModalRegenerateBtn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                const btn = t.closest('#findingModalRegenerateBtn');
+                if (btn instanceof HTMLButtonElement) {
+                    if (btn.disabled) return;
+                    btn.disabled = true;
+                    btn.style.opacity = '0.65';
+                    btn.style.cursor = 'not-allowed';
+                }
+                const idx = Number(window.currentFindingModalIndex);
+                if (Number.isFinite(idx) && idx >= 0) {
+                    Promise.resolve(regenerateFindingReport(idx)).finally(() => {
+                        if (btn instanceof HTMLButtonElement) {
+                            btn.disabled = false;
+                            btn.style.opacity = '';
+                            btn.style.cursor = 'pointer';
+                        }
+                    });
+                } else {
+                    const uid = String(window.currentFindingContext?.vuln?._sq_uid || '');
+                    const fallbackIdx = uid ? (lastVulnerabilities || []).findIndex(v => String(v?._sq_uid || '') === uid) : -1;
+                    if (fallbackIdx >= 0) {
+                        Promise.resolve(regenerateFindingReport(fallbackIdx)).finally(() => {
+                            if (btn instanceof HTMLButtonElement) {
+                                btn.disabled = false;
+                                btn.style.opacity = '';
+                                btn.style.cursor = 'pointer';
+                            }
+                        });
+                    } else {
+                        if (btn instanceof HTMLButtonElement) {
+                            btn.disabled = false;
+                            btn.style.opacity = '';
+                            btn.style.cursor = 'pointer';
+                        }
+                    }
+                }
+                return;
+            }
             if (t.closest('#shareResultsBtn')) {
                 if (!lastScanId) {
                     showToast('Share', 'Run and save a scan first, then share it by email.', 'error');
@@ -2944,12 +3298,46 @@ ${headHtml}
                 closeFindingEvidenceRawModal();
                 return;
             }
+            if (t.closest('#findingRawPaneOpenBtn')) {
+                const fullModal = document.getElementById('findingRawFullscreenModal');
+                const fullText = document.getElementById('findingRawFullscreenText');
+                if (fullText) fullText.textContent = String(currentFindingEvidenceRaw || '').trim() || '-';
+                if (fullModal) {
+                    fullModal.style.display = 'flex';
+                    fullModal.classList.add('active');
+                }
+                return;
+            }
+            if (t.closest('#findingRawFullscreenClose') || t.id === 'findingRawFullscreenModal') {
+                const fullModal = document.getElementById('findingRawFullscreenModal');
+                if (fullModal) {
+                    fullModal.classList.remove('active');
+                    fullModal.style.display = 'none';
+                }
+                return;
+            }
+            if (t.closest('#findingRawFullscreenCopyBtn')) {
+                const raw = String(currentFindingEvidenceRaw || '').trim() || '-';
+                copyTextToClipboard(raw).then(ok => {
+                    showToast(ok ? 'Copied' : 'Copy failed', ok ? 'Raw finding evidence copied.' : 'Unable to copy raw finding evidence.', ok ? 'success' : 'error');
+                });
+                return;
+            }
             if (t.closest('#scanTimelineFullClose') || t.id === 'scanTimelineFullModal') {
                 closeScanTimelineFullModal();
                 return;
             }
             if (t.closest('#findingPrintBtn')) {
                 printFindingReport();
+                return;
+            }
+            if (t.closest('#clearFindingCacheBtn')) {
+                clearFindingReportCache();
+                return;
+            }
+            if (t.closest('.regen-finding-btn')) {
+                const idx = parseInt(t.closest('.regen-finding-btn')?.getAttribute('data-vuln-index') || '-1', 10);
+                if (!Number.isNaN(idx) && idx >= 0) regenerateFindingReport(idx);
                 return;
             }
             if (t.closest('#findingReportClose') || t.closest('#findingReportDone')) {
@@ -2976,7 +3364,6 @@ ${headHtml}
                 return;
             }
             if (t.closest('#copyEvidenceBtn')) {
-                copyEvidenceToClipboard();
                 return;
             }
             if (t.id === 'evidenceModal') {
@@ -3008,6 +3395,7 @@ ${headHtml}
             if (sort) sort.value = 'severity_desc';
             applyFindingsFilters();
         });
+        syncClearCacheButton();
         document.querySelectorAll('.section-clickable').forEach(el => {
             el.addEventListener('mouseenter', () => el.classList.add('hint-visible'));
             el.addEventListener('mouseleave', () => el.classList.remove('hint-visible'));
@@ -3015,9 +3403,24 @@ ${headHtml}
     </script>
 
     <div id="toastContainer"
-        style="position:fixed;bottom:24px;right:24px;z-index:10000;display:flex;flex-direction:column;gap:8px;pointer-events:none;">
+        style="position:fixed;bottom:24px;right:24px;z-index:10020;display:flex;flex-direction:column;gap:8px;pointer-events:none;">
     </div>
     <style>
+        #findingModalRegenerateBtn {
+            display: inline-block;
+            transition: transform .15s ease, filter .2s ease, opacity .2s ease;
+        }
+
+        #findingModalRegenerateBtn:hover:not(:disabled) {
+            transform: translateY(-1px);
+            filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.25));
+        }
+
+        #findingModalRegenerateBtn:active:not(:disabled) {
+            transform: translateY(0);
+            filter: drop-shadow(0 4px 10px rgba(15, 23, 42, 0.18));
+        }
+
         #evidenceModal .sq-pill-btn {
             border-radius: 999px !important;
             padding: 9px 16px !important;
@@ -3068,6 +3471,7 @@ ${headHtml}
             border-color: rgba(59, 130, 246, 0.45) !important;
             color: var(--brand-color) !important;
         }
+
         #shareModal #shareModalClose.modal-btn {
             border-radius: 999px;
             padding: 10px 16px;
@@ -3077,11 +3481,13 @@ ${headHtml}
             font-weight: 700;
             transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
         }
+
         #shareModal #shareModalClose.modal-btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 8px 20px rgba(15, 23, 42, .15);
             background: rgba(100, 116, 139, .12);
         }
+
         #shareModal #shareSubmitBtn.modal-btn {
             border-radius: 999px;
             padding: 10px 18px;
@@ -3091,30 +3497,35 @@ ${headHtml}
             font-weight: 800;
             transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
         }
+
         #shareModal #shareSubmitBtn.modal-btn:hover {
             transform: translateY(-1px);
             box-shadow: 0 10px 24px rgba(37, 99, 235, .28);
             filter: brightness(1.05);
         }
+
         #shareModal #shareSubmitBtn.modal-btn:disabled {
             opacity: .6;
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
         }
+
         #shareModal .modal {
             border: 1px solid var(--border-color);
             box-shadow: 0 24px 60px rgba(2, 6, 23, .35);
             border-radius: 18px;
-            background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,250,252,.98));
+            background: linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(248, 250, 252, .98));
             backdrop-filter: blur(3px);
         }
+
         #shareModal h3 {
             margin: 0 0 12px 0;
             font-size: 18px;
             font-weight: 800;
             color: var(--text-main);
         }
+
         #shareModal #shareEmails {
             border: 1px solid var(--border-color);
             background: #fff;
@@ -3123,14 +3534,17 @@ ${headHtml}
             min-height: 96px;
             transition: border-color .15s ease, box-shadow .2s ease;
         }
+
         #shareModal #shareEmails:focus {
             outline: none;
             border-color: rgba(59, 130, 246, .5);
             box-shadow: 0 0 0 3px rgba(59, 130, 246, .16);
         }
+
         #shareModal label {
             color: var(--text-main);
         }
+
         #shareModal input[type="checkbox"] {
             accent-color: #2563eb;
             transform: translateY(1px);
@@ -3166,15 +3580,20 @@ ${headHtml}
     <div id="findingReportModal" class="modal-overlay"
         style="display:none; position:fixed; inset:0; background:rgba(2, 6, 23, 0.72); z-index:10004; align-items:center; justify-content:center;">
         <div class="finding-report-modal">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px;">
+            <div
+                style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px;">
                 <div>
-                    <div style="font-size:20px; font-weight:800; color:var(--text-main);" id="findingTitle">Finding report</div>
-                    <div style="display:none; font-size:12px; color:var(--text-light);">Structured evidence-based security report</div>
-                    <div id="findingQualityBadge" class="finding-quality-badge ok" style="display:none; margin-top:8px;">
+                    <div style="font-size:20px; font-weight:800; color:var(--text-main);" id="findingTitle">Finding
+                        report</div>
+                    <div style="display:none; font-size:12px; color:var(--text-light);">Structured evidence-based
+                        security report</div>
+                    <div id="findingQualityBadge" class="finding-quality-badge ok"
+                        style="display:none; margin-top:8px;">
                         <i class="fas fa-shield-check"></i><span id="findingQualityText">Quality validated</span>
                     </div>
                 </div>
-                <button type="button" id="findingReportClose" class="icon-btn" title="Close" style="width:40px;height:40px;">
+                <button type="button" id="findingReportClose" class="icon-btn" title="Close"
+                    style="width:40px;height:40px;">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -3182,49 +3601,122 @@ ${headHtml}
                 <i class="fas fa-spinner fa-spin"></i> Building detailed report...
             </div>
             <div id="findingReportBody" class="finding-modal-grid" style="display:none;">
-                <div class="finding-card third finding-kv"><div class="k">Severity</div><div class="v" id="findingSeverity">-</div></div>
-                <div class="finding-card third finding-kv"><div class="k">Category</div><div class="v" id="findingCategory">-</div></div>
-                <div class="finding-card third finding-kv"><div class="k">Result Status</div><div class="v" id="findingStatus">-</div></div>
-                <div class="finding-card third finding-kv"><div class="k">Target</div><div class="v" id="findingTarget">-</div></div>
-                <div class="finding-card third finding-kv" id="findingCardIp"><div class="k">IP Address</div><div class="v" id="findingIp">-</div></div>
-                <div class="finding-card third finding-kv"><div class="k">Detection Time</div><div class="v" id="findingDetectionTime">-</div></div>
-                <div class="finding-card third finding-kv" id="findingCardPort"><div class="k">Port</div><div class="v" id="findingPort">-</div></div>
-                <div class="finding-card third finding-kv" id="findingCardService"><div class="k">Service</div><div class="v" id="findingService">-</div></div>
-                <div class="finding-card third finding-kv" id="findingCardState"><div class="k">State</div><div class="v" id="findingState">-</div></div>
-                <div class="finding-card half finding-kv"><div class="k">Likelihood</div><div class="v" id="findingLikelihood">-</div></div>
-                <div class="finding-card half finding-kv"><div class="k">Remediation Priority</div><div class="v" id="findingPriority">-</div></div>
-                <div class="finding-card half finding-kv important-card section-clickable" id="findingDescCard" data-section="description"><div class="k">Description</div><div class="v" id="findingDescription">-</div><div class="section-hint">Click to view more</div></div>
-                <div class="finding-card half finding-kv important-card section-clickable" id="findingEvidenceCard" data-section="evidence"><div class="k">Evidence</div><div class="v" id="findingEvidence">-</div><div class="section-hint">Click to view more</div></div>
-                <div class="finding-card half finding-kv important-card section-clickable" id="findingRiskCard" data-section="risk_explanation"><div class="k">What This Evidence Indicates</div><div class="v" id="findingRiskExplanation">-</div><div class="section-hint">Click to view more</div></div>
-                <div class="finding-card half important-card section-clickable" id="findingImpactCard" data-section="potential_impact">
-                    <div class="k" style="font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-light); font-weight:700; margin-bottom:8px;">Potential Business and Security Impact</div>
-                    <ul id="findingImpactList" class="finding-list"><li>Not provided.</li></ul>
+                <div class="finding-card third finding-kv">
+                    <div class="k">Severity</div>
+                    <div class="v" id="findingSeverity">-</div>
+                </div>
+                <div class="finding-card third finding-kv">
+                    <div class="k">Category</div>
+                    <div class="v" id="findingCategory">-</div>
+                </div>
+                <div class="finding-card third finding-kv">
+                    <div class="k">Result Status</div>
+                    <div class="v" id="findingStatus">-</div>
+                </div>
+                <div class="finding-card third finding-kv">
+                    <div class="k">Target</div>
+                    <div class="v" id="findingTarget">-</div>
+                </div>
+                <div class="finding-card third finding-kv" id="findingCardIp">
+                    <div class="k">IP Address</div>
+                    <div class="v" id="findingIp">-</div>
+                </div>
+                <div class="finding-card third finding-kv">
+                    <div class="k">Detection Time</div>
+                    <div class="v" id="findingDetectionTime">-</div>
+                </div>
+                <div class="finding-card third finding-kv" id="findingCardPort">
+                    <div class="k">Port</div>
+                    <div class="v" id="findingPort">-</div>
+                </div>
+                <div class="finding-card third finding-kv" id="findingCardService">
+                    <div class="k">Service</div>
+                    <div class="v" id="findingService">-</div>
+                </div>
+                <div class="finding-card third finding-kv" id="findingCardState">
+                    <div class="k">State</div>
+                    <div class="v" id="findingState">-</div>
+                </div>
+                <div class="finding-card half finding-kv">
+                    <div class="k">Likelihood</div>
+                    <div class="v" id="findingLikelihood">-</div>
+                </div>
+                <div class="finding-card half finding-kv">
+                    <div class="k">Remediation Priority</div>
+                    <div class="v" id="findingPriority">-</div>
+                </div>
+                <div class="finding-card half finding-kv important-card section-clickable" id="findingDescCard"
+                    data-section="description">
+                    <div class="k">Description</div>
+                    <div class="v" id="findingDescription">-</div>
                     <div class="section-hint">Click to view more</div>
                 </div>
-                <div class="finding-card important-card section-clickable" id="findingRecoCard" data-section="recommendations">
-                    <div class="k" style="font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-light); font-weight:700; margin-bottom:8px;">Recommended Actions</div>
-                    <ul id="findingRecommendations" class="finding-list"><li>Not provided.</li></ul>
+                <div class="finding-card half finding-kv important-card section-clickable" id="findingEvidenceCard"
+                    data-section="evidence">
+                    <div class="k">Evidence</div>
+                    <div class="v" id="findingEvidence">-</div>
+                    <div class="section-hint">Click to view more</div>
+                </div>
+                <div class="finding-card half finding-kv important-card section-clickable" id="findingRiskCard"
+                    data-section="risk_explanation">
+                    <div class="k">What This Evidence Indicates</div>
+                    <div class="v" id="findingRiskExplanation">-</div>
+                    <div class="section-hint">Click to view more</div>
+                </div>
+                <div class="finding-card half important-card section-clickable" id="findingImpactCard"
+                    data-section="potential_impact">
+                    <div class="k"
+                        style="font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-light); font-weight:700; margin-bottom:8px;">
+                        Potential Business and Security Impact</div>
+                    <ul id="findingImpactList" class="finding-list">
+                        <li>Not provided.</li>
+                    </ul>
+                    <div class="section-hint">Click to view more</div>
+                </div>
+                <div class="finding-card important-card section-clickable" id="findingRecoCard"
+                    data-section="recommendations">
+                    <div class="k"
+                        style="font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-light); font-weight:700; margin-bottom:8px;">
+                        Recommended Actions</div>
+                    <ul id="findingRecommendations" class="finding-list">
+                        <li>Not provided.</li>
+                    </ul>
                     <div class="section-hint">Click to view more</div>
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
-                <button type="button" id="findingPrintBtn" class="modal-btn secondary sq-pill-btn" title="Print report" aria-label="Print report"><i class="fas fa-print"></i></button>
-                <button type="button" id="findingReportDone" class="modal-btn sq-pill-btn finding-close-btn"><i class="fas fa-check-circle"></i><span>Close Report</span></button>
+                <button type="button" id="findingPrintBtn" class="modal-btn secondary sq-pill-btn" title="Print report"
+                    aria-label="Print report"><i class="fas fa-print"></i></button>
+                <button type="button" id="findingReportDone" class="modal-btn sq-pill-btn finding-close-btn"><i
+                        class="fas fa-check-circle"></i><span>Close Report</span></button>
+            </div>
+            <div style="margin-top:10px; font-size:12px; color:var(--text-light);">
+                If you are not satisfied with the report results, click
+                <button type="button" id="findingModalRegenerateBtn"
+                    style="padding:0;border:0;background:transparent;color:var(--brand-color);font-weight:inherit;font-size:inherit;cursor:pointer;text-decoration:none;">
+                    Regenerate
+                </button>
+                to request an AI-enhanced alternative version of this finding.
             </div>
         </div>
     </div>
     <div id="findingSectionModal" class="modal-overlay"
         style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.72); z-index:10006; align-items:center; justify-content:center;">
-        <div class="modal" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:16px; width:94%; max-width:860px; max-height:88vh; overflow:auto; padding:18px;">
-            <div id="findingSectionHead" class="finding-section-head section-theme-description" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div class="modal"
+            style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:16px; width:94%; max-width:860px; max-height:88vh; overflow:auto; padding:18px;">
+            <div id="findingSectionHead" class="finding-section-head section-theme-description"
+                style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
                 <div>
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <span class="finding-section-icon"><i id="findingSectionIcon" class="fas fa-align-left"></i></span>
+                        <span class="finding-section-icon"><i id="findingSectionIcon"
+                                class="fas fa-align-left"></i></span>
                         <div id="findingSectionTitle" style="font-size:18px;font-weight:800;">Section details</div>
                     </div>
-                    <div style="font-size:12px;color:var(--text-light);">Extended analysis for this finding section</div>
+                    <div style="font-size:12px;color:var(--text-light);">Extended analysis for this finding section
+                    </div>
                 </div>
-                <button type="button" id="findingSectionClose" class="icon-btn" style="width:38px;height:38px;"><i class="fas fa-times"></i></button>
+                <button type="button" id="findingSectionClose" class="icon-btn" style="width:38px;height:38px;"><i
+                        class="fas fa-times"></i></button>
             </div>
             <div id="findingSectionContent" style="white-space:pre-wrap;line-height:1.6;font-size:14px;"></div>
         </div>
@@ -3233,15 +3725,19 @@ ${headHtml}
         style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.78); z-index:10009; align-items:center; justify-content:center;">
         <div class="modal sq-evidence-raw-inner"
             style="background:var(--bg-card); padding:20px; border-radius:16px; width:96%; max-width:1100px; border:1px solid var(--border-color); max-height:90vh; overflow:hidden; display:flex; flex-direction:column;">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; flex-shrink:0;">
+            <div
+                style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; flex-shrink:0;">
                 <div>
                     <div style="font-size:17px; font-weight:800; color:var(--text-main);">Full raw evidence</div>
-                    <div style="font-size:12px; color:var(--text-light); margin-top:4px;">Verbatim capture (left) · Explained breakdown (right)</div>
+                    <div style="font-size:12px; color:var(--text-light); margin-top:4px;">Verbatim capture (left) ·
+                        Explained breakdown (right)</div>
                 </div>
-                <button type="button" id="findingEvidenceRawClose" class="icon-btn" title="Close" style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
+                <button type="button" id="findingEvidenceRawClose" class="icon-btn" title="Close"
+                    style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
             </div>
             <div class="sq-evidence-raw-split">
-                <div class="sq-evidence-raw-pane sq-evidence-raw-pane-left">
+                <div class="sq-evidence-raw-pane sq-evidence-raw-pane-left" id="findingRawPaneOpenBtn"
+                    title="Click to open larger raw evidence modal">
                     <div class="sq-evidence-raw-pane-label">Raw evidence (as captured)</div>
                     <pre id="findingEvidenceRawText" class="sq-evidence-raw-pre">-</pre>
                 </div>
@@ -3252,16 +3748,41 @@ ${headHtml}
             </div>
         </div>
     </div>
+    <div id="findingRawFullscreenModal" class="modal-overlay"
+        style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.84); z-index:10012; align-items:center; justify-content:center;">
+        <div class="modal"
+            style="background:var(--bg-card); padding:18px; border-radius:16px; width:96%; max-width:1200px; border:1px solid var(--border-color); max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
+                <div>
+                    <div style="font-size:17px; font-weight:800; color:var(--text-main);">Raw evidence (full view)</div>
+                    <div style="font-size:12px; color:var(--text-light);">Expanded for easier inspection and copying.
+                    </div>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button type="button" id="findingRawFullscreenCopyBtn"
+                        class="modal-btn secondary sq-pill-btn finding-raw-copy-btn">
+                        <i class="fas fa-copy"></i><span>Copy</span>
+                    </button>
+                    <button type="button" id="findingRawFullscreenClose" class="icon-btn" title="Close"
+                        style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
+                </div>
+            </div>
+            <pre id="findingRawFullscreenText" class="sq-evidence-raw-pre" style="flex:1; min-height:280px;">-</pre>
+        </div>
+    </div>
     <div id="scanTimelineFullModal" class="modal-overlay sq-timeline-full-modal"
         style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.72); z-index:10008; align-items:center; justify-content:center;">
         <div class="modal sq-timeline-full-inner"
             style="background:var(--bg-card); padding:22px; border-radius:16px; width:94%; max-width:720px; border:1px solid var(--border-color); max-height:88vh; overflow:auto;">
-            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+            <div
+                style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
                 <div>
                     <div style="font-size:18px; font-weight:800; color:var(--text-main);">Full scan run timeline</div>
-                    <div id="scanTimelineFullSub" style="font-size:12px; color:var(--text-light); margin-top:4px;">All saved runs for this host</div>
+                    <div id="scanTimelineFullSub" style="font-size:12px; color:var(--text-light); margin-top:4px;">All
+                        saved runs for this host</div>
                 </div>
-                <button type="button" id="scanTimelineFullClose" class="icon-btn" title="Close" style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
+                <button type="button" id="scanTimelineFullClose" class="icon-btn" title="Close"
+                    style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
             </div>
             <div id="scanTimelineFullBody" class="scan-run-timeline-body"></div>
         </div>
@@ -3273,9 +3794,11 @@ ${headHtml}
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
                 <div>
                     <div id="evidenceModalTitle" style="font-size:16px; font-weight:800;">Vulnerability Evidence</div>
-                    <div style="font-size:12px; color:var(--text-light);">Technical capture (left) · Highlighted lines (right)</div>
+                    <div style="font-size:12px; color:var(--text-light);">Technical capture (left) · Highlighted lines
+                        (right)</div>
                 </div>
-                <button type="button" id="evidenceModalClose" class="icon-btn" title="Close" style="width:38px;height:38px;">
+                <button type="button" id="evidenceModalClose" class="icon-btn" title="Close"
+                    style="width:38px;height:38px;">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
@@ -3290,9 +3813,6 @@ ${headHtml}
                 </div>
             </div>
             <div style="display:flex; justify-content:flex-end; margin-top:12px;">
-                <button type="button" id="copyEvidenceBtn" class="modal-btn secondary sq-pill-btn" style="margin-right:8px;">
-                    <i class="fas fa-copy" style="margin-right:6px;"></i>Copy evidence
-                </button>
                 <button type="button" id="evidenceModalDone" class="modal-btn sq-pill-btn">
                     Close
                 </button>

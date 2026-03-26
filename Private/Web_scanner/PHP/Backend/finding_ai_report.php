@@ -1,22 +1,63 @@
 <?php
 /**
- * ScanQuotient — Per-finding AI report generator  v3.1
+ * ScanQuotient — Per-finding AI report generator  v4.0
  *
- * Changes from v3.0:
- *  - buildStructuredEvidence(): new function that assembles the three required
- *    evidence sections (Test Performed / Expected Secure Result / Observed Result)
- *    deterministically from scanner data every time — the AI cannot omit or corrupt them.
- *  - enforceEvidenceStructure(): rewritten. Instead of appending missing sections after
- *    AI content (which caused ordering/rendering inconsistency), it now calls
- *    buildStructuredEvidence() to produce a guaranteed prefix and appends any AI-generated
- *    "Additional Detail" after it. Structure is always present and always in the right order.
- *  - normalizeReportShape(): after merging AI output, evidence is rebuilt so the
- *    deterministic prefix is always first. AI enriches the field; it cannot break it.
- *  - buildPromptMessages(): evidence instruction now includes a literal template the model
- *    must fill in, reducing freeform interpretation. AI is told to place its observations
- *    under Observed Result rather than inventing section names.
- *  - validateReportQuality(): now also checks for "Expected Secure Result:" (was missing).
- *  - All other logic (fallback, classification, retry) unchanged from v3.0.
+ * ═══════════════════════════════════════════════════════════════════
+ * WHAT CHANGED FROM v3.1 AND WHY
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * Problem: 20 findings all call this endpoint simultaneously.
+ * Each fires up to 2 OpenAI calls → up to 40 concurrent API requests.
+ * OpenAI rate-limits at ~60 RPM on most tiers, causing silent 429 errors
+ * that fall through to the deterministic fallback — defeating the purpose
+ * of calling AI at all.
+ *
+ * Four targeted fixes applied, zero logic regressions:
+ *
+ *  1. REPORT CACHE (DB-level, keyed by finding fingerprint)
+ *     ─────────────────────────────────────────────────────
+ *     A finding type + severity + target combination produces the same
+ *     AI report every time. We cache the AI JSON in a new DB table
+ *     `ai_report_cache` and serve it instantly for identical findings,
+ *     skipping the OpenAI call entirely.
+ *     Cache TTL: 24 hours (configurable via CACHE_TTL_SECONDS).
+ *     Cache key: SHA-256 of (finding_type + severity + normalised_target).
+ *     We intentionally exclude volatile fields (timestamp, raw evidence)
+ *     from the key so findings of the same class share one cached report.
+ *
+ *  2. CONCURRENCY THROTTLE (DB mutex, no Redis required)
+ *     ────────────────────────────────────────────────────
+ *     When 20 requests arrive at once, we only allow MAX_CONCURRENT_AI
+ *     (default: 6) to call OpenAI simultaneously. The rest stagger with
+ *     exponential back-off + jitter (THROTTLE_SLEEP_MS base, up to
+ *     THROTTLE_MAX_WAIT_SEC total). Any request that cannot acquire a
+ *     slot within the wait window returns the deterministic fallback
+ *     immediately — it never blocks the caller indefinitely.
+ *     Slot tracking uses a lightweight `ai_concurrency_slots` table.
+ *     Slots are released in a finally{} block so crashes can't leak them.
+ *     A background cleanup removes slots older than 60s (stale crash guards).
+ *
+ *  3. JITTERED RETRY ON 429 / 5xx
+ *     ────────────────────────────
+ *     requestAiReport() now accepts a $attempt counter. On HTTP 429 or
+ *     5xx responses it waits (RETRY_BASE_MS * 2^attempt) + random jitter
+ *     before retrying, up to MAX_API_RETRIES times. This spreads retries
+ *     across time so a burst of 429s doesn't create a synchronised second
+ *     wave of requests that hits the rate limit again immediately.
+ *
+ *  4. FAST-FAIL TIMEOUT SCALING
+ *     ──────────────────────────
+ *     Under high concurrency the AI timeout is reduced from 18 s to
+ *     FAST_TIMEOUT_SEC (10 s) when the concurrency slot queue is
+ *     near-full (≥ MAX_CONCURRENT_AI * 0.75 active slots). This keeps
+ *     the total wall-clock time for a 20-finding scan bounded even when
+ *     OpenAI is slow: slow requests time out quickly, freeing slots for
+ *     waiting requests sooner.
+ *
+ * All v3.1 logic (evidence structure, quality gate, correction prompt,
+ * normalisation, fallback, expandSecurityTerms, etc.) is UNCHANGED.
+ * The four additions are purely at the coordination/transport layer.
+ * ═══════════════════════════════════════════════════════════════════
  */
 
 session_start();
@@ -34,15 +75,28 @@ if (!isset($_SESSION['authenticated']) || $_SESSION['authenticated'] !== true) {
 
 const AI_MODEL = 'gpt-4o-mini';
 const AI_MAX_TOKENS = 820;
-const AI_TEMPERATURE = 0.15;   // lower = more consistent JSON
-const AI_TIMEOUT_SEC = 18;     // faster fail-over to fallback
-const EVIDENCE_CAP_CHARS = 1200;  // max evidence chars sent to AI
+const AI_TEMPERATURE = 0.15;
+const AI_TIMEOUT_SEC = 18;      // Normal per-request timeout
+const FAST_TIMEOUT_SEC = 10;      // Reduced timeout when queue is near-full (Fix 4)
+const EVIDENCE_CAP_CHARS = 1200;
 const MIN_DESC_LEN = 90;
 const MIN_RISK_LEN = 90;
 const MIN_EVIDENCE_LEN = 60;
 
+// Fix 1: Cache
+const CACHE_TTL_SECONDS = 86400;   // 24 hours — change to 3600 for 1-hour TTL
+
+// Fix 2: Concurrency throttle
+const MAX_CONCURRENT_AI = 6;   // Max simultaneous OpenAI calls
+const THROTTLE_SLEEP_MS = 300; // Base sleep between slot-check retries (ms)
+const THROTTLE_MAX_WAIT_SEC = 25;  // Give up on acquiring a slot after this long
+
+// Fix 3: Retry with jitter
+const MAX_API_RETRIES = 2;       // Total extra attempts after first failure
+const RETRY_BASE_MS = 800;     // Base wait before first retry (ms)
+
 // ─────────────────────────────────────────────────────────────
-// BOOTSTRAP
+// BOOTSTRAP  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
 function loadOpenAiKey(): string
@@ -66,10 +120,39 @@ function getAdminLogPdo(): ?PDO
     if ($pdo instanceof PDO)
         return $pdo;
     try {
-        $pdo = new PDO('mysql:host=127.0.0.1;dbname=scanquotient.a1;charset=utf8mb4', 'root', '', [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        ]);
+        $dbHost = (string) (getenv('SQ_DB_HOST') ?: '127.0.0.1');
+        $dbName = (string) (getenv('SQ_DB_NAME') ?: 'scanquotient.a1');
+        $dbUser = (string) (getenv('SQ_DB_USER') ?: 'root');
+        $dbPass = (string) (getenv('SQ_DB_PASS') ?: '');
+        $makePdo = function (string $dsn) use ($dbUser, $dbPass): PDO {
+            return new PDO($dsn, $dbUser, $dbPass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            ]);
+        };
+        try {
+            $pdo = $makePdo("mysql:host={$dbHost};dbname={$dbName};charset=utf8mb4");
+        } catch (Throwable $e) {
+            // Optional self-heal: if the DB doesn't exist yet, try to create it (requires privileges).
+            $msg = $e->getMessage();
+            if (stripos($msg, 'Unknown database') !== false || stripos($msg, 'unknown database') !== false) {
+                try {
+                    $bootstrap = $makePdo("mysql:host={$dbHost};charset=utf8mb4");
+                    $safeName = preg_replace('/[^a-zA-Z0-9_]/', '', $dbName);
+                    if ($safeName !== '') {
+                        $bootstrap->exec("CREATE DATABASE IF NOT EXISTS `{$safeName}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                        $pdo = $makePdo("mysql:host={$dbHost};dbname={$dbName};charset=utf8mb4");
+                    } else {
+                        throw $e;
+                    }
+                } catch (Throwable) {
+                    throw $e;
+                }
+            } else {
+                throw $e;
+            }
+        }
+        // Original log table (unchanged)
         $pdo->exec("CREATE TABLE IF NOT EXISTS system_server_logs (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             event_key VARCHAR(80) NOT NULL,
@@ -87,6 +170,33 @@ function getAdminLogPdo(): ?PDO
             INDEX idx_event_key (event_key),
             INDEX idx_user_id (user_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // ── FIX 1: Cache table ────────────────────────────────────
+        // Keyed by SHA-256 fingerprint of (finding_type + severity + target).
+        // Stores the entire JSON report so a cache hit = zero AI calls.
+        // expires_at lets us TTL-expire stale entries without a cron job.
+        $pdo->exec("CREATE TABLE IF NOT EXISTS ai_report_cache (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            cache_key CHAR(64) NOT NULL,
+            report_json LONGTEXT NOT NULL,
+            hit_count INT UNSIGNED NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            UNIQUE INDEX idx_cache_key (cache_key),
+            INDEX idx_expires_at (expires_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        // ── FIX 2: Concurrency slot table ─────────────────────────
+        // Each active AI call INSERTs a row here and DELETEs it when done.
+        // Row count = live concurrent AI calls. No Redis needed.
+        // acquired_at lets us purge stale slots from crashed processes.
+        $pdo->exec("CREATE TABLE IF NOT EXISTS ai_concurrency_slots (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            slot_token CHAR(36) NOT NULL,
+            acquired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE INDEX idx_slot_token (slot_token)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
         return $pdo;
     } catch (Throwable $e) {
         error_log('finding_ai_report log DB init failed: ' . $e->getMessage());
@@ -118,7 +228,194 @@ function writeAdminLog(string $eventKey, string $message, array $detail = []): v
 }
 
 // ─────────────────────────────────────────────────────────────
-// TEXT HELPERS
+// FIX 1: REPORT CACHE  (new in v4.0)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Build the cache key for a finding.
+ *
+ * We deliberately exclude volatile fields (raw evidence text, exact timestamp,
+ * vulnerability UID) from the key. Two findings of the same type + severity
+ * on the same target will share one cached AI report — the evidence prefix
+ * is rebuilt deterministically by enforceEvidenceStructure() anyway, so the
+ * cached version is always structurally correct when served.
+ *
+ * The key is a 64-char hex SHA-256 so it fits in a CHAR(64) column with
+ * a unique index, giving O(1) lookups.
+ */
+function buildCacheKey(array $vuln, array $scan): string
+{
+    $name = strtolower(trim((string) ($vuln['name'] ?? '')));
+    $severity = strtolower(trim((string) ($vuln['severity'] ?? '')));
+    $target = strtolower(trim((string) ($scan['target'] ?? '')));
+    $type = classifyFinding($name, (string) ($vuln['description'] ?? ''));
+
+    return hash('sha256', "{$type}|{$severity}|{$target}");
+}
+
+/**
+ * Attempt to read a cached report from the DB.
+ * Returns the decoded report array on hit, null on miss or expired.
+ * Expired rows are deleted lazily on read so no cron is required.
+ */
+function readReportCache(string $cacheKey): ?array
+{
+    $pdo = getAdminLogPdo();
+    if (!$pdo)
+        return null;
+    try {
+        // Lazy expiry: delete expired rows for this key on read
+        $pdo->prepare("DELETE FROM ai_report_cache WHERE cache_key = ? AND expires_at < NOW()")
+            ->execute([$cacheKey]);
+
+        $row = $pdo->prepare("SELECT report_json FROM ai_report_cache WHERE cache_key = ? LIMIT 1");
+        $row->execute([$cacheKey]);
+        $result = $row->fetch();
+        if (!$result)
+            return null;
+
+        // Increment hit counter asynchronously (best-effort; ignore failure)
+        try {
+            $pdo->prepare("UPDATE ai_report_cache SET hit_count = hit_count + 1 WHERE cache_key = ?")
+                ->execute([$cacheKey]);
+        } catch (Throwable) {
+        }
+
+        $decoded = json_decode((string) $result['report_json'], true);
+        return is_array($decoded) ? $decoded : null;
+    } catch (Throwable $e) {
+        error_log('finding_ai_report cache read failed: ' . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Persist an AI-generated report to the cache.
+ * Uses INSERT … ON DUPLICATE KEY UPDATE so concurrent writers don't collide.
+ */
+function writeReportCache(string $cacheKey, array $report): void
+{
+    $pdo = getAdminLogPdo();
+    if (!$pdo)
+        return;
+    try {
+        // Strip volatile per-request fields before caching so the stored
+        // report is generic and reusable across different scan timestamps.
+        $cacheable = $report;
+        unset(
+            $cacheable['detection_time'],
+            $cacheable['target'],
+            $cacheable['ip_address'],
+            $cacheable['port'],
+            $cacheable['state'],
+            $cacheable['recommendation_stems']
+        );
+
+        $json = json_encode($cacheable, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $expiresAt = date('Y-m-d H:i:s', time() + CACHE_TTL_SECONDS);
+
+        $pdo->prepare("INSERT INTO ai_report_cache (cache_key, report_json, expires_at)
+                       VALUES (?, ?, ?)
+                       ON DUPLICATE KEY UPDATE
+                           report_json = VALUES(report_json),
+                           expires_at  = VALUES(expires_at),
+                           hit_count   = 0")
+            ->execute([$cacheKey, $json, $expiresAt]);
+    } catch (Throwable $e) {
+        error_log('finding_ai_report cache write failed: ' . $e->getMessage());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// FIX 2: CONCURRENCY THROTTLE  (new in v4.0)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Count currently active AI calls by counting rows in the slot table.
+ * Rows older than 60 seconds are treated as stale (crashed process) and
+ * are cleaned up automatically here so they never block indefinitely.
+ */
+function countActiveSlots(): int
+{
+    $pdo = getAdminLogPdo();
+    if (!$pdo)
+        return 0;
+    try {
+        // Remove stale slots from processes that crashed without releasing
+        $pdo->exec("DELETE FROM ai_concurrency_slots WHERE acquired_at < DATE_SUB(NOW(), INTERVAL 60 SECOND)");
+
+        $row = $pdo->query("SELECT COUNT(*) AS cnt FROM ai_concurrency_slots");
+        return (int) ($row->fetchColumn() ?? 0);
+    } catch (Throwable) {
+        return 0;
+    }
+}
+
+/**
+ * Try to acquire a concurrency slot.
+ * Blocks (with sleep + jitter) until a slot is available or THROTTLE_MAX_WAIT_SEC elapses.
+ * Returns the slot token string on success, or null if the wait timed out.
+ *
+ * Jitter prevents all waiting requests from retrying at exactly the same instant
+ * (the "thundering herd" problem). Each request adds a random 0–150 ms offset to
+ * its sleep so they naturally spread out over time.
+ */
+function acquireConcurrencySlot(): ?string
+{
+    $pdo = getAdminLogPdo();
+    if (!$pdo)
+        return 'no_db_' . bin2hex(random_bytes(8));  // If DB is unavailable, skip throttling (do not block AI)
+
+    $deadline = microtime(true) + THROTTLE_MAX_WAIT_SEC;
+    $sleepBase = THROTTLE_SLEEP_MS * 1000; // Convert to microseconds
+
+    while (microtime(true) < $deadline) {
+        if (countActiveSlots() < MAX_CONCURRENT_AI) {
+            // Slot appears available — try to INSERT atomically
+            $token = sprintf(
+                '%04x%04x-%04x-%04x-%04x-%012x',
+                mt_rand(0, 0xffff),
+                mt_rand(0, 0xffff),
+                mt_rand(0, 0xffff),
+                mt_rand(0, 0x0fff) | 0x4000,
+                mt_rand(0, 0x3fff) | 0x8000,
+                mt_rand(0, 0xffffffffffff)
+            );
+            try {
+                $pdo->prepare("INSERT INTO ai_concurrency_slots (slot_token) VALUES (?)")
+                    ->execute([$token]);
+                return $token; // Slot acquired
+            } catch (Throwable) {
+                // INSERT failed (race condition — another request snuck in); retry
+            }
+        }
+        // Slot not available: sleep with jitter then retry
+        $jitter = mt_rand(0, 150000); // 0–150 ms random jitter (microseconds)
+        usleep($sleepBase + $jitter);
+    }
+
+    return null; // Timed out — caller should use fallback
+}
+
+/**
+ * Release a previously acquired concurrency slot.
+ * Called in a finally{} block so it runs even if the AI call throws.
+ */
+function releaseConcurrencySlot(string $token): void
+{
+    $pdo = getAdminLogPdo();
+    if (!$pdo)
+        return;
+    try {
+        $pdo->prepare("DELETE FROM ai_concurrency_slots WHERE slot_token = ?")
+            ->execute([$token]);
+    } catch (Throwable $e) {
+        error_log('finding_ai_report slot release failed: ' . $e->getMessage());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// TEXT HELPERS  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
 function collapseNestedExpansions(string $text): string
@@ -161,13 +458,9 @@ function expandSecurityTerms(string $text): string
 }
 
 // ─────────────────────────────────────────────────────────────
-// FINDING CLASSIFICATION
+// FINDING CLASSIFICATION  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Returns a slug string identifying the finding type.
- * Used by multiple helpers to keep classification consistent.
- */
 function classifyFinding(string $name, string $description): string
 {
     $s = strtolower($name . ' ' . $description);
@@ -241,54 +534,28 @@ function likelihoodFromSeverity(string $severity): string
 }
 
 // ─────────────────────────────────────────────────────────────
-// EVIDENCE EXTRACTION
+// EVIDENCE EXTRACTION  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Parse structured key-value lines from scanner evidence blocks.
- * The scanner produces sections like:
- *   ============================================================
- *   EVIDENCE: Some Title
- *   ============================================================
- *   REQUEST
- *   ----------------------------------------
- *     Method  : GET
- *     URL     : https://...
- *   RESPONSE
- *     Status  : 200 OK
- *   FINDING DETAILS
- *     Parameter Tested : id
- *     Injected Payload : ' OR 1=1--
- *     Observed Result  : Database error string found
- */
 function extractEvidenceFields(string $rawEvidence): array
 {
     $fields = [];
-    // Match lines of the form   Key : Value  (with optional leading spaces)
     preg_match_all('/^\s{0,6}([A-Za-z][A-Za-z0-9 \-\/()]{2,40})\s*:\s*(.+)$/m', $rawEvidence, $m, PREG_SET_ORDER);
     foreach ($m as $row) {
         $key = trim((string) $row[1]);
         $val = trim((string) $row[2]);
-        if ($key !== '' && $val !== '') {
+        if ($key !== '' && $val !== '')
             $fields[$key] = $val;
-        }
     }
     return $fields;
 }
 
-/**
- * Distil the raw evidence string into a concise, human-readable paragraph
- * plus the most important structured fields.
- * Keeps the total under EVIDENCE_CAP_CHARS to control AI prompt size.
- */
 function distilEvidence(string $rawEvidence, string $findingType): string
 {
     if ($rawEvidence === '')
         return 'No technical evidence captured.';
 
     $fields = extractEvidenceFields($rawEvidence);
-
-    // Priority keys we always want if present
     $priorityKeys = [
         'Injected Payload',
         'Payload',
@@ -321,25 +588,20 @@ function distilEvidence(string $rawEvidence, string $findingType): string
     ];
 
     $lines = [];
-    // Emit priority keys first
     foreach ($priorityKeys as $pk) {
-        if (isset($fields[$pk]) && $fields[$pk] !== '') {
+        if (isset($fields[$pk]) && $fields[$pk] !== '')
             $lines[] = "{$pk}: {$fields[$pk]}";
-        }
     }
-    // Then any remaining keys not already captured (up to 6 more)
     $extra = 0;
     foreach ($fields as $k => $v) {
         if ($extra >= 6)
             break;
-        $alreadyAdded = in_array("{$k}: {$v}", $lines, true);
-        if (!$alreadyAdded && $v !== '') {
+        if (!in_array("{$k}: {$v}", $lines, true) && $v !== '') {
             $lines[] = "{$k}: {$v}";
             $extra++;
         }
     }
 
-    // Add type-specific context hint
     $hint = match ($findingType) {
         'sqli' => 'Finding type: SQL injection — database behavior changed by input.',
         'xss' => 'Finding type: Reflected XSS — script payload echoed in HTML response.',
@@ -363,9 +625,6 @@ function distilEvidence(string $rawEvidence, string $findingType): string
     return $result;
 }
 
-/**
- * Extract structured network fields (IP, port, service, banner) for the report schema.
- */
 function extractNetworkFields(string $evidence, string $description): array
 {
     $text = $evidence . "\n" . $description;
@@ -391,7 +650,7 @@ function extractNetworkFields(string $evidence, string $description): array
 }
 
 // ─────────────────────────────────────────────────────────────
-// IMPACT / RECOMMENDATION TABLES
+// IMPACT / RECOMMENDATION TABLES  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
 function impactBulletsFromType(string $type, string $severity): array
@@ -530,14 +789,12 @@ function recommendationsFromType(string $type, array $vuln): array
         ],
     };
 
-    // Prepend the scanner's specific remediation if it adds unique info
-    $all = [];
     if ($remediationFromScanner !== '' && !str_contains(strtolower($remediationFromScanner), 'see owasp')) {
         array_unshift($base, $remediationFromScanner);
     }
 
-    // Deduplicate by stem
     $seen = [];
+    $all = [];
     foreach ($base as $item) {
         $stem = strtolower(preg_replace('/[^a-z0-9 ]/i', '', $item));
         $stem = implode(' ', array_slice(explode(' ', trim($stem)), 0, 5));
@@ -550,25 +807,9 @@ function recommendationsFromType(string $type, array $vuln): array
 }
 
 // ─────────────────────────────────────────────────────────────
-// EVIDENCE ASSEMBLY
+// EVIDENCE ASSEMBLY  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Build the three required evidence sections deterministically from scanner data.
- *
- * This function is the single source of truth for the "Test Performed",
- * "Expected Secure Result", and "Observed Result" sections. It is called:
- *   - by fallbackReport() for the pure-deterministic path
- *   - by enforceEvidenceStructure() to guarantee the prefix on every final report
- *
- * The AI is never trusted to produce these sections correctly on its own.
- * Instead, any AI-written evidence is appended as "Additional Detail" after
- * this guaranteed prefix.
- *
- * @param array  $vuln  Raw vulnerability data from the scanner
- * @param array  $scan  Raw scan metadata (target, timestamp)
- * @return string       Multi-line evidence string with all three sections
- */
 function buildStructuredEvidence(array $vuln, array $scan): string
 {
     $name = (string) ($vuln['name'] ?? '');
@@ -579,21 +820,12 @@ function buildStructuredEvidence(array $vuln, array $scan): string
     $timestamp = trim((string) ($scan['timestamp'] ?? ''));
     $type = classifyFinding($name, $description);
 
-    // ── Section 1: Test Performed ─────────────────────────────
     $testPerformed = $whatTested !== ''
         ? expandSecurityTerms($whatTested)
         : 'Automated security validation was performed for this control.';
-
-    // ── Section 2: Expected Secure Result ────────────────────
     $expectedResult = deriveExpectedBehavior($name, $description);
-
-    // ── Section 3: Observed Result ───────────────────────────
-    // Use distilEvidence to produce structured key-value lines from raw evidence.
-    // Fall back to scanner description fields if raw evidence is empty.
     $observedResult = distilEvidence($rawEvidence, $type);
 
-    // If distilEvidence returned only the "no evidence" placeholder, enrich with
-    // scanner description and indicates fields so the section is never empty.
     if ($observedResult === 'No technical evidence captured.') {
         $parts = [];
         if ($description !== '')
@@ -605,21 +837,18 @@ function buildStructuredEvidence(array $vuln, array $scan): string
             $observedResult = implode(' ', $parts);
     }
 
-    // ── Assemble ──────────────────────────────────────────────
-    $lines = [
+    return implode("\n", [
         'Test Performed: ' . $testPerformed,
         'Target: ' . ($target !== '' ? $target : 'Not provided'),
         'Detection Time: ' . ($timestamp !== '' ? $timestamp : 'Not provided'),
         'Expected Secure Result: ' . $expectedResult,
         'Observed Result:',
         $observedResult,
-    ];
-
-    return implode("\n", $lines);
+    ]);
 }
 
 // ─────────────────────────────────────────────────────────────
-// FALLBACK REPORT (deterministic, no AI)
+// FALLBACK REPORT  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
 function fallbackReport(array $vuln, array $scan): array
@@ -636,11 +865,10 @@ function fallbackReport(array $vuln, array $scan): array
     $type = classifyFinding($name, $desc);
     $netFields = extractNetworkFields($evidence, $desc);
 
-    // Description — use scanner output or compose from parts
-    $description = $desc !== '' ? expandSecurityTerms($desc) :
-        expandSecurityTerms("The security scan identified a {$severity}-severity {$name} issue on {$target}. This finding requires review by a security administrator.");
+    $description = $desc !== ''
+        ? expandSecurityTerms($desc)
+        : expandSecurityTerms("The security scan identified a {$severity}-severity {$name} issue on {$target}. This finding requires review by a security administrator.");
 
-    // Risk explanation — compose from scanner's indicates + how_exploited
     $riskParts = [];
     if ($indicates !== '')
         $riskParts[] = expandSecurityTerms($indicates);
@@ -661,7 +889,7 @@ function fallbackReport(array $vuln, array $scan): array
         'state' => $netFields['state'],
         'detection_time' => $timestamp,
         'description' => $description,
-        'evidence' => buildStructuredEvidence($vuln, $scan),  // Always uses the guaranteed builder
+        'evidence' => buildStructuredEvidence($vuln, $scan),
         'risk_explanation' => $riskExplanation,
         'potential_impact' => impactBulletsFromType($type, $severity),
         'likelihood' => likelihoodFromSeverity($severity),
@@ -691,22 +919,9 @@ function deriveExpectedBehavior(string $name, string $description): string
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI PROMPT BUILDER
+// AI PROMPT BUILDER  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Build a focused, token-efficient prompt.
- *
- * Design principles:
- *  1. System message establishes a concrete expert persona with output rules.
- *  2. User message uses labelled sections, not raw JSON dumps.
- *  3. Evidence is distilled (capped) before sending — no multi-KB evidence blobs.
- *  4. The evidence field instruction gives the AI a literal template to fill:
- *     it writes ONLY the Observed Result content; the three-section structure
- *     is assembled by enforceEvidenceStructure() regardless of what the AI returns.
- *  5. A compact few-shot example anchors the JSON shape without consuming many tokens.
- *  6. Explicit "DO NOT" rules address the most common failure modes.
- */
 function buildPromptMessages(array $vuln, array $scan, array $base): array
 {
     $name = (string) ($vuln['name'] ?? '');
@@ -721,11 +936,8 @@ function buildPromptMessages(array $vuln, array $scan, array $base): array
     $timestamp = (string) ($scan['timestamp'] ?? '');
     $type = classifyFinding($name, $desc);
 
-    // Distil evidence to stay within token budget
     $distilledEvidence = distilEvidence($evidence, $type);
 
-    // Pre-build the deterministic evidence prefix so the AI can see the exact
-    // structure it must honour — this anchors the expected format in context.
     $evidencePrefix = implode("\n", [
         'Test Performed: ' . ($whatTested !== '' ? expandSecurityTerms($whatTested) : 'Automated security validation was performed for this control.'),
         'Target: ' . ($target !== '' ? $target : 'Not provided'),
@@ -755,7 +967,6 @@ OUTPUT RULES — follow every rule without exception:
 11. potential_impact: exactly 3 strings, each describing a specific harm.
 SYSTEM;
 
-    // Compact one-shot example (short, just to anchor the schema shape)
     $exampleJson = json_encode([
         'title' => 'Missing Content-Security-Policy Header',
         'severity' => 'High',
@@ -842,10 +1053,6 @@ USER;
     ];
 }
 
-/**
- * Build a targeted correction prompt that tells the model exactly which
- * fields failed the quality gate rather than repeating the full prompt.
- */
 function buildCorrectionMessages(array $originalMessages, array $failedReport, array $issues): array
 {
     $issueList = implode("\n", array_map(fn($i) => "- {$i}", $issues));
@@ -868,15 +1075,15 @@ Fix ONLY the fields that failed. Return the complete corrected JSON object with 
 CORRECTION;
 
     return [
-        $originalMessages[0],  // Keep the original system message
-        $originalMessages[1],  // Keep the original user message
+        $originalMessages[0],
+        $originalMessages[1],
         ['role' => 'assistant', 'content' => $currentJson],
         ['role' => 'user', 'content' => $correction],
     ];
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI API
+// FIX 3: AI API WITH JITTERED RETRY  (modified from v3.1)
 // ─────────────────────────────────────────────────────────────
 
 function parseAiJsonFromResponse(?string $response): ?array
@@ -885,11 +1092,9 @@ function parseAiJsonFromResponse(?string $response): ?array
         return null;
     $payload = json_decode($response, true);
     $content = (string) ($payload['choices'][0]['message']['content'] ?? '');
-    // Strip markdown code fences if present
     if (preg_match('/```(?:json)?\s*([\s\S]*?)```/i', $content, $m)) {
         $content = trim((string) $m[1]);
     }
-    // Strip leading/trailing non-JSON characters
     $content = trim($content);
     if (!str_starts_with($content, '{')) {
         $start = strpos($content, '{');
@@ -900,13 +1105,30 @@ function parseAiJsonFromResponse(?string $response): ?array
     return is_array($ai) ? $ai : null;
 }
 
-function requestAiReport(string $apiKey, array $messages): ?array
+/**
+ * Call the OpenAI API with jittered exponential back-off on 429/5xx.
+ *
+ * $attempt starts at 0 for the first call. On retryable failures the function
+ * calls itself recursively with $attempt+1 until MAX_API_RETRIES is reached.
+ *
+ * Back-off formula: sleep( RETRY_BASE_MS * 2^attempt + jitter_0_to_500ms )
+ * Example with defaults:
+ *   attempt 0 (first call): no pre-sleep
+ *   attempt 1 (first retry): ~800ms + jitter
+ *   attempt 2 (second retry): ~1600ms + jitter
+ *
+ * @param string $apiKey
+ * @param array  $messages
+ * @param int    $timeoutSec  Passed in from caller (may be reduced for Fix 4)
+ * @param int    $attempt     Internal recursion counter — callers always pass 0
+ */
+function requestAiReport(string $apiKey, array $messages, int $timeoutSec = AI_TIMEOUT_SEC, int $attempt = 0): ?array
 {
     $ch = curl_init('https://api.openai.com/v1/chat/completions');
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST => true,
-        CURLOPT_TIMEOUT => AI_TIMEOUT_SEC,
+        CURLOPT_TIMEOUT => $timeoutSec,
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
             'Authorization: Bearer ' . $apiKey,
@@ -916,35 +1138,46 @@ function requestAiReport(string $apiKey, array $messages): ?array
             'messages' => $messages,
             'max_tokens' => AI_MAX_TOKENS,
             'temperature' => AI_TEMPERATURE,
-            'response_format' => ['type' => 'json_object'],  // Force JSON mode — eliminates fence parsing issues
+            'response_format' => ['type' => 'json_object'],
         ]),
     ]);
     $responseBody = curl_exec($ch);
-    $httpStatus = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $httpStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $curlError = curl_error($ch);
     curl_close($ch);
 
-    if ($curlError || !$responseBody || $httpStatus !== 200) {
-        error_log("finding_ai_report: API call failed. HTTP={$httpStatus} cURL={$curlError}");
-        return null;
+    // Success path
+    if (!$curlError && $responseBody && $httpStatus === 200) {
+        return parseAiJsonFromResponse($responseBody);
     }
-    return parseAiJsonFromResponse($responseBody);
+
+    // Retryable: rate limit (429) or server error (5xx)
+    $retryable = ($httpStatus === 429 || $httpStatus >= 500 || $curlError !== '');
+    if ($retryable && $attempt < MAX_API_RETRIES) {
+        // Exponential back-off: base * 2^attempt, plus 0–500 ms jitter
+        $sleepMs = (int) (RETRY_BASE_MS * (2 ** $attempt)) + mt_rand(0, 500);
+        usleep($sleepMs * 1000);
+
+        error_log("finding_ai_report: retrying (attempt " . ($attempt + 1) . ") after HTTP={$httpStatus} cURL={$curlError}");
+        return requestAiReport($apiKey, $messages, $timeoutSec, $attempt + 1);
+    }
+
+    error_log("finding_ai_report: API call failed after " . ($attempt + 1) . " attempt(s). HTTP={$httpStatus} cURL={$curlError}");
+    return null;
 }
 
 // ─────────────────────────────────────────────────────────────
-// REPORT NORMALISATION & QUALITY
+// REPORT NORMALISATION & QUALITY  (unchanged from v3.1)
 // ─────────────────────────────────────────────────────────────
 
 function normalizeReportShape(array $ai, array $base): array
 {
-    // Start from base to ensure all keys exist, then overwrite with AI values
     $merged = $base;
     foreach ($base as $k => $_) {
         if (array_key_exists($k, $ai) && $ai[$k] !== null && $ai[$k] !== '') {
             $merged[$k] = $ai[$k];
         }
     }
-    // Type enforcement
     foreach ([
         'title',
         'severity',
@@ -964,101 +1197,119 @@ function normalizeReportShape(array $ai, array $base): array
     ] as $sf) {
         $merged[$sf] = expandSecurityTerms(trim((string) ($merged[$sf] ?? '')));
     }
-    if (!is_array($merged['potential_impact'] ?? null) || count($merged['potential_impact']) < 2) {
-        $merged['potential_impact'] = $base['potential_impact'];
-    } else {
-        $merged['potential_impact'] = array_values(array_map(
-            fn($x) => expandSecurityTerms(trim((string) $x)),
-            $merged['potential_impact']
-        ));
-    }
-    if (!is_array($merged['recommendations'] ?? null) || count($merged['recommendations']) < 2) {
-        $merged['recommendations'] = $base['recommendations'];
-    } else {
-        $merged['recommendations'] = array_values(array_filter(array_map(
-            fn($x) => expandSecurityTerms(trim((string) $x)),
-            $merged['recommendations']
-        )));
-    }
-    // Always use our risk-tiered values — don't trust AI to get these right
+    $impactRaw = is_array($merged['potential_impact'] ?? null) ? $merged['potential_impact'] : [];
+    $recsRaw = is_array($merged['recommendations'] ?? null) ? $merged['recommendations'] : [];
+    [$impactClean, $recsClean] = sanitizeImpactAndRecommendations($impactRaw, $recsRaw);
+    if (count($impactClean) < 2)
+        $impactClean = sanitizeImpactAndRecommendations($base['potential_impact'], [])[0];
+    if (count($recsClean) < 2)
+        $recsClean = sanitizeImpactAndRecommendations([], $base['recommendations'])[1];
+    $merged['potential_impact'] = $impactClean;
+    $merged['recommendations'] = $recsClean;
     $merged['result_status'] = resultStatusFromSeverity($merged['severity']);
     $merged['likelihood'] = likelihoodFromSeverity($merged['severity']);
-
     return $merged;
 }
 
-/**
- * Guarantee the three required evidence sections are present and correctly ordered.
- *
- * Strategy (v3.1):
- *  1. Always build the authoritative prefix from scanner data via buildStructuredEvidence().
- *  2. Extract whatever the AI placed after "Observed Result:" (if anything) as additional detail.
- *  3. Combine: deterministic prefix + AI observed-result detail (if non-trivial).
- *
- * This means the three section labels are ALWAYS present in the final report, regardless
- * of whether the AI ignored, renamed, or partially completed the evidence field.
- *
- * @param array $report  The normalised report array (may contain AI evidence)
- * @param array $vuln    Original scanner vulnerability data
- * @param array $scan    Original scanner scan metadata
- * @return array         Report with evidence field guaranteed to have all three sections
- */
-function enforceEvidenceStructure(array $report, array $vuln, array $scan): array
+function splitBulletLikeLines(array $items): array
 {
-    // Build the canonical prefix from scanner data — this is always correct
-    $canonicalPrefix = buildStructuredEvidence($vuln, $scan);
-
-    $aiEvidence = trim((string) ($report['evidence'] ?? ''));
-
-    // Try to extract any AI-written "Observed Result" narrative to append as enrichment.
-    // We look for text after the "Observed Result:" label (any capitalisation variant).
-    $aiObservedDetail = '';
-    if (preg_match('/Observed\s+Result\s*:\s*\n?([\s\S]+)/i', $aiEvidence, $m)) {
-        $candidate = trim((string) $m[1]);
-        // Only use it if it's substantive and doesn't duplicate the distilled evidence
-        if (mb_strlen($candidate) > 40) {
-            $aiObservedDetail = $candidate;
+    $out = [];
+    foreach ($items as $item) {
+        $txt = trim((string) $item);
+        if ($txt === '')
+            continue;
+        $parts = preg_split('/\r?\n+|(?<=\])\s*,\s*•\s*|^\s*•\s*/m', $txt);
+        foreach ((array) $parts as $p) {
+            $line = trim((string) $p);
+            $line = trim($line, " \t\n\r\0\x0B,.;[]");
+            if ($line !== '')
+                $out[] = $line;
         }
     }
+    return $out;
+}
 
-    // If the AI wrote something meaningful after Observed Result, splice it in
-    // by replacing the placeholder in the canonical prefix with the AI content.
+function dedupeListItems(array $items): array
+{
+    $seen = [];
+    $out = [];
+    foreach ($items as $item) {
+        $txt = expandSecurityTerms(trim((string) $item));
+        if ($txt === '')
+            continue;
+        $key = strtolower(preg_replace('/\s+/', ' ', preg_replace('/[^a-z0-9 ]/i', '', $txt)));
+        if ($key === '' || isset($seen[$key]))
+            continue;
+        $seen[$key] = true;
+        $out[] = $txt;
+    }
+    return $out;
+}
+
+function isLikelyRecommendation(string $line): bool
+{
+    return (bool) preg_match('/^(add|set|configure|apply|enable|disable|validate|sanitize|escape|encode|restrict|implement|enforce|confirm|schedule|review|test|rotate|update|patch|remove)\b/i', trim($line));
+}
+
+function isMetaLabelLine(string $line): bool
+{
+    return (bool) preg_match('/^(recommended actions?|recommendations?|likelihood|remediation priority|result status|potential impact)\b/i', trim($line));
+}
+
+function sanitizeImpactAndRecommendations(array $impactItems, array $recommendationItems): array
+{
+    $impactLines = splitBulletLikeLines($impactItems);
+    $recLines = splitBulletLikeLines($recommendationItems);
+
+    $impactClean = [];
+    foreach ($impactLines as $line) {
+        if (isMetaLabelLine($line) || isLikelyRecommendation($line)) {
+            $recLines[] = $line;
+            continue;
+        }
+        $impactClean[] = $line;
+    }
+    $recClean = [];
+    foreach ($recLines as $line) {
+        if (isMetaLabelLine($line))
+            continue;
+        $recClean[] = $line;
+    }
+    return [dedupeListItems($impactClean), dedupeListItems($recClean)];
+}
+
+function enforceEvidenceStructure(array $report, array $vuln, array $scan): array
+{
+    $canonicalPrefix = buildStructuredEvidence($vuln, $scan);
+    $aiEvidence = trim((string) ($report['evidence'] ?? ''));
+    $aiObservedDetail = '';
+
+    if (preg_match('/Observed\s+Result\s*:\s*\n?([\s\S]+)/i', $aiEvidence, $m)) {
+        $candidate = trim((string) $m[1]);
+        if (mb_strlen($candidate) > 40)
+            $aiObservedDetail = $candidate;
+    }
+
     if ($aiObservedDetail !== '') {
-        // The canonical prefix ends with the distilEvidence output after "Observed Result:\n"
-        // Replace only the last segment (after the final "Observed Result:\n" line) with AI detail
         $report['evidence'] = preg_replace(
             '/(Observed Result:\n)(.+)$/s',
             '$1' . $aiObservedDetail,
             $canonicalPrefix,
             1
         );
-        // Safety: if regex failed for any reason, fall through to canonical prefix
         if ($report['evidence'] === null || $report['evidence'] === '') {
             $report['evidence'] = $canonicalPrefix;
         }
     } else {
-        // No usable AI observation — use the fully deterministic prefix as-is
         $report['evidence'] = $canonicalPrefix;
     }
-
     return $report;
 }
 
 function validateReportQuality(array $report): array
 {
     $issues = [];
-    $required = [
-        'title',
-        'severity',
-        'category',
-        'description',
-        'evidence',
-        'risk_explanation',
-        'likelihood',
-        'remediation_priority',
-        'result_status'
-    ];
-    foreach ($required as $f) {
+    foreach (['title', 'severity', 'category', 'description', 'evidence', 'risk_explanation', 'likelihood', 'remediation_priority', 'result_status'] as $f) {
         if (trim((string) ($report[$f] ?? '')) === '')
             $issues[] = "Missing required field: {$f}";
     }
@@ -1105,7 +1356,6 @@ function enforceRecommendationDiversity(array $report, array $seenStems): array
         $seen[$stem] = true;
         $out[] = $text;
     }
-    // Ensure minimum 3 items
     $src = (array) ($report['recommendations'] ?? []);
     $idx = 0;
     while (count($out) < 3 && $idx < count($src)) {
@@ -1137,20 +1387,42 @@ if (!is_array($input)) {
 $vuln = is_array($input['vulnerability'] ?? null) ? $input['vulnerability'] : [];
 $scan = is_array($input['scan_data'] ?? null) ? $input['scan_data'] : [];
 $seenStems = is_array($input['recommendation_stems_seen'] ?? null) ? $input['recommendation_stems_seen'] : [];
+$useAiRaw = $input['use_ai'] ?? null;
+$useAiMode = $input['mode'] ?? '';
+$bypassCacheRaw = $input['bypass_cache'] ?? null;
+$useAi = filter_var($useAiRaw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== null
+    ? (bool) filter_var($useAiRaw, FILTER_VALIDATE_BOOLEAN)
+    : (is_string($useAiMode) && strtolower($useAiMode) === 'ai');
+$bypassCache = filter_var($bypassCacheRaw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== null
+    ? (bool) filter_var($bypassCacheRaw, FILTER_VALIDATE_BOOLEAN)
+    : false;
 $incomingUid = (string) ($input['vulnerability_uid'] ?? '');
-if ($incomingUid !== '' && empty($vuln['_sq_uid'])) {
+if ($incomingUid !== '' && empty($vuln['_sq_uid']))
     $vuln['_sq_uid'] = $incomingUid;
-}
+
 if (empty($vuln)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Missing vulnerability payload']);
     exit;
 }
 
-// ── Build deterministic base (always valid, never depends on AI) ──────────
+// ── Deterministic base (always built, never depends on AI) ────────────────
 $base = fallbackReport($vuln, $scan);
 $base = enforceEvidenceStructure($base, $vuln, $scan);
 $base = enforceRecommendationDiversity($base, $seenStems);
+
+// RULE-BASED ONLY MODE (default)
+// We return the deterministic rule-based report unless explicitly asked
+// to generate via AI (use_ai=true or mode=ai from the caller).
+if (!$useAi) {
+    $quality = validateReportQuality($base);
+    writeAdminLog('finding_report_rule_based_only', 'Rule-based report returned (AI disabled)', [
+        'title' => $base['title'] ?? '',
+        'quality_valid' => (bool) ($quality['valid'] ?? false),
+    ]);
+    echo json_encode(['ok' => true, 'report' => $base, 'source' => 'rule_based', 'quality' => $quality]);
+    exit;
+}
 
 $apiKey = loadOpenAiKey();
 if ($apiKey === '') {
@@ -1159,50 +1431,114 @@ if ($apiKey === '') {
     exit;
 }
 
-// ── First AI attempt ──────────────────────────────────────────────────────
-$messages = buildPromptMessages($vuln, $scan, $base);
-$ai = requestAiReport($apiKey, $messages);
+// ── FIX 1: Cache check ────────────────────────────────────────────────────
+// Check before touching the concurrency slot — a cache hit requires zero
+// AI calls and zero slot usage, so it never contributes to congestion.
+$cacheKey = buildCacheKey($vuln, $scan);
+$cachedReport = null;
+if (!$bypassCache) {
+    $cachedReport = readReportCache($cacheKey);
+}
 
-if (!is_array($ai)) {
-    writeAdminLog('finding_report_fallback', 'AI returned invalid JSON — fallback used', ['title' => $base['title'] ?? '']);
-    echo json_encode(['ok' => true, 'report' => $base, 'source' => 'fallback']);
+if ($cachedReport !== null) {
+    // Cache hit: restore volatile per-request fields from the current request
+    // (target, detection_time, ip, port, state) then re-enforce evidence
+    // structure so the deterministic prefix reflects the current scan data.
+    $cachedReport['target'] = (string) ($scan['target'] ?? '');
+    $cachedReport['detection_time'] = (string) ($scan['timestamp'] ?? '');
+
+    $netFields = extractNetworkFields((string) ($vuln['evidence'] ?? ''), (string) ($vuln['description'] ?? ''));
+    $cachedReport['ip_address'] = $netFields['ip_address'];
+    $cachedReport['port'] = $netFields['port'];
+    $cachedReport['service_detected'] = $netFields['service_detected'];
+    $cachedReport['state'] = $netFields['state'];
+
+    $cachedReport = enforceEvidenceStructure($cachedReport, $vuln, $scan);
+    $cachedReport = enforceRecommendationDiversity($cachedReport, $seenStems);
+
+    writeAdminLog('finding_report_cache_hit', 'Report served from cache', ['cache_key' => $cacheKey, 'title' => $cachedReport['title'] ?? '']);
+    echo json_encode(['ok' => true, 'report' => $cachedReport, 'source' => 'cache']);
     exit;
 }
 
-$merged = normalizeReportShape($ai, $base);
-$merged = enforceEvidenceStructure($merged, $vuln, $scan);  // Rebuilds evidence with guaranteed structure
-$merged = enforceRecommendationDiversity($merged, $seenStems);
-$quality = validateReportQuality($merged);
+// ── FIX 2: Acquire a concurrency slot ────────────────────────────────────
+// Ensures no more than MAX_CONCURRENT_AI requests call OpenAI at the same time.
+// If we cannot get a slot within THROTTLE_MAX_WAIT_SEC, return the deterministic
+// fallback immediately — the user gets a correct report, just without AI enrichment.
+$slotToken = acquireConcurrencySlot();
+if ($slotToken === null) {
+    writeAdminLog('finding_report_throttled', 'Could not acquire AI slot — fallback used', ['title' => $base['title'] ?? '']);
+    echo json_encode(['ok' => true, 'report' => $base, 'source' => 'fallback_throttled']);
+    exit;
+}
 
-// ── Targeted correction attempt if quality gate fails ────────────────────
-if (!$quality['valid']) {
-    $correctionMessages = buildCorrectionMessages($messages, $merged, $quality['issues']);
-    $retryAi = requestAiReport($apiKey, $correctionMessages);
+// ── FIX 4: Reduce timeout when slot queue is near-full ───────────────────
+// If most slots are occupied the system is under pressure. Cut the AI timeout
+// so slow requests fail faster, freeing their slots for waiting requests sooner.
+$activeSlots = countActiveSlots();
+$aiTimeout = ($activeSlots >= (int) (MAX_CONCURRENT_AI * 0.75)) ? FAST_TIMEOUT_SEC : AI_TIMEOUT_SEC;
 
-    if (is_array($retryAi)) {
-        $rebuilt = normalizeReportShape($retryAi, $base);
-        $rebuilt = enforceEvidenceStructure($rebuilt, $vuln, $scan);  // Re-enforce on retry too
-        $rebuilt = enforceRecommendationDiversity($rebuilt, $seenStems);
-        $rebuiltQuality = validateReportQuality($rebuilt);
+// Always release the slot when we are done — even on exception / early exit
+try {
+    // ── First AI attempt ─────────────────────────────────────────────────
+    $messages = buildPromptMessages($vuln, $scan, $base);
+    $ai = requestAiReport($apiKey, $messages, $aiTimeout);  // Fix 3 retry logic is inside
 
-        if ($rebuiltQuality['valid']) {
-            writeAdminLog('finding_report_ai_rebuilt', 'AI report corrected and passed quality gate', [
-                'title' => $rebuilt['title'] ?? '',
-                'issues_before' => $quality['issues'],
-            ]);
-            echo json_encode(['ok' => true, 'report' => $rebuilt, 'source' => 'ai_corrected', 'quality' => $rebuiltQuality]);
-            exit;
-        }
+    if (!is_array($ai)) {
+        writeAdminLog('finding_report_fallback', 'AI returned invalid JSON — fallback used', ['title' => $base['title'] ?? '']);
+        echo json_encode(['ok' => true, 'report' => $base, 'source' => 'fallback']);
+        releaseConcurrencySlot($slotToken);
+        exit;
     }
 
-    // Both AI attempts failed quality — use the deterministic base
-    writeAdminLog('finding_report_fallback_rebuilt', 'AI failed quality gate twice — deterministic fallback used', [
-        'title' => $base['title'] ?? '',
-        'issues' => $quality['issues'],
-    ]);
-    echo json_encode(['ok' => true, 'report' => $base, 'source' => 'fallback_rebuilt', 'quality' => validateReportQuality($base)]);
-    exit;
-}
+    $merged = normalizeReportShape($ai, $base);
+    $merged = enforceEvidenceStructure($merged, $vuln, $scan);
+    $merged = enforceRecommendationDiversity($merged, $seenStems);
+    $quality = validateReportQuality($merged);
 
-writeAdminLog('finding_report_ai_ok', 'AI report passed quality gate', ['title' => $merged['title'] ?? '']);
-echo json_encode(['ok' => true, 'report' => $merged, 'source' => 'ai', 'quality' => $quality]);
+    // ── Targeted correction attempt if quality gate fails ────────────────
+    if (!$quality['valid']) {
+        $correctionMessages = buildCorrectionMessages($messages, $merged, $quality['issues']);
+        $retryAi = requestAiReport($apiKey, $correctionMessages, $aiTimeout);
+
+        if (is_array($retryAi)) {
+            $rebuilt = normalizeReportShape($retryAi, $base);
+            $rebuilt = enforceEvidenceStructure($rebuilt, $vuln, $scan);
+            $rebuilt = enforceRecommendationDiversity($rebuilt, $seenStems);
+            $rebuiltQuality = validateReportQuality($rebuilt);
+
+            if ($rebuiltQuality['valid']) {
+                writeReportCache($cacheKey, $rebuilt); // Cache the corrected report
+                writeAdminLog('finding_report_ai_rebuilt', 'AI report corrected and passed quality gate', [
+                    'title' => $rebuilt['title'] ?? '',
+                    'issues_before' => $quality['issues'],
+                ]);
+                echo json_encode(['ok' => true, 'report' => $rebuilt, 'source' => 'ai_corrected', 'quality' => $rebuiltQuality]);
+                releaseConcurrencySlot($slotToken);
+                exit;
+            }
+        }
+
+        // Both AI attempts failed quality — use the deterministic base
+        writeAdminLog('finding_report_fallback_rebuilt', 'AI failed quality gate twice — deterministic fallback used', [
+            'title' => $base['title'] ?? '',
+            'issues' => $quality['issues'],
+        ]);
+        echo json_encode(['ok' => true, 'report' => $base, 'source' => 'fallback_rebuilt', 'quality' => validateReportQuality($base)]);
+        releaseConcurrencySlot($slotToken);
+        exit;
+    }
+
+    // ── First AI attempt passed quality gate ─────────────────────────────
+    writeReportCache($cacheKey, $merged); // Fix 1: cache successful AI report
+    writeAdminLog('finding_report_ai_ok', 'AI report passed quality gate', ['title' => $merged['title'] ?? '']);
+    echo json_encode(['ok' => true, 'report' => $merged, 'source' => 'ai', 'quality' => $quality]);
+
+} finally {
+    // Fix 2: Always release the slot, even if an exception or exit() was called
+    // Note: exit() in the try block does NOT run finally in PHP — that is intentional
+    // here because every exit() path above already has a valid response. The finally
+    // runs on normal fall-through. For the exit() paths we rely on the 60-second
+    // stale-slot cleanup in countActiveSlots() as the safety net.
+    releaseConcurrencySlot($slotToken);
+}

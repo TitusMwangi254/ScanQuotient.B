@@ -519,6 +519,9 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             --bg-main: #f0f7ff;
             --bg-sidebar: #ffffff;
             --bg-card: #ffffff;
+            --glass-surface: rgba(255, 255, 255, 0.58);
+            --glass-surface-strong: rgba(255, 255, 255, 0.72);
+            --glass-border: rgba(255, 255, 255, 0.65);
             --text-main: #1e293b;
             --text-light: #64748b;
             --brand-color: #3b82f6;
@@ -540,6 +543,9 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             --bg-main: #0f0f1a;
             --bg-sidebar: #1a1a2e;
             --bg-card: #1e1b4b;
+            --glass-surface: rgba(15, 23, 42, 0.48);
+            --glass-surface-strong: rgba(30, 27, 75, 0.62);
+            --glass-border: rgba(148, 163, 184, 0.28);
             --text-main: #f1f5f9;
             --text-light: #94a3b8;
             --brand-color: #8b5cf6;
@@ -600,10 +606,10 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
         .header-brand {
             font-weight: 800;
-            font-size: 24px;
+            font-size: 18px;
             color: #6f0ace;
             text-decoration: none;
-            letter-spacing: -0.5px;
+            letter-spacing: -0.2px;
             transition: color 0.3s ease;
         }
 
@@ -787,17 +793,27 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         .app {
             display: flex;
             flex: 1;
-            overflow: hidden;
+            overflow: visible;
+            min-width: 0;
         }
 
         .simple-sidebar {
             width: 220px;
-            background: var(--bg-card);
-            border-right: 1px solid var(--border-color);
+            min-width: 220px;
+            flex: 0 0 220px;
+            background: var(--glass-surface-strong);
+            border-right: 1px solid var(--glass-border);
             padding: 18px 12px;
             display: flex;
             flex-direction: column;
             gap: 8px;
+            box-shadow: inset -1px 0 0 rgba(148, 163, 184, 0.1);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            position: sticky;
+            top: 76px;
+            align-self: flex-start;
+            height: fit-content;
         }
 
         .simple-sidebar-title {
@@ -837,13 +853,22 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         .main {
             flex: 1;
             padding: 32px;
-            overflow-y: auto;
-            background: var(--bg-main);
+            overflow: visible;
+            min-width: 0;
+            overflow-x: hidden;
+            background:
+                radial-gradient(circle at 12% 4%, rgba(59, 130, 246, 0.08), transparent 30%),
+                radial-gradient(circle at 92% 18%, rgba(16, 185, 129, 0.08), transparent 30%),
+                var(--bg-main);
         }
 
         .admin-container {
             max-width: 1400px;
             margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            min-width: 0;
         }
 
         /* Module Selector */
@@ -888,24 +913,46 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         /* KPI Cards */
         .kpi-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 20px;
             margin-bottom: 30px;
         }
 
         .kpi-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
+            background: var(--glass-surface);
+            border: 1px solid var(--glass-border);
+            border-radius: 18px;
             padding: 24px;
             position: relative;
             overflow: hidden;
             transition: all 0.3s ease;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+            isolation: isolate;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            min-width: 0;
         }
 
         .kpi-card:hover {
-            transform: translateY(-2px);
+            transform: translateY(-4px);
             box-shadow: var(--shadow-lg);
+        }
+
+        .kpi-card::after {
+            content: '';
+            position: absolute;
+            width: 150px;
+            height: 150px;
+            right: -55px;
+            top: -70px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.2), transparent 70%);
+            z-index: -1;
+            transition: transform 0.3s ease;
+        }
+
+        .kpi-card:hover::after {
+            transform: scale(1.06);
         }
 
         .kpi-card::before {
@@ -913,8 +960,8 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             position: absolute;
             top: 0;
             left: 0;
-            width: 4px;
-            height: 100%;
+            width: 100%;
+            height: 4px;
             background: var(--brand-color);
         }
 
@@ -957,8 +1004,9 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             align-items: center;
             justify-content: center;
             font-size: 20px;
-            background: rgba(59, 130, 246, 0.1);
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(139, 92, 246, 0.16));
             color: var(--brand-color);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 10px 18px rgba(59, 130, 246, 0.15);
         }
 
         .kpi-card.success .kpi-icon {
@@ -982,6 +1030,8 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             color: var(--text-main);
             line-height: 1;
             margin-bottom: 8px;
+            letter-spacing: -0.4px;
+            text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
         }
 
         .kpi-change {
@@ -1008,12 +1058,30 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         }
 
         .chart-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
+            background: var(--glass-surface);
+            border: 1px solid var(--glass-border);
             border-radius: 20px;
             padding: 24px;
             box-shadow: var(--shadow);
             transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .chart-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 18px 42px rgba(15, 23, 42, 0.12);
+        }
+
+        .chart-card::after {
+            content: '';
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--brand-color), #10b981, #f59e0b);
+            opacity: 0.75;
         }
 
         .chart-header {
@@ -1061,7 +1129,20 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
         .chart-container {
             position: relative;
-            height: 300px;
+            height: 320px;
+            border-radius: 14px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.32);
+            border: 1px solid rgba(255, 255, 255, 0.55);
+        }
+
+        .chart-container canvas {
+            filter: drop-shadow(0 10px 22px rgba(30, 41, 59, 0.1));
+        }
+
+        body.dark .chart-container {
+            border-color: rgba(148, 163, 184, 0.35);
+            background: rgba(15, 23, 42, 0.4);
         }
 
         .chart-container.large {
@@ -1077,11 +1158,31 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         }
 
         .quality-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
+            background: var(--glass-surface);
+            border: 1px solid var(--glass-border);
+            border-radius: 18px;
             padding: 20px;
             transition: all 0.3s ease;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .quality-card::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 0;
+            height: 3px;
+            background: linear-gradient(90deg, rgba(16, 185, 129, 0.85), rgba(59, 130, 246, 0.85));
+        }
+
+        .quality-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 16px 34px rgba(15, 23, 42, 0.12);
         }
 
         .quality-header {
@@ -1140,12 +1241,19 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
         /* System Health Timeline */
         .timeline-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
+            background: var(--glass-surface);
+            border: 1px solid var(--glass-border);
             border-radius: 20px;
             padding: 24px;
             margin-bottom: 24px;
             transition: all 0.3s ease;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .timeline-card:hover {
+            box-shadow: 0 18px 38px rgba(15, 23, 42, 0.1);
         }
 
         .timeline-header {
@@ -1245,16 +1353,41 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
         /* Module Performance Table */
         .performance-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
+            background: var(--glass-surface);
+            border: 1px solid var(--glass-border);
             border-radius: 20px;
             padding: 24px;
-            transition: all 0.3 ease;
+            transition: all 0.3s ease;
+            box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .performance-card:hover {
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.12);
+        }
+
+        .module-table tr {
+            transition: background-color 0.2s ease;
+        }
+
+        .module-table tbody tr:hover {
+            background: rgba(59, 130, 246, 0.06);
+        }
+
+        body.dark .module-table tbody tr:hover {
+            background: rgba(139, 92, 246, 0.14);
+        }
+
+        body.dark .kpi-value {
+            text-shadow: none;
         }
 
         .module-table {
             width: 100%;
             border-collapse: collapse;
+            border-radius: 14px;
+            overflow: hidden;
         }
 
         .module-table th {
@@ -1265,14 +1398,18 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             color: var(--text-light);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+            background: rgba(255, 255, 255, 0.28);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
         }
 
         .module-table td {
             padding: 16px;
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid rgba(148, 163, 184, 0.16);
             font-size: 14px;
             color: var(--text-main);
+            background: rgba(255, 255, 255, 0.12);
         }
 
         .module-name {
@@ -1324,10 +1461,10 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
             align-items: center;
-            padding: 20px 32px;
+            padding: 18px 32px;
             font-size: 13px;
             color: #64748b;
-            background: linear-gradient(to right, #ffffff, #ADD8E6);
+            background: linear-gradient(135deg, #f8fafc, #dbeafe);
             border-top: 1px solid var(--border-color);
             margin-top: auto;
             transition: all 0.3s ease;
@@ -1340,6 +1477,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
         .footer-left {
             text-align: left;
+            font-weight: 700;
         }
 
         .footer-center {
@@ -1352,8 +1490,16 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
         .footer-brand {
             font-weight: 700;
-            color: #8b5cf6;
+            color: #6f0ace;
             text-decoration: none;
+            display: block;
+        }
+
+        .footer-tagline {
+            margin-top: 2px;
+            opacity: 0.9;
+            font-weight: 500;
+            display: block;
         }
 
         body.dark .footer-brand {
@@ -1443,6 +1589,18 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         }
 
         @media (max-width: 768px) {
+            .main {
+                padding: 16px;
+            }
+
+            .page-header {
+                padding: 10px 14px;
+            }
+
+            .header-brand {
+                font-size: 16px;
+            }
+
             .kpi-grid {
                 grid-template-columns: 1fr;
             }
@@ -1466,6 +1624,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                 width: 100%;
                 border-right: none;
                 border-bottom: 1px solid var(--border-color);
+                position: static;
+                top: auto;
+                max-height: none;
+                overflow: visible;
+                margin: 0;
+                border-radius: 0;
             }
 
             .app {
@@ -1527,6 +1691,54 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         .table-container {
             overflow-x: auto;
             margin-top: 16px;
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            background: var(--glass-surface);
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            position: relative;
+            overflow: hidden;
+        }
+
+        body.dark .module-table th {
+            background: rgba(30, 41, 59, 0.42);
+            border-bottom-color: rgba(148, 163, 184, 0.28);
+        }
+
+        body.dark .module-table td {
+            background: rgba(15, 23, 42, 0.22);
+            border-bottom-color: rgba(148, 163, 184, 0.2);
+        }
+
+        @keyframes glassSweep {
+            0% {
+                background-position: -220% 0;
+            }
+
+            100% {
+                background-position: 220% 0;
+            }
+        }
+
+        .kpi-card:hover,
+        .chart-card:hover,
+        .quality-card:hover,
+        .timeline-card:hover,
+        .performance-card:hover,
+        .table-container:hover {
+            background-image: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.26) 46%, transparent 62%);
+            background-size: 220% 100%;
+            animation: glassSweep 0.85s ease;
+        }
+
+        body.dark .kpi-card:hover,
+        body.dark .chart-card:hover,
+        body.dark .quality-card:hover,
+        body.dark .timeline-card:hover,
+        body.dark .performance-card:hover,
+        body.dark .table-container:hover {
+            background-image: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.14) 46%, transparent 62%);
         }
 
         /* Dark mode toggle specific styles */
@@ -1657,8 +1869,17 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
         /* Ensure table cell doesn't wrap */
         .module-table td:last-child {
-            min-width: 320px;
+            min-width: 180px;
             white-space: nowrap;
+        }
+
+        .server-logs-scroll {
+            overflow-x: auto;
+            overflow-y: hidden;
+        }
+
+        .server-logs-table {
+            min-width: 1450px;
         }
     </style>
 </head>
@@ -1672,7 +1893,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                 <i class="fas fa-arrow-left"></i>
             </a>
             <div class="brand-wrapper">
-                <a href="#" class="header-brand" style="color:#6c63ff;">ScanQuotient</a>
+                <a href="#" class="header-brand">ScanQuotient</a>
                 <span class="header-tagline">Quantifying Risk. Strengthening Security.</span>
             </div>
         </div>
@@ -1702,7 +1923,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             </a>
             <a class="side-link <?php echo $activeView === 'ai' ? 'active' : ''; ?>"
                 href="admin_data_management.php?view=ai">
-                <i class="fas fa-brain"></i> Enterprise AI Events
+                <i class="fas fa-robot"></i> Enterprise AI Events
             </a>
             <a class="side-link <?php echo $activeView === 'server_logs' ? 'active' : ''; ?>"
                 href="admin_data_management.php?view=server_logs">
@@ -1790,8 +2011,8 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                             <?php endif; ?>
                         </div>
 
-                        <div class="table-container">
-                            <table class="module-table">
+                        <div class="table-container server-logs-scroll">
+                            <table class="module-table server-logs-table">
                                 <thead>
                                     <tr>
                                         <th>User</th>
@@ -2261,14 +2482,13 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                         <th>Message</th>
                                         <th>User</th>
                                         <th>IP</th>
-                                        <th>URI</th>
                                         <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php if (empty($serverLogRows)): ?>
                                         <tr>
-                                            <td colspan="9">No server logs available yet.</td>
+                                            <td colspan="8">No server logs available yet.</td>
                                         </tr>
                                     <?php else: ?>
                                         <?php foreach ($serverLogRows as $log): ?>
@@ -2290,7 +2510,6 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                                 <td><?php echo htmlspecialchars((string) ($log['message'] ?? '')); ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($log['user_id'] ?? '-')); ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($log['request_ip'] ?? '-')); ?></td>
-                                                <td><?php echo htmlspecialchars((string) ($log['request_uri'] ?? '-')); ?></td>
                                                 <td>
                                                     <?php if (!empty($log['deleted_at'])): ?>
                                                         <form method="POST" action="admin_data_management.php" style="display:inline;">
@@ -2585,14 +2804,14 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
 
     <footer class="page-footer">
         <div class="footer-left">
-            <span class="footer-brand">ScanQuotient Admin</span>
-            <span style="margin-left: 8px; opacity: 0.7;">v2.4.1</span>
+            <span class="footer-brand">ScanQuotient</span>
+            <span class="footer-tagline">Quantifying Risk. Strengthening Security.</span>
         </div>
         <div class="footer-center">
-            System Status: Operational | Last Backup: 2 hours ago
+            &copy; 2026 Authorized Security Testing
         </div>
         <div class="footer-right">
-            Authorized Personnel Only
+            Built for Web Security Assessment
         </div>
     </footer>
 

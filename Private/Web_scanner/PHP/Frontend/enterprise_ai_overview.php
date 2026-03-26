@@ -641,7 +641,8 @@ $historyPageUrl = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Front
             <span class="header-tagline">Quantifying Risk. Strengthening Security.</span>
         </div>
         <div class="header-right">
-            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile"
+                class="header-profile-photo">
             <span class="welcome-text">
                 <?php echo htmlspecialchars($currentUserName, ENT_QUOTES, 'UTF-8'); ?> |
                 <span id="current-date"></span> |
@@ -665,7 +666,9 @@ $historyPageUrl = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Front
                     <a href="javascript:history.back()" class="back"><i class="fas fa-arrow-left"></i> Back</a>
                 </div>
                 <h1 class="page-title"><i class="fas fa-brain"></i> Enterprise AI Overview</h1>
-                <p class="page-subtitle">Scan #<span id="scanId"><?php echo (int) $scan_id; ?></span> — AI-powered
+                <p class="page-subtitle">Scan #<span id="scanId">
+                        <?php echo (int) $scan_id; ?>
+                    </span> — AI-powered
                     insights</p>
 
                 <div class="ai-grid">
@@ -685,11 +688,13 @@ $historyPageUrl = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Front
                     </div>
                     <div class="ai-card" id="cardAsk">
                         <h2><i class="fas fa-question-circle"></i> Ask about this scan</h2>
-                        <p style="color: var(--text-light); font-size: 13px; margin-bottom: 12px;">Ask a question about this
+                        <p style="color: var(--text-light); font-size: 13px; margin-bottom: 12px;">Ask a question about
+                            this
                             scan or web security (max 80 words).</p>
                         <div id="chat" class="chat"></div>
                         <div class="ask-row">
-                            <input type="text" id="askInput" placeholder="e.g. What should we fix first?" maxlength="500" />
+                            <input type="text" id="askInput" placeholder="e.g. What should we fix first?"
+                                maxlength="500" />
                             <button type="button" id="askBtn">Ask</button>
                         </div>
                         <div class="ask-toolbar">

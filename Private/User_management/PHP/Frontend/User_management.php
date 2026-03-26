@@ -596,7 +596,7 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
 
         <!-- Filters -->
         <div class="sq-controls-section">
-            <form method="GET" class="sq-filters-row">
+            <form method="GET" class="sq-filters-row" id="sqFiltersForm">
                 <div class="sq-filter-group">
                     <label class="sq-filter-label">View</label>
                     <select name="view" class="sq-filter-select" onchange="this.form.submit()">
@@ -641,7 +641,7 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
         </div>
 
         <!-- Users Table -->
-        <div class="sq-table-container">
+        <div class="sq-table-container" id="sqUsersResults">
             <?php if (empty($users)): ?>
                 <div class="sq-empty-state">
                     <div class="sq-empty-icon">
@@ -1020,6 +1020,71 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 });
             }
+
+            const filtersForm = document.getElementById('sqFiltersForm');
+            const usersResults = document.getElementById('sqUsersResults');
+            const searchInput = filtersForm ? filtersForm.querySelector('input[name="search"]') : null;
+            if (!filtersForm || !usersResults || !searchInput) return;
+
+            let searchTimer = null;
+            let activeController = null;
+
+            const syncPerPageHandler = function () {
+                const select = document.getElementById('sqPerPageSelect');
+                if (!select || select.dataset.bound === '1') return;
+                select.dataset.bound = '1';
+                select.addEventListener('change', function () {
+                    const url = new URL(window.location.href);
+                    url.searchParams.set('per_page', this.value);
+                    url.searchParams.set('page', '1');
+                    window.location.href = url.toString();
+                });
+            };
+
+            const fetchFilteredUsers = async function (historyMode) {
+                const url = new URL(window.location.href);
+                const params = new FormData(filtersForm);
+                params.forEach((value, key) => {
+                    url.searchParams.set(key, String(value));
+                });
+                url.searchParams.set('page', '1');
+
+                if (activeController) activeController.abort();
+                activeController = new AbortController();
+
+                try {
+                    const res = await fetch(url.toString(), {
+                        signal: activeController.signal,
+                        headers: { 'X-Requested-With': 'fetch' }
+                    });
+                    if (!res.ok) return;
+                    const html = await res.text();
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    const nextResults = doc.getElementById('sqUsersResults');
+                    if (!nextResults) return;
+                    usersResults.innerHTML = nextResults.innerHTML;
+                    syncPerPageHandler();
+                    if (historyMode === 'push') {
+                        window.history.pushState({}, '', url.toString());
+                    } else if (historyMode === 'replace') {
+                        window.history.replaceState({}, '', url.toString());
+                    }
+                } catch (err) {
+                    if (err && err.name === 'AbortError') return;
+                }
+            };
+
+            filtersForm.addEventListener('submit', function (e) {
+                e.preventDefault();
+                fetchFilteredUsers('push');
+            });
+
+            searchInput.addEventListener('input', function () {
+                window.clearTimeout(searchTimer);
+                searchTimer = window.setTimeout(function () {
+                    fetchFilteredUsers('replace');
+                }, 280);
+            });
         })();
     </script>
 
