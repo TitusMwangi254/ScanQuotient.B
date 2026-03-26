@@ -98,6 +98,10 @@ if (!empty($profile_photo)) {
                                     <i class="fas fa-crosshairs scan-btn-icon" aria-hidden="true"></i>
                                     Start Scan
                                 </button>
+                                <button type="button" id="cancelScanBtn" class="scan-cancel-btn" style="display:none;">
+                                    <i class="fas fa-stop-circle"></i>
+                                    Cancel
+                                </button>
                             </div>
                         </div>
 
@@ -110,7 +114,14 @@ if (!empty($profile_photo)) {
                         <!-- Loader -->
                         <div id="loader" class="loader-container">
                             <div class="loader-spinner"></div>
-                            <div class="loader-text">Scanning target application</div>
+                            <div class="loader-text">Scanning target website URL</div>
+                            <div class="scan-progress-wrap">
+                                <div class="scan-progress-row">
+                                    <span id="scanStageLabel">Preparing scan...</span>
+                                    <span id="scanElapsed">0s</span>
+                                </div>
+                                <div class="scan-progress-track"><div id="scanProgressBar" class="scan-progress-bar"></div></div>
+                            </div>
                         </div>
 
                         <!-- Results -->
@@ -155,6 +166,29 @@ if (!empty($profile_photo)) {
                                 <div class="severity-counts" id="severityCounts">
                                     <!-- Populated by JS -->
                                 </div>
+                            </div>
+
+                            <!-- Saved runs for this host: risk deltas & finding changes -->
+                            <div id="scanRunTimelineWrap" class="scan-run-timeline-wrap" style="display:none;">
+                                <div class="scan-run-timeline-head">
+                                    <div>
+                                        <h3 class="scan-run-timeline-title"><i class="fas fa-stream"></i> Scan run timeline</h3>
+                                        <p id="scanRunTimelineSub" class="scan-run-timeline-sub">Saved scans for this target — compare risk score movement and what changed between runs.</p>
+                                    </div>
+                                    <div class="scan-run-timeline-actions">
+                                        <button type="button" id="scanRunTimelineRefresh" class="scan-run-timeline-refresh" title="Refresh timeline" aria-label="Refresh timeline">
+                                            <i class="fas fa-rotate"></i>
+                                        </button>
+                                        <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php" class="scan-run-timeline-history-link">Full history <i class="fas fa-arrow-right"></i></a>
+                                    </div>
+                                </div>
+                                <div id="scanRunTimelineBody" class="scan-run-timeline-body"></div>
+                                <div id="scanRunTimelineViewAll" class="scan-run-timeline-viewall" style="display:none;">
+                                    <button type="button" id="scanRunTimelineViewAllBtn" class="scan-run-timeline-viewall-btn">
+                                        <i class="fas fa-expand-alt"></i> View full timeline
+                                    </button>
+                                </div>
+                                <p id="scanRunTimelineEmpty" class="scan-run-timeline-empty" style="display:none;">No saved scans for this host yet. After your report is stored, repeat scans will appear here with score deltas and new or resolved findings.</p>
                             </div>
 
                             <!-- SSL, Headers, Server & Crawler Summary -->
@@ -238,10 +272,9 @@ if (!empty($profile_photo)) {
                                             <i class="fas fa-brain"></i><span>AI Overview</span>
                                         </button>
                                         <button type="button" id="shareResultsBtn" class="artefact-btn share-btn"
-                                            title="Share (coming soon)"
-                                            style="display:inline-flex; opacity:0.55; filter: blur(0.2px); cursor:not-allowed;"
-                                            disabled>
-                                            <i class="fas fa-share-alt"></i><span>Share (Soon)</span>
+                                            title="Share by email"
+                                            style="display:inline-flex;">
+                                            <i class="fas fa-share-alt"></i><span>Share</span>
                                         </button>
                                     </div>
                                 </div>
@@ -250,6 +283,31 @@ if (!empty($profile_photo)) {
                             </div>
 
                             <div class="results-panel active" id="panelFindings">
+                                <div class="findings-toolbar">
+                                    <input type="text" id="findingSearchInput" class="finding-search-input"
+                                        placeholder="Search findings, evidence, or remediation...">
+                                    <select id="findingSeverityFilter" class="finding-filter-select">
+                                        <option value="all">All severities</option>
+                                        <option value="critical">Critical</option>
+                                        <option value="high">High</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="low">Low</option>
+                                        <option value="info">Informational</option>
+                                        <option value="secure">Secure</option>
+                                    </select>
+                                    <select id="findingCategoryFilter" class="finding-filter-select">
+                                        <option value="all">All categories</option>
+                                    </select>
+                                    <select id="findingSortSelect" class="finding-filter-select">
+                                        <option value="severity_desc">Sort: highest risk first</option>
+                                        <option value="severity_asc">Sort: lowest risk first</option>
+                                        <option value="name_asc">Sort: name A-Z</option>
+                                    </select>
+                                    <button type="button" id="findingResetFiltersBtn" class="finding-reset-btn">
+                                        <i class="fas fa-rotate-left"></i><span>Reset</span>
+                                    </button>
+                                </div>
+                                <div id="findingsMeta" class="findings-meta">0 finding(s)</div>
                                 <div class="vulnerabilities-list" id="vulnerabilitiesList">
                                     <!-- Populated by JS -->
                                 </div>
@@ -453,8 +511,8 @@ if (!empty($profile_photo)) {
         }
 
         function toggleVuln(index) {
-            const card = document.getElementById(`vuln-${index}`);
-            card.classList.toggle('expanded');
+            // Deprecated accordion behavior; details now open in a full report modal.
+            openFindingReportModal(index);
         }
 
         function updateRiskDisplay(summary) {
@@ -618,6 +676,74 @@ if (!empty($profile_photo)) {
             container.innerHTML = html;
         }
 
+        const findingReportCache = {};
+        const WARMUP_CONCURRENCY = 4;
+        const warmupInFlight = new Set();
+        let scanFindingsAll = [];
+        let findingWarmupPromise = null;
+        let recommendationStemsSeen = new Set();
+        let currentScanRunId = '';
+        let activeScanController = null;
+        let activeScanToken = 0;
+        let scanProgressTimer = null;
+        let scanStagePollTimer = null;
+        let scanSyntheticTimer = null;
+        let scanSyntheticDelayTimer = null;
+        let scanSyntheticStartMs = 0;
+        let lastBackendProgress = { progress: 0, stage: '', status: '' };
+        let sqTimelineRunsStore = [];
+        let currentFindingEvidenceRaw = '';
+        let activeFindingModalToken = 0;
+        const readyReportToastShown = new Set();
+        const reportSourceTelemetrySent = new Set();
+        const severityRank = { critical: 5, high: 4, medium: 3, low: 2, info: 1, secure: 0 };
+        function makeCacheKey(vuln) {
+            const uid = vuln?._sq_uid || '';
+            const name = vuln?.name || '';
+            const sev = vuln?.severity || '';
+            return `${uid}|${name}|${sev}`;
+        }
+        function sortByPriority(vulns) {
+            return [...(vulns || [])].sort((a, b) => {
+                const sa = severityRank[String(a?.severity || '').toLowerCase()] ?? -1;
+                const sb = severityRank[String(b?.severity || '').toLowerCase()] ?? -1;
+                return sb - sa;
+            });
+        }
+        function trackFindingReportSourceEvent(vuln, source, quality) {
+            const src = String(source || '').toLowerCase();
+            if (!src || src === 'ai') return;
+            const uid = String(vuln?._sq_uid || '');
+            const key = uid + '|' + src;
+            if (uid && reportSourceTelemetrySent.has(key)) return;
+            if (uid) reportSourceTelemetrySent.add(key);
+            const payload = {
+                event_key: 'finding_report_source_non_ai',
+                source: src,
+                vulnerability_uid: uid,
+                finding_name: String(vuln?.name || ''),
+                severity: String(vuln?.severity || ''),
+                scan_run_id: String(currentScanRunId || ''),
+                quality_valid: !!quality?.valid,
+                quality_issue_count: Array.isArray(quality?.issues) ? quality.issues.length : 0
+            };
+            const url = '../Backend/track_finding_report_event.php';
+            try {
+                if (navigator.sendBeacon) {
+                    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+                    navigator.sendBeacon(url, blob);
+                } else {
+                    fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'same-origin',
+                        keepalive: true,
+                        body: JSON.stringify(payload)
+                    }).catch(() => { });
+                }
+            } catch (e) { }
+        }
+
         function createVulnerabilityCard(vuln, index) {
             const config = {
                 critical: { icon: 'fa-skull', color: '#dc2626' },
@@ -637,60 +763,15 @@ if (!empty($profile_photo)) {
             else if (name.includes('cookie')) icon = 'fa-cookie-bite';
             else if (name.includes('information') || name.includes('disclosure')) icon = 'fa-eye';
 
-            const hasStructured = vuln.what_we_tested || vuln.indicates || vuln.how_exploited;
             const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-            const truncateEvidence = (s, maxLen = 170) => {
-                const val = (s || '').trim();
-                if (!val) return '';
-                if (val.length <= maxLen) return val;
-                return val.slice(0, maxLen) + '...';
-            };
-            const evidencePreview = truncateEvidence(vuln.evidence);
-            const evidenceBlock = vuln.evidence ? `
-                <div class="vuln-section vuln-evidence">
-                    <div class="vuln-section-title"><i class="fas fa-search"></i> Evidence</div>
-                    <div class="vuln-section-content code">${esc(evidencePreview)}</div>
-                    <button type="button" class="view-evidence-btn" data-vuln-index="${index}" style="margin-top:8px;display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border:1px solid var(--border-color);background:var(--bg-main);color:var(--text-main);border-radius:999px;cursor:pointer;font-size:12px;font-weight:700;transition:all .22s ease;">
-                        <i class="fas fa-expand"></i> View full evidence
-                    </button>
-                </div>` : '';
-
-            const bodySections = hasStructured
-                ? `
-                ${vuln.what_we_tested ? `
-                <div class="vuln-section">
-                    <div class="vuln-section-title"><i class="fas fa-vial"></i> What we tested</div>
-                    <div class="vuln-section-content">${esc(vuln.what_we_tested)}</div>
-                </div>` : ''}
-                ${vuln.indicates ? `
-                <div class="vuln-section">
-                    <div class="vuln-section-title"><i class="fas fa-exclamation-triangle"></i> This indicates</div>
-                    <div class="vuln-section-content">${esc(vuln.indicates)}</div>
-                </div>` : ''}
-                ${vuln.how_exploited ? `
-                <div class="vuln-section">
-                    <div class="vuln-section-title"><i class="fas fa-user-secret"></i> How it can be exploited</div>
-                    <div class="vuln-section-content">${esc(vuln.how_exploited)}</div>
-                </div>` : ''}
-                ${vuln.remediation ? `
-                <div class="vuln-section">
-                    <div class="vuln-section-title"><i class="fas fa-shield-alt"></i> How to mitigate</div>
-                    <div class="vuln-section-content">${esc(vuln.remediation)}</div>
-                </div>` : ''}
-                ${evidenceBlock}
-                `
-                : `
-                <div class="vuln-section">
-                    <div class="vuln-section-title"><i class="fas fa-align-left"></i> Description</div>
-                    <div class="vuln-section-content">${esc(vuln.description)}</div>
-                </div>
-                ${evidenceBlock}
-                ${vuln.remediation ? `<div class="vuln-section"><div class="vuln-section-title"><i class="fas fa-wrench"></i> Remediation</div><div class="vuln-section-content">${esc(vuln.remediation)}</div></div>` : ''}
-                `;
+            const shortDesc = (vuln.description || '').length > 165
+                ? (vuln.description || '').slice(0, 165) + '...'
+                : (vuln.description || '');
+            const cvssHint = vuln.cvss_score ? `CVSS ${esc(String(vuln.cvss_score))}` : '';
 
             return `
         <div class="vuln-card ${vuln.severity}" id="vuln-${index}">
-            <div class="vuln-header" onclick="toggleVuln(${index})">
+            <div class="vuln-header" onclick="openFindingReportModal(${index})">
                 <div class="vuln-title-section">
                     <div class="vuln-icon" style="color: ${config.color}">
                         <i class="fas ${icon}"></i>
@@ -702,14 +783,636 @@ if (!empty($profile_photo)) {
                 </div>
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <span class="vuln-severity">${vuln.severity}</span>
-                    <i class="fas fa-chevron-down vuln-toggle"></i>
+                    <button type="button" class="view-finding-btn pending" data-vuln-index="${index}" data-vuln-uid="${esc(String(vuln._sq_uid || ''))}" data-vuln-name="${esc(String(vuln.name || 'Security Finding'))}">
+                        <i class="fas fa-file-shield"></i> <span class="btn-label">Preparing...</span>
+                    </button>
                 </div>
             </div>
-            <div class="vuln-body">
-                ${bodySections}
+            <div class="vuln-body" style="display:block;">
+                <div class="vuln-section">
+                    <div class="vuln-section-title"><i class="fas fa-align-left"></i> Executive Overview</div>
+                    <div class="vuln-section-content">${esc(shortDesc || 'See detailed report.')}</div>
+                </div>
+                <div class="vuln-meta-row">
+                    <span><i class="fas fa-magnifying-glass-chart"></i> Click Open Report for full analysis</span>
+                    ${cvssHint ? `<span><i class="fas fa-chart-line"></i> ${cvssHint}</span>` : ''}
+                </div>
             </div>
         </div>
     `;
+        }
+        function toListHtml(items) {
+            if (!Array.isArray(items) || items.length === 0) return '<li>Not provided.</li>';
+            return items.map(i => `<li>${escapeHtml(String(i || ''))}</li>`).join('');
+        }
+        function escapeRegExp(s) {
+            return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        function normalizeEvidenceLineBreaks(t) {
+            let s = String(t || '');
+            const keys = ['Finding Title:', 'Finding Category:', 'Finding Reference:', 'Test Performed:', 'Expected Secure Result:', 'Observed Result:', 'What This Means:', 'Target:', 'Detection Time:', 'Header Validation Evidence'];
+            keys.forEach(function (k) {
+                const re = new RegExp('([^\\n])\\s*' + escapeRegExp(k), 'g');
+                s = s.replace(re, '$1\n' + k);
+            });
+            return s;
+        }
+        /** Multi-line aware: values run until the next known section header (Key: at line start). */
+        function parseStructuredEvidenceSections(text) {
+            const normalized = normalizeEvidenceLineBreaks(String(text || '').trim());
+            const lines = normalized.split(/\r?\n/);
+            const map = {};
+            const EVIDENCE_KNOWN_KEYS = [
+                'Header Validation Evidence',
+                'Expected Secure Result',
+                'Observed Result',
+                'What This Means',
+                'Finding Reference',
+                'Finding Category',
+                'Finding Title',
+                'Test Performed',
+                'Detection Time',
+                'Target'
+            ];
+            EVIDENCE_KNOWN_KEYS.sort(function (a, b) { return b.length - a.length; });
+            function tryMatchKey(trimmed) {
+                for (let ki = 0; ki < EVIDENCE_KNOWN_KEYS.length; ki++) {
+                    const key = EVIDENCE_KNOWN_KEYS[ki];
+                    const prefix = key + ':';
+                    if (trimmed.length >= prefix.length && trimmed.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()) {
+                        return { key: key, rest: trimmed.slice(prefix.length).trim() };
+                    }
+                }
+                return null;
+            }
+            let currentKey = null;
+            for (let i = 0; i < lines.length; i++) {
+                const trimmed = lines[i].trim();
+                if (!trimmed) {
+                    if (currentKey) map[currentKey] = (map[currentKey] || '') + '\n';
+                    continue;
+                }
+                const m = tryMatchKey(trimmed);
+                if (m) {
+                    currentKey = m.key;
+                    if (map[currentKey] === undefined) map[currentKey] = m.rest;
+                    else map[currentKey] += '\n' + m.rest;
+                } else if (currentKey) {
+                    map[currentKey] = (map[currentKey] || '') + '\n' + trimmed;
+                }
+            }
+            return map;
+        }
+        function stripInlineFindingMeta(val) {
+            let s = String(val || '');
+            const cut = s.search(/\s+Finding Title:/i);
+            if (cut !== -1) s = s.slice(0, cut);
+            return s.trim();
+        }
+        function renderColoredEvidenceLines(textBlock) {
+            const lines = String(textBlock || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            return lines.map(function (ln) {
+                const low = ln.toLowerCase();
+                let cls = 'evidence-line-neutral';
+                if (low.startsWith('expected')) cls = 'evidence-line-expected';
+                else if (low.startsWith('observed')) cls = 'evidence-line-observed';
+                else if (low.startsWith('test performed') || low.startsWith('test type')) cls = 'evidence-line-test';
+                else if (low.startsWith('header checked') || low.startsWith('header validation')) cls = 'evidence-line-test';
+                else if (low.startsWith('target') || low.startsWith('detection time')) cls = 'evidence-line-meta';
+                else if (low.indexOf('missing security headers') !== -1) cls = 'evidence-line-observed';
+                return '<div class="evidence-line ' + cls + '">' + escapeHtml(ln) + '</div>';
+            }).join('');
+        }
+        function buildEvidenceExplainedPanel(rawText) {
+            const normalized = normalizeEvidenceLineBreaks(String(rawText || '').trim());
+            const sectionMap = parseStructuredEvidenceSections(normalized);
+            const lines = normalized.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            const buckets = { test: [], expected: [], observed: [], meta: [] };
+            const pickLines = (regexes, maxItems) => {
+                const out = [];
+                for (let i = 0; i < lines.length; i++) {
+                    const ln = lines[i];
+                    if (regexes.some(re => re.test(ln))) {
+                        out.push(ln);
+                        if (out.length >= maxItems) break;
+                    }
+                }
+                return out;
+            };
+            const tested = String(sectionMap['Test Performed'] || '').trim();
+            const expected = String(sectionMap['Expected Secure Result'] || '').trim();
+            const observed = String(sectionMap['Observed Result'] || '').trim();
+            const target = String(sectionMap['Target'] || '').trim();
+            const detTime = String(sectionMap['Detection Time'] || '').trim();
+
+            buckets.test = tested
+                ? tested.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+                : pickLines([/^Test Method\s*:/i, /^Request Method\s*:/i, /^Request URL\s*:/i, /^Header Checked\s*:/i, /^Parameter Tested\s*:/i], 3);
+            buckets.expected = expected
+                ? expected.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+                : pickLines([/^Expected Secure Result\s*:/i, /^Expected Secure Value\s*:/i], 2);
+            buckets.observed = observed
+                ? observed.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+                : pickLines([/^Observed Result\s*:/i, /^Handshake Result\s*:/i, /^Error\s*:/i, /^Response Status\s*:/i, /^Validation Error\s*:/i, /^Missing Security Headers\s*:/i], 4);
+            if (target) buckets.meta.push('Target: ' + target);
+            if (detTime) buckets.meta.push('Detection Time: ' + detTime);
+
+            function blockHtml(title, subtitle, cls, arr) {
+                if (!arr || !arr.length) return '';
+                const inner = arr.map(function (ln) {
+                    return '<div class="evidence-explain-line">' + escapeHtml(ln) + '</div>';
+                }).join('');
+                return '<div class="evidence-explain-block ' + cls + '"><div class="evidence-explain-block-head"><span class="evidence-explain-block-title">' + title + '</span><span class="evidence-explain-block-sub">' + subtitle + '</span></div><div class="evidence-explain-lines">' + inner + '</div></div>';
+            }
+            let html = '';
+            html += blockHtml('What was tested', 'How this check was run against the target', 'ev-explain-test', buckets.test);
+            html += blockHtml('What was expected', 'Secure configuration the scanner looks for', 'ev-explain-expected', buckets.expected);
+            html += blockHtml('What was observed', 'What the server actually returned or omitted', 'ev-explain-observed', buckets.observed);
+            html += blockHtml('Context', 'Target and timing metadata', 'ev-explain-meta', buckets.meta);
+            if (!html.trim()) {
+                html = '<div class="evidence-explain-fallback"><div class="evidence-line evidence-line-neutral">No structured explanation lines were found for this finding. Please review the raw evidence pane.</div></div>';
+            }
+            return html;
+        }
+        function renderInlineEvidence(rawText) {
+            const text = normalizeEvidenceLineBreaks(String(rawText || '').trim());
+            if (!text) return '<div class="evidence-empty">No evidence available.</div>';
+            const lines = text.split(/\r?\n/);
+            const kv = {};
+            let currentKey = null;
+            lines.forEach(raw => {
+                const trimmed = raw.trim();
+                if (!trimmed) return;
+                const m = trimmed.match(/^([A-Za-z][A-Za-z0-9 \-\/()]{2,40})\s*:\s*(.*)$/);
+                if (m) {
+                    currentKey = m[1].trim();
+                    kv[currentKey] = (kv[currentKey] ? kv[currentKey] + '\n' : '') + m[2].trim();
+                } else if (currentKey) {
+                    kv[currentKey] = (kv[currentKey] || '') + '\n' + trimmed;
+                }
+            });
+            const observed = (kv['Observed Result'] || '').trim();
+            const tested = (kv['Test Performed'] || '').trim();
+            const target = (kv['Target'] || '').trim();
+            const time = (kv['Detection Time'] || '').trim();
+            const inlineKeys = [
+                'Injected Payload', 'Parameter Tested', 'Error Pattern Matched', 'Matched Text',
+                'Baseline Response Time', 'Payload Response Time', 'Observed Delay Delta',
+                'Access-Control-Allow-Origin', 'Access-Control-Allow-Credentials', 'Location Header',
+                'Missing Attribute', 'Set-Cookie Header', 'Negotiated Protocol', 'Negotiated Cipher',
+                'Days Since Expiry', 'Days Remaining', 'Port', 'Service', 'Resolved IP',
+                'Status', 'Response Status', 'Content-Type'
+            ];
+            const inlineFields = inlineKeys.filter(k => kv[k] && String(kv[k]).trim()).map(k => {
+                const v = String(kv[k] || '').trim().split('\n')[0];
+                return '<div class="ev-inline-row"><span class="ev-inline-key">' + escapeHtml(k) + '</span><span class="ev-inline-val">' + escapeHtml(v) + '</span></div>';
+            }).join('');
+            let timingHtml = '';
+            if (kv['Baseline Response Time'] && kv['Payload Response Time']) {
+                const base = parseFloat(kv['Baseline Response Time']) || 0;
+                const payload = parseFloat(kv['Payload Response Time']) || 0;
+                const delta = (payload - base).toFixed(2);
+                const isDelay = parseFloat(delta) > 3;
+                timingHtml = `
+                    <div class="ev-timing-table">
+                        <div class="ev-timing-row"><span>Baseline request</span><span class="ev-timing-val">${base.toFixed(2)}s</span></div>
+                        <div class="ev-timing-row"><span>Payload request</span><span class="ev-timing-val ${isDelay ? 'ev-timing-danger' : ''}">${payload.toFixed(2)}s</span></div>
+                        <div class="ev-timing-row ev-timing-delta"><span>Delta</span><span class="ev-timing-val ${isDelay ? 'ev-timing-danger' : ''}">+${delta}s ${isDelay ? ' delay confirms injection' : ''}</span></div>
+                    </div>`;
+            }
+            const observedHtml = observed
+                ? `<div class="ev-observed-block"><span class="ev-observed-label">Observed Result</span><div class="ev-observed-body">${escapeHtml(observed)}</div></div>`
+                : '';
+            const testedHtml = tested ? '<div class="ev-tested-row"><i class="fas fa-flask"></i><span>' + escapeHtml(tested) + '</span></div>' : '';
+            const metaHtml = (target || time)
+                ? '<div class="ev-meta-row">' +
+                (target ? '<span><i class="fas fa-bullseye"></i>' + escapeHtml(target) + '</span>' : '') +
+                (time ? '<span><i class="fas fa-clock"></i>' + escapeHtml(time) + '</span>' : '') +
+                '</div>'
+                : '';
+            return '<div class="ev-inline-wrap">' +
+                testedHtml +
+                metaHtml +
+                (inlineFields ? '<div class="ev-inline-fields">' + inlineFields + '</div>' : '') +
+                timingHtml +
+                observedHtml +
+                '<div class="evidence-fullraw-wrap"><button type="button" class="evidence-fullraw-btn" id="findingEvidenceViewRawBtn"><i class="fas fa-layer-group"></i> View full raw evidence</button></div>' +
+                '</div>';
+        }
+        function renderEvidenceStructured(rawText) {
+            return renderInlineEvidence(rawText);
+        }
+        function renderSourceBadge(source, quality) {
+            const src = String(source || '').toLowerCase();
+            let cls = 'source-badge-fallback';
+            let icon = 'fa-rotate';
+            let text = 'Deterministic report';
+            if (src === 'ai') {
+                cls = 'source-badge-ai';
+                icon = 'fa-brain';
+                text = 'AI · Quality validated';
+            } else if (src === 'ai_corrected' || src === 'ai_rebuilt') {
+                cls = 'source-badge-corrected';
+                icon = 'fa-shield-check';
+                text = 'AI · Auto-corrected';
+            }
+            const issues = quality?.issues?.length || 0;
+            const note = issues > 0 ? ` <span class="source-badge-issues">(${issues} quality note${issues > 1 ? 's' : ''})</span>` : '';
+            return `<span class="source-badge ${cls}"><i class="fas ${icon}"></i>${text}${note}</span>`;
+        }
+        function renderFindingModalSkeleton() {
+            return `
+                <div class="finding-skeleton-grid">
+                    <div class="finding-card third finding-kv skeleton-card"><div class="skel skel-label"></div><div class="skel skel-value"></div></div>
+                    <div class="finding-card third finding-kv skeleton-card"><div class="skel skel-label"></div><div class="skel skel-value"></div></div>
+                    <div class="finding-card third finding-kv skeleton-card"><div class="skel skel-label"></div><div class="skel skel-value"></div></div>
+                    <div class="finding-card third finding-kv skeleton-card"><div class="skel skel-label"></div><div class="skel skel-value"></div></div>
+                    <div class="finding-card third finding-kv skeleton-card"><div class="skel skel-label"></div><div class="skel skel-value"></div></div>
+                    <div class="finding-card third finding-kv skeleton-card"><div class="skel skel-label"></div><div class="skel skel-value"></div></div>
+                </div>`;
+        }
+        function openFindingEvidenceRawModal() {
+            const modal = document.getElementById('findingEvidenceRawModal');
+            const rawEl = document.getElementById('findingEvidenceRawText');
+            const expEl = document.getElementById('findingEvidenceExplained');
+            if (!modal || !rawEl || !expEl) return;
+            const raw = String(currentFindingEvidenceRaw || '').trim() || '-';
+            rawEl.textContent = raw;
+            expEl.innerHTML = buildEvidenceExplainedPanel(raw);
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+        }
+        function closeFindingEvidenceRawModal() {
+            const modal = document.getElementById('findingEvidenceRawModal');
+            if (!modal) return;
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+        }
+        function setFindingModalContent(report, vuln, source, quality) {
+            const set = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value || '-';
+            };
+            const toggleCard = (cardId, value) => {
+                const el = document.getElementById(cardId);
+                if (!el) return;
+                const hasValue = !!(value && String(value).trim());
+                el.style.display = hasValue ? '' : 'none';
+            };
+            set('findingTitle', report.title || vuln.name || 'Security Finding');
+            set('findingSeverity', report.severity || vuln.severity || '-');
+            set('findingCategory', report.category || vuln.category || 'Security Finding');
+            set('findingTarget', report.target || (lastScanData?.target || ''));
+            set('findingIp', report.ip_address || '');
+            set('findingPort', report.port || '');
+            set('findingService', report.service_detected || '');
+            set('findingState', report.state || '');
+            set('findingDetectionTime', report.detection_time || (lastScanData?.timestamp || ''));
+            set('findingDescription', report.description || vuln.description || '-');
+            // Keep the raw-evidence modal truly raw: prefer scanner-captured evidence first.
+            currentFindingEvidenceRaw = String(vuln.evidence || report.evidence || '').trim();
+            const evidenceWrap = document.getElementById('findingEvidence');
+            if (evidenceWrap) evidenceWrap.innerHTML = renderEvidenceStructured(report.evidence || vuln.evidence || '');
+            set('findingRiskExplanation', report.risk_explanation || vuln.indicates || '-');
+            set('findingLikelihood', report.likelihood || '-');
+            set('findingPriority', report.remediation_priority || '-');
+            set('findingStatus', report.result_status || 'Needs Review');
+            const sevEl = document.getElementById('findingSeverity');
+            if (sevEl) {
+                const sev = String(report.severity || vuln.severity || '').toLowerCase();
+                sevEl.className = 'v severity-text severity-' + (sev || 'info');
+            }
+            const qBadge = document.getElementById('findingQualityBadge');
+            const qText = document.getElementById('findingQualityText');
+            if (qBadge) qBadge.style.display = 'none';
+            if (qText) qText.textContent = '';
+            toggleCard('findingCardIp', report.ip_address || '');
+            toggleCard('findingCardPort', report.port || '');
+            toggleCard('findingCardService', report.service_detected || '');
+            toggleCard('findingCardState', report.state || '');
+
+            const impacts = document.getElementById('findingImpactList');
+            if (impacts) impacts.innerHTML = toListHtml(report.potential_impact);
+            const recs = document.getElementById('findingRecommendations');
+            if (recs) recs.innerHTML = toListHtml(report.recommendations);
+            window.currentFindingContext = { report: report || {}, vuln: vuln || {} };
+        }
+        async function fetchFindingReport(vulnInput) {
+            const vuln = typeof vulnInput === 'number' ? (lastVulnerabilities || [])[vulnInput] : vulnInput;
+            if (!vuln) return null;
+            const cacheKey = makeCacheKey(vuln);
+            if (findingReportCache[cacheKey]) return findingReportCache[cacheKey];
+            if (warmupInFlight.has(cacheKey)) {
+                return new Promise(resolve => {
+                    const poll = setInterval(() => {
+                        if (findingReportCache[cacheKey]) {
+                            clearInterval(poll);
+                            resolve(findingReportCache[cacheKey]);
+                        } else if (!warmupInFlight.has(cacheKey)) {
+                            clearInterval(poll);
+                            resolve(null);
+                        }
+                    }, 80);
+                });
+            }
+            warmupInFlight.add(cacheKey);
+            const stemsSnapshot = Array.from(recommendationStemsSeen);
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 35000);
+                const r = await fetch('../Backend/finding_ai_report.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    signal: controller.signal,
+                    body: JSON.stringify({
+                        vulnerability: vuln,
+                        vulnerability_uid: vuln._sq_uid || '',
+                        scan_run_id: currentScanRunId,
+                        recommendation_stems_seen: stemsSnapshot,
+                        scan_data: {
+                            target: lastScanData?.target || '',
+                            timestamp: lastScanData?.timestamp || '',
+                            summary: lastScanData?.summary || {}
+                        }
+                    })
+                });
+                clearTimeout(timeoutId);
+                if (!r.ok) return null;
+                const data = await r.json();
+                const payload = (data && data.ok && data.report) ? {
+                    report: data.report,
+                    source: data.source || 'unknown',
+                    quality: data.quality || null
+                } : null;
+                const stems = Array.isArray(payload?.report?.recommendation_stems) ? payload.report.recommendation_stems : [];
+                stems.forEach(s => recommendationStemsSeen.add(String(s || '')));
+                if (payload) trackFindingReportSourceEvent(vuln, payload.source, payload.quality);
+                if (payload) findingReportCache[cacheKey] = payload;
+                return payload;
+            } catch (e) {
+                return null;
+            } finally {
+                warmupInFlight.delete(cacheKey);
+            }
+        }
+        function markFindingButtonReady(vulnIndex, ok, source, vuln) {
+            const uid = String(vuln?._sq_uid || '');
+            let buttons = [];
+            if (uid) {
+                buttons = Array.from(document.querySelectorAll(`.view-finding-btn[data-vuln-uid="${uid.replace(/"/g, '\\"')}"]`));
+            }
+            if (!buttons.length) {
+                const byIndex = document.querySelector(`.view-finding-btn[data-vuln-index="${vulnIndex}"]`);
+                if (byIndex) buttons = [byIndex];
+            }
+            if (!buttons.length) return;
+            buttons.forEach(btn => {
+                btn.classList.remove('pending');
+                btn.classList.add(ok ? 'ready' : 'fallback');
+                const label = btn.querySelector('.btn-label');
+                if (label) label.textContent = 'Open Report';
+            });
+            if (ok && uid && !readyReportToastShown.has(uid)) {
+                readyReportToastShown.add(uid);
+                const findingName = String(vuln?.name || buttons[0]?.getAttribute('data-vuln-name') || 'Security finding');
+                showToast('Report ready', `${findingName} is ready to open.`, 'success');
+            }
+        }
+        async function warmFindingReports() {
+            if (!Array.isArray(lastVulnerabilities) || lastVulnerabilities.length === 0) return;
+            const queue = sortByPriority(lastVulnerabilities.map((v, i) => ({ vuln: v, idx: i })));
+            async function worker() {
+                while (queue.length > 0) {
+                    const item = queue.shift();
+                    if (!item) return;
+                    const { vuln, idx } = item;
+                    try {
+                        const payload = await fetchFindingReport(vuln);
+                        markFindingButtonReady(idx, !!payload?.report, payload?.source, vuln);
+                    } catch (e) {
+                        markFindingButtonReady(idx, false, null, vuln);
+                    }
+                }
+            }
+            const workers = Array.from({ length: Math.min(WARMUP_CONCURRENCY, queue.length) }, () => worker());
+            await Promise.allSettled(workers);
+        }
+        async function openFindingReportModal(vulnIndex) {
+            const modal = document.getElementById('findingReportModal');
+            const body = document.getElementById('findingReportBody');
+            const loading = document.getElementById('findingReportLoading');
+            if (!modal || !body) return;
+            const vuln = (lastVulnerabilities || [])[vulnIndex];
+            if (!vuln) return;
+            activeFindingModalToken += 1;
+            const modalToken = activeFindingModalToken;
+            const cacheKey = makeCacheKey(vuln);
+            const cached = findingReportCache[cacheKey];
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+            if (cached) {
+                if (modalToken !== activeFindingModalToken) return;
+                if (loading) loading.style.display = 'none';
+                body.style.display = 'grid';
+                setFindingModalContent(cached.report || {}, vuln, cached.source, cached.quality);
+                return;
+            }
+            body.style.display = 'none';
+            if (loading) {
+                loading.style.display = 'flex';
+                loading.innerHTML = renderFindingModalSkeleton();
+            }
+            try {
+                const payload = await fetchFindingReport(vuln);
+                if (modalToken !== activeFindingModalToken) return;
+                const report = payload?.report || {};
+                setFindingModalContent(report, vuln, payload?.source, payload?.quality);
+            } catch (e) {
+                if (modalToken !== activeFindingModalToken) return;
+                setFindingModalContent({}, vuln, 'fallback', null);
+            } finally {
+                if (modalToken !== activeFindingModalToken) return;
+                if (loading) {
+                    loading.style.display = 'none';
+                    loading.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Building detailed report...';
+                }
+                body.style.display = 'grid';
+            }
+        }
+        function closeFindingReportModal() {
+            const modal = document.getElementById('findingReportModal');
+            if (!modal) return;
+            activeFindingModalToken += 1;
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+        }
+        function findingReportAsText() {
+            const read = (id, label) => `${label}: ${(document.getElementById(id)?.textContent || '-').trim()}`;
+            const impacts = Array.from(document.querySelectorAll('#findingImpactList li')).map(li => '- ' + li.textContent.trim()).join('\n');
+            const recs = Array.from(document.querySelectorAll('#findingRecommendations li')).map(li => '- ' + li.textContent.trim()).join('\n');
+            return [
+                read('findingTitle', 'Title'),
+                read('findingSeverity', 'Severity'),
+                read('findingCategory', 'Category'),
+                read('findingStatus', 'Result status'),
+                read('findingTarget', 'Target'),
+                read('findingDetectionTime', 'Detection time'),
+                read('findingDescription', 'Description'),
+                read('findingEvidence', 'Evidence'),
+                read('findingRiskExplanation', 'What this evidence indicates'),
+                read('findingLikelihood', 'Likelihood'),
+                read('findingPriority', 'Remediation priority'),
+                'Potential impact:',
+                impacts || '- Not provided',
+                'Recommended actions:',
+                recs || '- Not provided'
+            ].join('\n');
+        }
+        function printFindingReport() {
+            const modalCard = document.querySelector('#findingReportModal .finding-report-modal');
+            if (!modalCard || typeof html2canvas !== 'function') {
+                showToast('Print failed', 'Modal snapshot engine is unavailable.', 'error');
+                return;
+            }
+            const stage = document.createElement('div');
+            stage.style.position = 'fixed';
+            stage.style.left = '-10000px';
+            stage.style.top = '0';
+            stage.style.width = '1400px';
+            stage.style.zIndex = '-1';
+            stage.style.pointerEvents = 'none';
+            stage.style.background = '#ffffff';
+            const clone = modalCard.cloneNode(true);
+            clone.style.maxHeight = 'none';
+            clone.style.height = 'auto';
+            clone.style.overflow = 'visible';
+            clone.style.transform = 'none';
+            clone.style.width = modalCard.getBoundingClientRect().width + 'px';
+            const scrollables = clone.querySelectorAll('*');
+            scrollables.forEach(function (el) {
+                const cs = window.getComputedStyle(el);
+                if (cs.overflowY === 'auto' || cs.overflowY === 'scroll' || cs.overflowX === 'auto' || cs.overflowX === 'scroll') {
+                    el.style.overflow = 'visible';
+                    el.style.maxHeight = 'none';
+                    el.style.height = 'auto';
+                }
+            });
+            stage.appendChild(clone);
+            document.body.appendChild(stage);
+            const shotWidth = Math.ceil(clone.scrollWidth || clone.getBoundingClientRect().width || 1200);
+            const shotHeight = Math.ceil(clone.scrollHeight || clone.getBoundingClientRect().height || 1600);
+            html2canvas(clone, {
+                backgroundColor: '#ffffff',
+                scale: 2,
+                useCORS: true,
+                width: shotWidth,
+                height: shotHeight,
+                windowWidth: shotWidth,
+                windowHeight: shotHeight,
+                scrollX: 0,
+                scrollY: 0
+            }).then(canvas => {
+                stage.remove();
+                const img = canvas.toDataURL('image/png');
+                const html = `<html><head><title>Finding Report</title><style>html,body{margin:0;padding:0;background:#fff}img{display:block;max-width:100%;height:auto;margin:0 auto;page-break-inside:avoid;}</style></head><body><img src="${img}" alt="Finding report snapshot"></body></html>`;
+                const frame = document.createElement('iframe');
+                frame.style.position = 'fixed';
+                frame.style.right = '0';
+                frame.style.bottom = '0';
+                frame.style.width = '0';
+                frame.style.height = '0';
+                frame.style.border = '0';
+                document.body.appendChild(frame);
+                const doc = frame.contentWindow?.document;
+                if (!doc || !frame.contentWindow) {
+                    showToast('Print failed', 'Could not initialize system print.', 'error');
+                    frame.remove();
+                    return;
+                }
+                doc.open();
+                doc.write(html);
+                doc.close();
+                setTimeout(() => {
+                    try {
+                        frame.contentWindow.focus();
+                        frame.contentWindow.print();
+                    } catch (e) {
+                        showToast('Print failed', 'System print could not be opened.', 'error');
+                    } finally {
+                        setTimeout(() => frame.remove(), 1200);
+                    }
+                }, 220);
+            }).catch(() => {
+                stage.remove();
+                showToast('Print failed', 'Could not capture report snapshot.', 'error');
+            });
+        }
+        function buildSectionDeepContent(section, ctx) {
+            const report = ctx?.report || {};
+            const vuln = ctx?.vuln || {};
+            const title = report.title || vuln.name || 'Security finding';
+            if (section === 'description') {
+                return {
+                    section: 'description',
+                    title: 'Description',
+                    content: `${report.description || vuln.description || '-'}\n\nTest performed:\n${vuln.what_we_tested || 'Not provided by scanner.'}`
+                };
+            }
+            if (section === 'risk_explanation') {
+                return {
+                    section: 'risk_explanation',
+                    title: 'What This Evidence Indicates',
+                    content: `${report.risk_explanation || vuln.indicates || '-'}\n\nHow this can be exploited:\n${vuln.how_exploited || 'Not provided by scanner.'}`
+                };
+            }
+            if (section === 'evidence') {
+                return {
+                    section: 'evidence',
+                    title: 'Evidence',
+                    content: `${report.evidence || vuln.evidence || '-'}`
+                };
+            }
+            if (section === 'recommendations') {
+                const recs = Array.isArray(report.recommendations) ? report.recommendations : [report.recommendations || vuln.remediation || '-'];
+                return {
+                    section: 'recommendations',
+                    title: 'Recommended Actions',
+                    content: `For: ${title}\n\n${recs.map((r, i) => `${i + 1}. ${r}`).join('\n')}`
+                };
+            }
+            const impacts = Array.isArray(report.potential_impact) ? report.potential_impact : [report.potential_impact || '-'];
+            return {
+                section: 'potential_impact',
+                title: 'Potential Business and Security Impact',
+                content: `${impacts.map((r, i) => `${i + 1}. ${r}`).join('\n')}`
+            };
+        }
+        function openFindingSectionModal(section) {
+            const modal = document.getElementById('findingSectionModal');
+            const titleEl = document.getElementById('findingSectionTitle');
+            const bodyEl = document.getElementById('findingSectionContent');
+            const iconEl = document.getElementById('findingSectionIcon');
+            const headEl = document.getElementById('findingSectionHead');
+            if (!modal || !titleEl || !bodyEl) return;
+            const info = buildSectionDeepContent(section, window.currentFindingContext || {});
+            titleEl.textContent = info.title;
+            bodyEl.textContent = info.content;
+            const cfg = {
+                description: { icon: 'fa-align-left', cls: 'section-theme-description' },
+                evidence: { icon: 'fa-microscope', cls: 'section-theme-evidence' },
+                risk_explanation: { icon: 'fa-triangle-exclamation', cls: 'section-theme-risk' },
+                recommendations: { icon: 'fa-list-check', cls: 'section-theme-actions' },
+                potential_impact: { icon: 'fa-chart-line', cls: 'section-theme-impact' },
+            }[info.section || section] || { icon: 'fa-file-lines', cls: 'section-theme-description' };
+            if (iconEl) iconEl.className = `fas ${cfg.icon}`;
+            if (headEl) headEl.className = `finding-section-head ${cfg.cls}`;
+            modal.style.display = 'flex';
+        }
+        function closeFindingSectionModal() {
+            const modal = document.getElementById('findingSectionModal');
+            if (modal) modal.style.display = 'none';
         }
         function deriveEvidenceSummary(vuln) {
             const evidence = (vuln?.evidence || '').trim();
@@ -815,14 +1518,12 @@ if (!empty($profile_photo)) {
             const vuln = (lastVulnerabilities || [])[vulnIndex];
             if (!vuln) return;
             const titleEl = document.getElementById('evidenceModalTitle');
-            const expectedEl = document.getElementById('evidenceExpected');
-            const actualEl = document.getElementById('evidenceActual');
-            const fullEl = document.getElementById('evidenceFull');
+            const rawEl = document.getElementById('evidenceRawPlain');
+            const annEl = document.getElementById('evidenceAnnotated');
             if (titleEl) titleEl.textContent = (vuln.name || 'Vulnerability Evidence');
-            const parsed = deriveEvidenceSummary(vuln);
-            if (expectedEl) expectedEl.textContent = parsed.expected || '-';
-            if (actualEl) actualEl.textContent = parsed.actual || '-';
-            if (fullEl) fullEl.textContent = (vuln.evidence || '-');
+            const raw = normalizeEvidenceLineBreaks(String(vuln.evidence || '').trim());
+            if (rawEl) rawEl.textContent = raw || '-';
+            if (annEl) annEl.innerHTML = renderColoredEvidenceLines(raw);
             modal.style.display = 'flex';
             modal.classList.add('active');
         }
@@ -838,6 +1539,54 @@ if (!empty($profile_photo)) {
             const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
             if (!Number.isNaN(idx) && idx >= 0) openEvidenceModal(idx);
         });
+        document.addEventListener('click', function (e) {
+            const btn = e.target.closest('.view-finding-btn');
+            if (!btn) return;
+            const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
+            if (!Number.isNaN(idx) && idx >= 0) openFindingReportModal(idx);
+        });
+        function updateFindingMeta(total, shown) {
+            const el = document.getElementById('findingsMeta');
+            if (!el) return;
+            el.textContent = `Showing ${shown} of ${total} finding(s)`;
+        }
+        function populateCategoryFilter() {
+            const el = document.getElementById('findingCategoryFilter');
+            if (!el) return;
+            const values = Array.from(new Set((scanFindingsAll || []).map(v => (v.category || 'Security Finding').trim()).filter(Boolean))).sort();
+            el.innerHTML = '<option value="all">All categories</option>' + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+        }
+        function applyFindingsFilters() {
+            const listEl = document.getElementById('vulnerabilitiesList');
+            if (!listEl) return;
+            const search = (document.getElementById('findingSearchInput')?.value || '').trim().toLowerCase();
+            const severity = (document.getElementById('findingSeverityFilter')?.value || 'all').toLowerCase();
+            const category = (document.getElementById('findingCategoryFilter')?.value || 'all');
+            const sortBy = (document.getElementById('findingSortSelect')?.value || 'severity_desc');
+            let rows = [...(scanFindingsAll || [])];
+            rows = rows.filter(v => {
+                if (severity !== 'all' && String(v.severity || '').toLowerCase() !== severity) return false;
+                if (category !== 'all' && String(v.category || 'Security Finding') !== category) return false;
+                if (!search) return true;
+                const blob = `${v.name || ''} ${v.description || ''} ${v.evidence || ''} ${v.remediation || ''}`.toLowerCase();
+                return blob.includes(search);
+            });
+            rows.sort((a, b) => {
+                if (sortBy === 'name_asc') return String(a.name || '').localeCompare(String(b.name || ''));
+                const sa = severityRank[String(a.severity || '').toLowerCase()] ?? -1;
+                const sb = severityRank[String(b.severity || '').toLowerCase()] ?? -1;
+                return sortBy === 'severity_asc' ? sa - sb : sb - sa;
+            });
+            lastVulnerabilities = rows;
+            if (rows.length === 0) {
+                listEl.innerHTML = `<div class="empty-state"><i class="fas fa-filter"></i><h3>No matching findings</h3><p>Try changing search text or filters.</p></div>`;
+                updateFindingMeta(scanFindingsAll.length, 0);
+                return;
+            }
+            listEl.innerHTML = rows.map((vuln, idx) => createVulnerabilityCard(vuln, idx)).join('');
+            updateFindingMeta(scanFindingsAll.length, rows.length);
+            warmFindingReports();
+        }
         function updateSSLDisplay(sslInfo) {
             const grade = sslInfo.grade || 'F';
             const badge = document.getElementById('sslGrade');
@@ -942,15 +1691,230 @@ if (!empty($profile_photo)) {
             return div.innerHTML;
         }
 
+        function buildTimelineCardsHtml(runs) {
+            return (runs || []).map(function (run) {
+                const dateStr = formatTimestamp(run.created_at);
+                const delta = run.delta_vs_previous;
+                let deltaHtml = '';
+                if (delta !== null && delta !== undefined) {
+                    const sign = delta > 0 ? '+' : '';
+                    const cls = delta > 0 ? 'delta-worse' : (delta < 0 ? 'delta-better' : 'delta-flat');
+                    const hint = delta > 0 ? 'Risk score increased vs previous saved run' : (delta < 0 ? 'Risk score decreased vs previous saved run' : 'Same risk score as previous saved run');
+                    deltaHtml = '<span class="timeline-delta ' + cls + '" title="' + escapeHtml(hint) + '">' + sign + delta + ' pts</span>';
+                } else {
+                    deltaHtml = '<span class="timeline-delta delta-na" title="Oldest run in this list — nothing to compare">—</span>';
+                }
+                const changes = run.top_changes || [];
+                let chHtml = '';
+                if (changes.length) {
+                    chHtml = '<ul class="timeline-changes">';
+                    changes.forEach(function (c) {
+                        const tag = c.kind === 'new' ? 'New' : 'Resolved';
+                        const tagCls = c.kind === 'new' ? 'ch-new' : 'ch-resolved';
+                        const sev = String(c.severity || '').toLowerCase().replace(/[^a-z]/g, '');
+                        chHtml += '<li><span class="timeline-ch-tag ' + tagCls + '">' + tag + '</span> ';
+                        chHtml += '<span class="timeline-sev sev-' + sev + '">' + escapeHtml(c.severity || '') + '</span> ';
+                        chHtml += '<span class="timeline-ch-label">' + escapeHtml(c.label || '') + '</span></li>';
+                    });
+                    chHtml += '</ul>';
+                } else if (delta !== null && delta !== undefined) {
+                    chHtml = '<p class="timeline-no-changes">No individual finding differences vs the previous run (scores may still reflect weighting changes).</p>';
+                }
+                const score = Number(run.risk_score || 0);
+                const fc = Number(run.findings_count || 0);
+                const lvl = String(run.risk_level || '').trim();
+                const lvlSlug = (lvl ? lvl.toLowerCase().replace(/\s+/g, '-') : 'unknown');
+                return '<div class="timeline-run-card">' +
+                    '<div class="timeline-run-top">' +
+                    '<div class="timeline-run-scoreline">' +
+                    '<span class="timeline-score">' + score + '</span><span class="timeline-score-lbl">/100</span>' +
+                    '<span class="timeline-level lvl-' + escapeHtml(lvlSlug) + '">' + escapeHtml(lvl) + '</span>' +
+                    deltaHtml +
+                    '</div>' +
+                    '<div class="timeline-run-meta">' +
+                    '<span><i class="fas fa-clock"></i> ' + escapeHtml(dateStr) + '</span>' +
+                    '<span><i class="fas fa-bug"></i> ' + fc + ' findings</span>' +
+                    '<span class="timeline-scan-id">#' + Number(run.scan_id || 0) + '</span>' +
+                    '</div></div>' + chHtml + '</div>';
+            }).join('');
+        }
+        function openScanTimelineFullModal() {
+            const modal = document.getElementById('scanTimelineFullModal');
+            const body = document.getElementById('scanTimelineFullBody');
+            const sub = document.getElementById('scanTimelineFullSub');
+            if (!modal || !body) return;
+            body.innerHTML = buildTimelineCardsHtml(sqTimelineRunsStore);
+            if (sub) sub.textContent = sqTimelineRunsStore.length + ' saved run(s) for this host';
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+        }
+        function closeScanTimelineFullModal() {
+            const modal = document.getElementById('scanTimelineFullModal');
+            if (!modal) return;
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+        }
+        function refreshScanRunTimeline(targetUrl) {
+            const wrap = document.getElementById('scanRunTimelineWrap');
+            const body = document.getElementById('scanRunTimelineBody');
+            const empty = document.getElementById('scanRunTimelineEmpty');
+            const sub = document.getElementById('scanRunTimelineSub');
+            const viewAll = document.getElementById('scanRunTimelineViewAll');
+            if (!wrap || !body) return;
+            if (!targetUrl) {
+                wrap.style.display = 'none';
+                return;
+            }
+            wrap.style.display = 'block';
+            body.innerHTML = '<p class="scan-run-timeline-loading"><i class="fas fa-circle-notch fa-spin"></i> Loading timeline…</p>';
+            if (empty) empty.style.display = 'none';
+            if (viewAll) viewAll.style.display = 'none';
+            fetch('../Backend/scan_run_timeline.php?target=' + encodeURIComponent(targetUrl) + '&limit=40', {
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' }
+            }).then(function (r) { return r.json(); }).then(function (res) {
+                if (!res || !res.ok) {
+                    body.innerHTML = '<p class="scan-run-timeline-error">Timeline unavailable (sign in required or server error).</p>';
+                    return;
+                }
+                if (sub && res.canonical_target) {
+                    try {
+                        const h = new URL(res.canonical_target).hostname;
+                        sub.textContent = 'Recent saved scans for ' + h + ' — preview below; open full timeline for the complete list.';
+                    } catch (e) {
+                        sub.textContent = 'Saved scans for this target — compare risk score movement and what changed between runs.';
+                    }
+                }
+                const runs = res.runs || [];
+                sqTimelineRunsStore = runs;
+                if (runs.length === 0) {
+                    body.innerHTML = '';
+                    if (empty) empty.style.display = 'block';
+                    return;
+                }
+                if (empty) empty.style.display = 'none';
+                const preview = runs.slice(0, 3);
+                body.innerHTML = buildTimelineCardsHtml(preview);
+                if (viewAll) viewAll.style.display = runs.length > 3 ? 'block' : 'none';
+            }).catch(function () {
+                body.innerHTML = '<p class="scan-run-timeline-error">Could not load timeline.</p>';
+            });
+        }
+
         // Replace your scanBtn event listener with this:
 
+        function setScanProgress(stageText, pct) {
+            const stageEl = document.getElementById('scanStageLabel');
+            const barEl = document.getElementById('scanProgressBar');
+            if (stageEl) stageEl.textContent = stageText || 'Scanning...';
+            if (barEl) barEl.style.width = Math.max(0, Math.min(100, Number(pct || 0))) + '%';
+        }
+        function stopSyntheticScanProgress() {
+            if (scanSyntheticTimer) clearInterval(scanSyntheticTimer);
+            if (scanSyntheticDelayTimer) clearTimeout(scanSyntheticDelayTimer);
+            scanSyntheticTimer = null;
+            scanSyntheticDelayTimer = null;
+            scanSyntheticStartMs = 0;
+        }
+        function getSyntheticScanStage(elapsedMs) {
+            const stages = [
+                [0, 12, 'Validating target and initializing scanner modules…'],
+                [1400, 15, 'Connecting to target website URL…'],
+                [4200, 24, 'Checking SSL/TLS configuration…'],
+                [9000, 34, 'Validating security headers…'],
+                [15000, 48, 'Testing injection paths and misconfigurations…'],
+                [24000, 72, 'Scanning open ports and services…'],
+                [36000, 88, 'Finalizing scan results…']
+            ];
+            let picked = stages[0];
+            for (let i = 0; i < stages.length; i++) {
+                if (elapsedMs >= stages[i][0]) picked = stages[i];
+            }
+            return { pct: picked[1], stage: picked[2] };
+        }
+        function applyMergedScanProgress() {
+            const b = lastBackendProgress;
+            const backendStage = (b.stage || '').trim();
+            const backendStatus = (b.status || '').trim();
+            const backendMeaningful = backendStage && backendStage !== 'Waiting for scan' && backendStatus !== 'unknown';
+            if (!scanSyntheticStartMs) {
+                if (backendMeaningful || Number(b.progress || 0) > 0) {
+                    setScanProgress(backendStage || 'Scanning...', Math.max(0, Number(b.progress || 0)));
+                }
+                return;
+            }
+            const elapsed = Date.now() - scanSyntheticStartMs;
+            const syn = getSyntheticScanStage(elapsed);
+            let pct = syn.pct;
+            let label = syn.stage;
+            if (backendMeaningful) {
+                pct = Math.max(syn.pct, Number(b.progress || 0));
+                label = backendStage;
+            } else if (Number(b.progress || 0) > syn.pct) {
+                pct = Number(b.progress || 0);
+                if (backendStage) label = backendStage;
+            }
+            setScanProgress(label, pct);
+        }
+        function startSyntheticScanProgressDelayed() {
+            stopSyntheticScanProgress();
+            lastBackendProgress = { progress: 0, stage: '', status: 'unknown' };
+            scanSyntheticDelayTimer = setTimeout(function () {
+                scanSyntheticStartMs = Date.now();
+                applyMergedScanProgress();
+                scanSyntheticTimer = setInterval(function () {
+                    applyMergedScanProgress();
+                }, 450);
+            }, 1800);
+        }
+        function stopScanProgressTimer() {
+            if (scanProgressTimer) clearInterval(scanProgressTimer);
+            scanProgressTimer = null;
+        }
+        function stopScanStagePolling() {
+            if (scanStagePollTimer) clearInterval(scanStagePollTimer);
+            scanStagePollTimer = null;
+            stopSyntheticScanProgress();
+        }
+        function pollScanStageOnce(stageToken, requestToken) {
+            return fetch('../Backend/scan_progress.php?token=' + encodeURIComponent(stageToken), {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                credentials: 'same-origin'
+            }).then(function (r) { return r.json(); }).then(function (p) {
+                if (!p || requestToken !== activeScanToken) return;
+                lastBackendProgress = {
+                    progress: Number(p.progress || 0),
+                    stage: (p.stage || '').trim(),
+                    status: (p.status || '').trim()
+                };
+                applyMergedScanProgress();
+                if (p.status === 'completed' || p.status === 'failed') {
+                    stopScanStagePolling();
+                }
+            }).catch(function () { });
+        }
+        function startScanStagePolling(stageToken, requestToken) {
+            stopScanStagePolling();
+            startSyntheticScanProgressDelayed();
+            pollScanStageOnce(stageToken, requestToken);
+            scanStagePollTimer = setInterval(function () {
+                if (requestToken !== activeScanToken) {
+                    stopScanStagePolling();
+                    return;
+                }
+                pollScanStageOnce(stageToken, requestToken);
+            }, 700);
+        }
         function runScan() {
             var inp = document.getElementById('targetURL');
             var btn = document.getElementById('scanBtn');
+            var cancelBtn = document.getElementById('cancelScanBtn');
             var loaderEl = document.getElementById('loader');
             var resultsEl = document.getElementById('results');
             var errMsgEl = document.getElementById('errorMessage');
             var errTextEl = document.getElementById('errorText');
+            var elapsedEl = document.getElementById('scanElapsed');
             var url = (inp && inp.value) ? inp.value.trim() : '';
 
             if (!url || (url.indexOf('http://') !== 0 && url.indexOf('https://') !== 0)) {
@@ -961,16 +1925,36 @@ if (!empty($profile_photo)) {
 
             if (errMsgEl) errMsgEl.classList.remove('active');
             if (btn) btn.disabled = true;
+            if (cancelBtn) cancelBtn.style.display = 'inline-flex';
             if (loaderEl) loaderEl.classList.add('active');
             if (resultsEl) resultsEl.classList.remove('active');
+            setScanProgress('Validating target and initializing scanner modules...', 12);
+            stopScanProgressTimer();
+            const startMs = Date.now();
+            scanProgressTimer = setInterval(() => {
+                if (elapsedEl) elapsedEl.textContent = Math.floor((Date.now() - startMs) / 1000) + 's';
+            }, 350);
+
+            if (activeScanController) {
+                try { activeScanController.abort(); } catch (e) { }
+            }
+            activeScanController = new AbortController();
+            activeScanToken += 1;
+            const scanToken = activeScanToken;
+            const stageToken = `scan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            startScanStagePolling(stageToken, scanToken);
 
             var scanApiUrl = '../Backend/scan_proxy.php';
             console.log('runScan: sending POST to', scanApiUrl, 'target=', url);
             fetch(scanApiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                body: JSON.stringify({ target: url })
+                body: JSON.stringify({ target: url, scan_token: stageToken }),
+                signal: activeScanController.signal
             }).then(function (response) {
+                if (scanToken !== activeScanToken) {
+                    throw new Error('Scan superseded by newer request.');
+                }
                 return response.text().then(function (text) {
                     try {
                         return { ok: response.ok, data: JSON.parse(text), status: response.status };
@@ -979,6 +1963,14 @@ if (!empty($profile_photo)) {
                     }
                 });
             }).then(function (result) {
+                if (scanToken !== activeScanToken) {
+                    throw new Error('Scan superseded by newer request.');
+                }
+                if (!result || !result.ok) {
+                    stopScanStagePolling();
+                } else {
+                    setScanProgress('Running active tests and collecting findings...', 56);
+                }
                 if (!result.ok) {
                     let errMsg = result.data && result.data.error ? result.data.error : ('Server error ' + result.status);
                     if (result.raw) errMsg = result.raw.slice(0, 300);
@@ -988,6 +1980,7 @@ if (!empty($profile_photo)) {
 
                 // Check for scan-level errors
                 if (data.error) {
+                    stopScanStagePolling();
                     throw new Error(data.error);
                 }
 
@@ -1012,14 +2005,20 @@ if (!empty($profile_photo)) {
                 updateServerDisplay(data.server_info);
                 updateCrawlerDisplay(data.crawler);
 
+                lastScanData = data;
+                try { refreshScanRunTimeline(data.target); } catch (e) { }
+
                 // Update vulnerabilities list
-                const vulnsList = document.getElementById('vulnerabilitiesList');
                 if (data.vulnerabilities && data.vulnerabilities.length > 0) {
-                    lastVulnerabilities = data.vulnerabilities;
-                    vulnsList.innerHTML = data.vulnerabilities.map((vuln, idx) =>
-                        createVulnerabilityCard(vuln, idx)
-                    ).join('');
+                    const stamp = Date.now();
+                    currentScanRunId = `${stamp}`;
+                    recommendationStemsSeen = new Set();
+                    scanFindingsAll = data.vulnerabilities.map((v, idx) => ({ ...v, _sq_uid: `${stamp}-${idx}` }));
+                    populateCategoryFilter();
+                    applyFindingsFilters();
                 } else {
+                    const vulnsList = document.getElementById('vulnerabilitiesList');
+                    scanFindingsAll = [];
                     lastVulnerabilities = [];
                     vulnsList.innerHTML = `
                 <div class="empty-state">
@@ -1028,11 +2027,15 @@ if (!empty($profile_photo)) {
                     <p>The target appears to be secure. No issues were detected during the scan.</p>
                 </div>
             `;
+                    updateFindingMeta(0, 0);
                 }
-
-                lastScanData = data;
+                persistScanState();
                 if (loaderEl) loaderEl.classList.remove('active');
                 if (resultsEl) resultsEl.classList.add('active');
+                if (cancelBtn) cancelBtn.style.display = 'none';
+                setScanProgress('Scan completed. Building detailed reports...', 100);
+                stopScanProgressTimer();
+                stopScanStagePolling();
 
                 // Save scan and generate human-readable report (GPT); store artefacts for download
                 const humanReportPanel = document.getElementById('humanReportPanel');
@@ -1042,7 +2045,7 @@ if (!empty($profile_photo)) {
                     if (!humanReportPanel) return;
                     try {
                         humanReportTimerStart = Date.now();
-                        humanReportPanel.innerHTML = '<p class="human-report-placeholder">Generating human-readable report... <span id="humanReportWaitTimer">0s</span> elapsed</p>';
+                        humanReportPanel.innerHTML = '<p class="human-report-placeholder">Generating user report... <span id="humanReportWaitTimer">0s</span></p>';
                     } catch (e) { }
                     humanReportTimerInterval = setInterval(() => {
                         const el = document.getElementById('humanReportWaitTimer');
@@ -1076,6 +2079,11 @@ if (!empty($profile_photo)) {
                     }
                     if (res.scan_id) lastScanId = res.scan_id;
                     if (res.download) lastDownloadUrls = res.download;
+                    if (res.download && res.download.doc) {
+                        showToast('DOC ready', 'Word report generated and ready for download/share.', 'success');
+                    }
+                    persistScanState();
+                    try { if (lastScanData && lastScanData.target) refreshScanRunTimeline(lastScanData.target); } catch (e) { }
 
                     // If server-side PDF generation isn't available, generate and upload PDF for history/share.
                     if (lastScanId && (!lastDownloadUrls || !lastDownloadUrls.pdf)) {
@@ -1097,9 +2105,19 @@ if (!empty($profile_photo)) {
                 console.error('Scan error:', err);
                 var loaderEl2 = document.getElementById('loader');
                 var btn2 = document.getElementById('scanBtn');
+                var cancelBtn2 = document.getElementById('cancelScanBtn');
                 var errTextEl2 = document.getElementById('errorText');
                 var errMsgEl2 = document.getElementById('errorMessage');
                 if (loaderEl2) loaderEl2.classList.remove('active');
+                if (cancelBtn2) cancelBtn2.style.display = 'none';
+                stopScanProgressTimer();
+                stopScanStagePolling();
+                if (String(err && err.name) === 'AbortError') {
+                    if (errTextEl2) errTextEl2.textContent = 'Scan cancelled.';
+                    if (errMsgEl2) errMsgEl2.classList.add('active');
+                    if (btn2) btn2.disabled = false;
+                    return;
+                }
                 var errorMsg = err.message || 'Scan failed.';
                 if (err.message && err.message.indexOf('Failed to fetch') !== -1) {
                     errorMsg = 'Scanner service is temporarily unavailable. Please try again later.';
@@ -1111,10 +2129,18 @@ if (!empty($profile_photo)) {
         }
         function initScanButton() {
             var btn = document.getElementById('scanBtn');
+            var cancelBtn = document.getElementById('cancelScanBtn');
             var inp = document.getElementById('targetURL');
             if (btn && inp) {
                 btn.addEventListener('click', runScan);
                 inp.addEventListener('keypress', function (e) { if (e.key === 'Enter') { e.preventDefault(); runScan(); } });
+            }
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', function () {
+                    if (activeScanController) {
+                        try { activeScanController.abort(); } catch (e) { }
+                    }
+                });
             }
         }
         if (document.readyState === 'loading') {
@@ -1123,6 +2149,20 @@ if (!empty($profile_photo)) {
             initScanButton();
         }
 
+        (function initTimelineRefresh() {
+            const btn = document.getElementById('scanRunTimelineRefresh');
+            if (btn) {
+                btn.addEventListener('click', function () {
+                    const inp = document.getElementById('targetURL');
+                    const u = (inp && inp.value) ? inp.value.trim() : '';
+                    if (u) refreshScanRunTimeline(u);
+                    else if (typeof lastScanData !== 'undefined' && lastScanData && lastScanData.target) refreshScanRunTimeline(lastScanData.target);
+                });
+            }
+            document.getElementById('scanRunTimelineViewAllBtn')?.addEventListener('click', function () {
+                openScanTimelineFullModal();
+            });
+        })();
 
         // Help button popup
         document.getElementById('helpBtn').addEventListener('click', () => {
@@ -1451,10 +2491,11 @@ ${headHtml}
             });
         }
 
-        async function generateAndUploadPdf(scanId, scanData) {
+        async function generateAndUploadPdf(scanId, scanData, renderScale) {
             try {
                 if (!window.jspdf || !window.jspdf.jsPDF) return null;
                 const { jsPDF } = window.jspdf;
+                const scale = (typeof renderScale === 'number' && renderScale > 0) ? renderScale : 0.9;
 
                 const tmp = document.createElement('div');
                 tmp.style.position = 'fixed';
@@ -1478,7 +2519,7 @@ ${headHtml}
                     width: 555,
                     windowWidth: 794,
                     autoPaging: 'text',
-                    html2canvas: { scale: 0.9, useCORS: true }
+                    html2canvas: { scale: scale, useCORS: true }
                 });
                 const ab = doc.output('arraybuffer');
                 if (!ab || ab.byteLength < 8000) {
@@ -1486,14 +2527,21 @@ ${headHtml}
                     return null;
                 }
                 const dataUri = doc.output('datauristring');
+                // Avoid oversized upload payloads by retrying once with lower render scale.
+                if (dataUri && dataUri.length > 6500000 && scale > 0.58) {
+                    document.body.removeChild(tmp);
+                    return await generateAndUploadPdf(scanId, scanData, 0.55);
+                }
                 document.body.removeChild(tmp);
 
                 const r = await fetch('../Backend/upload_pdf.php', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify({ scan_id: scanId, pdf_base64: dataUri })
                 });
-                const res = await r.json();
+                let res = null;
+                try { res = await r.json(); } catch (e) { return null; }
                 if (res && res.ok && res.download) return res.download;
             } catch (e) { }
             return null;
@@ -1504,6 +2552,61 @@ ${headHtml}
         let lastDownloadUrls = {};
         let lastHumanReportText = '';
         let userPackage = 'freemium';
+        const scanStateStorageKey = 'sq_scan_state_v1';
+        function persistScanState() {
+            try {
+                sessionStorage.setItem(scanStateStorageKey, JSON.stringify({
+                    savedAt: Date.now(),
+                    lastScanData: lastScanData,
+                    lastScanId: lastScanId,
+                    lastDownloadUrls: lastDownloadUrls,
+                    lastHumanReportText: lastHumanReportText,
+                    scanFindingsAll: scanFindingsAll
+                }));
+            } catch (e) { }
+        }
+        function restoreScanState() {
+            try {
+                const raw = sessionStorage.getItem(scanStateStorageKey);
+                if (!raw) return;
+                const st = JSON.parse(raw);
+                if (!st || !st.lastScanData || !st.lastScanData.target) return;
+                lastScanData = st.lastScanData;
+                lastScanId = st.lastScanId || null;
+                lastDownloadUrls = st.lastDownloadUrls || {};
+                lastHumanReportText = st.lastHumanReportText || '';
+                scanFindingsAll = Array.isArray(st.scanFindingsAll)
+                    ? st.scanFindingsAll
+                    : (Array.isArray(lastScanData.vulnerabilities) ? lastScanData.vulnerabilities : []);
+                try {
+                    const tb = document.getElementById('targetBadge');
+                    if (tb) tb.textContent = new URL(lastScanData.target).hostname;
+                } catch (e) {
+                    const tb = document.getElementById('targetBadge');
+                    if (tb) tb.textContent = String(lastScanData.target || '-');
+                }
+                const dur = document.getElementById('scanDuration');
+                const ts = document.getElementById('scanTimestamp');
+                if (dur) dur.textContent = (lastScanData.scan_duration || 0) + 's';
+                if (ts) ts.textContent = formatTimestamp(lastScanData.timestamp);
+                updateRiskDisplay(lastScanData.summary || {});
+                updateUserFriendlySummary(lastScanData.summary || {});
+                updateSSLDisplay(lastScanData.ssl || {});
+                updateHeadersDisplay(lastScanData.headers || {});
+                updateServerDisplay(lastScanData.server_info || {});
+                updateCrawlerDisplay(lastScanData.crawler || {});
+                populateCategoryFilter();
+                applyFindingsFilters();
+                const loaderEl = document.getElementById('loader');
+                const resultsEl = document.getElementById('results');
+                if (loaderEl) loaderEl.classList.remove('active');
+                if (resultsEl) resultsEl.classList.add('active');
+                if (lastHumanReportText) {
+                    const panel = document.getElementById('humanReportPanel');
+                    if (panel) panel.innerHTML = '<div class="human-report-content">' + renderStyledHumanReport(lastHumanReportText) + '</div>';
+                }
+            } catch (e) { }
+        }
 
         fetch('../Backend/get_user_package.php').then(r => r.json()).then(data => {
             userPackage = (data.package || 'freemium').toLowerCase();
@@ -1515,6 +2618,7 @@ ${headHtml}
                 upgradeMsg.textContent = 'Upgrade to Enterprise for AI Overview and detailed reports.';
             }
         }).catch(() => { });
+        restoreScanState();
 
 
         // Tab switching: Detailed Findings | Human-readable report
@@ -1613,36 +2717,61 @@ ${headHtml}
         const shareResultsBtn = document.getElementById('shareResultsBtn');
         if (shareResultsBtn) {
             shareResultsBtn.addEventListener('click', () => {
-                showToast('Share', 'Share feature is temporarily disabled and will be enabled in a later update.', 'info');
+                if (!lastScanId) {
+                    showToast('Share', 'Run and save a scan first, then share it by email.', 'error');
+                    return;
+                }
+                document.getElementById('shareScanId').value = String(lastScanId);
+                const pdf = document.getElementById('shareArtefactsPdf');
+                const doc = document.getElementById('shareArtefactsDoc');
+                const html = document.getElementById('shareArtefactsHtml');
+                const csv = document.getElementById('shareArtefactsCsv');
+                if (pdf) pdf.checked = true;
+                if (doc) doc.checked = !!(lastDownloadUrls && lastDownloadUrls.doc);
+                if (html) html.checked = true;
+                if (csv) csv.checked = true;
+                syncShareAllCheckbox();
+                openShareModal();
             });
         }
-        const shareModal = document.getElementById('shareModal');
+        function getShareModal() {
+            return document.getElementById('shareModal');
+        }
         function openShareModal() {
+            const shareModal = getShareModal();
             if (shareModal) { shareModal.classList.add('active'); shareModal.style.display = 'flex'; }
         }
         function closeShareModal() {
+            const shareModal = getShareModal();
             if (shareModal) { shareModal.classList.remove('active'); shareModal.style.display = 'none'; }
         }
         document.getElementById('shareModalClose')?.addEventListener('click', closeShareModal);
-        shareModal?.addEventListener('click', (e) => { if (e.target === shareModal) closeShareModal(); });
+        document.addEventListener('click', function (e) {
+            const shareModal = getShareModal();
+            if (!shareModal) return;
+            if (e.target === shareModal) closeShareModal();
+        });
         function syncShareAllCheckbox() {
             const all = document.getElementById('shareArtefactsAll');
             const pdf = document.getElementById('shareArtefactsPdf');
+            const doc = document.getElementById('shareArtefactsDoc');
             const html = document.getElementById('shareArtefactsHtml');
             const csv = document.getElementById('shareArtefactsCsv');
-            if (!all || !pdf || !html || !csv) return;
-            all.checked = !!(pdf.checked && html.checked && csv.checked);
+            if (!all || !pdf || !doc || !html || !csv) return;
+            all.checked = !!(pdf.checked && doc.checked && html.checked && csv.checked);
         }
         document.getElementById('shareArtefactsAll')?.addEventListener('change', (e) => {
             const v = !!e.target.checked;
             const pdf = document.getElementById('shareArtefactsPdf');
+            const doc = document.getElementById('shareArtefactsDoc');
             const html = document.getElementById('shareArtefactsHtml');
             const csv = document.getElementById('shareArtefactsCsv');
             if (pdf) pdf.checked = v;
+            if (doc) doc.checked = v;
             if (html) html.checked = v;
             if (csv) csv.checked = v;
         });
-        ['shareArtefactsPdf', 'shareArtefactsHtml', 'shareArtefactsCsv'].forEach(id => {
+        ['shareArtefactsPdf', 'shareArtefactsDoc', 'shareArtefactsHtml', 'shareArtefactsCsv'].forEach(id => {
             document.getElementById(id)?.addEventListener('change', syncShareAllCheckbox);
         });
 
@@ -1656,81 +2785,85 @@ ${headHtml}
             return null;
         }
 
-        document.getElementById('shareSubmitBtn')?.addEventListener('click', async () => {
+        async function ensurePdfReadyForShare(scanId, scanData) {
+            if (lastDownloadUrls && lastDownloadUrls.pdf) return lastDownloadUrls.pdf;
+            if (!scanId || !scanData) return null;
+            return await new Promise((resolve) => {
+                let resolved = false;
+                const done = (url) => {
+                    if (resolved) return;
+                    resolved = true;
+                    resolve(url || null);
+                };
+                ensurePdfSavedForHistory(scanId, scanData, 0, done);
+                // Safety timeout in case callback is never reached.
+                setTimeout(async () => {
+                    if (resolved) return;
+                    const url = await waitForPdfUrl(1200);
+                    done(url);
+                }, 11000);
+            });
+        }
+
+        async function submitShareScan() {
             const scanId = parseInt(document.getElementById('shareScanId').value, 10);
             const artefacts = [];
             if (document.getElementById('shareArtefactsPdf').checked) artefacts.push('pdf');
+            if (document.getElementById('shareArtefactsDoc').checked) artefacts.push('doc');
             if (document.getElementById('shareArtefactsHtml').checked) artefacts.push('html');
             if (document.getElementById('shareArtefactsCsv').checked) artefacts.push('csv');
+            const emailsRaw = (document.getElementById('shareEmails')?.value || '').trim();
+            const recipients = emailsRaw
+                .split(/[\s,;]+/)
+                .map(v => v.trim())
+                .filter(Boolean);
 
-            if (!scanId || artefacts.length === 0) {
-                showToast('Share', 'Select at least one format (PDF/HTML/CSV).', 'error');
+            if (!scanId || artefacts.length === 0 || recipients.length === 0) {
+                showToast('Share', 'Provide recipient email(s) and at least one format (PDF/DOC/HTML/CSV).', 'error');
                 return;
             }
 
-            // If PDF selected but not yet saved, try to auto-generate/upload it first.
+            // If PDF selected but server-side PDF is missing, generate/upload first
+            // so share can include PDF consistently even without Dompdf.
             if (artefacts.includes('pdf') && (!lastDownloadUrls || !lastDownloadUrls.pdf) && lastScanId && lastScanData) {
-                ensurePdfSavedForHistory(lastScanId, lastScanData, 0);
-                const pdfUrl = await waitForPdfUrl(9000);
-                if (!pdfUrl) {
-                    showToast('PDF not ready', 'PDF is still generating. Please try again in a moment (or unselect PDF).', 'error');
-                    return;
+                showToast('Preparing PDF', 'Generating PDF for sharing...', 'info');
+                const sharePdf = await ensurePdfReadyForShare(lastScanId, lastScanData);
+                if (!sharePdf) {
+                    showToast('PDF note', 'PDF will be automatically generated when available. Sending selected available files now.', 'info');
                 }
             }
             document.getElementById('shareSubmitBtn').disabled = true;
 
-            async function urlToBlob(url, mime) {
-                const r = await fetch(url, { credentials: 'same-origin' });
-                if (!r.ok) return null;
-                const blob = await r.blob();
-                if (!blob || blob.size < 1200) return null;
-                return blob;
-            }
-
             try {
-                if (!navigator.share || typeof navigator.share !== 'function') {
-                    throw new Error('Web Share is not supported in this browser.');
+                const res = await fetch('../Backend/share_scan.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        scan_id: scanId,
+                        artefacts: artefacts,
+                        recipients: recipients
+                    })
+                });
+                let payload = null;
+                try { payload = await res.json(); } catch (e) { }
+                if (!res.ok || !payload || !payload.ok) {
+                    const msg = (payload && payload.error) ? payload.error : ('Share failed (HTTP ' + res.status + ')');
+                    throw new Error(msg);
                 }
-
-                const mimeMap = { pdf: 'application/pdf', html: 'text/html', csv: 'text/csv' };
-                const files = [];
-
-                for (const type of artefacts) {
-                    // Build a usable download URL (same approach as download buttons)
-                    let reportUrl = lastDownloadUrls ? lastDownloadUrls[type] : null;
-                    if (!reportUrl) continue;
-
-                    const fullUrl = reportUrl.startsWith('http') ? reportUrl : (downloadBase + reportUrl);
-                    const blob = await urlToBlob(fullUrl, mimeMap[type]);
-                    if (!blob) continue;
-                    files.push(new File([blob], `scan-report-${scanId}.${type}`, { type: mimeMap[type] }));
-                }
-
-                const shareData = {
-                    title: 'ScanQuotient scan results',
-                    text: 'ScanQuotient scan results',
-                    files
-                };
-
-                // If files can't be attached, share text-only.
-                if (files.length > 0) {
-                    if (navigator.canShare && !navigator.canShare(shareData)) {
-                        await navigator.share({ title: shareData.title, text: shareData.text });
-                    } else {
-                        await navigator.share(shareData);
-                    }
-                } else {
-                    await navigator.share({ title: shareData.title, text: shareData.text });
-                }
-
                 closeShareModal();
-                showToast('Shared', 'Opened your device share sheet.', 'success');
+                if (payload && Array.isArray(payload.missing) && payload.missing.includes('pdf')) {
+                    showToast('Shared with fallback', payload.message || 'PDF was unavailable, sent available files.', 'info');
+                } else {
+                    showToast('Share sent', payload.message || ('Scan results sent successfully to ' + recipients.length + ' recipient(s).'), 'success');
+                }
             } catch (e) {
-                showToast('Share failed', (e && e.message) ? e.message : 'Sharing is unavailable.', 'error');
+                showToast('Share failed', (e && e.message) ? e.message : 'Email sharing is unavailable.', 'error');
             } finally {
                 document.getElementById('shareSubmitBtn').disabled = false;
             }
-        });
+        }
+        document.getElementById('shareSubmitBtn')?.addEventListener('click', submitShareScan);
         function showToast(title, message, type) {
             type = type || 'info';
             var container = document.getElementById('toastContainer');
@@ -1743,7 +2876,7 @@ ${headHtml}
             setTimeout(function () { toast.classList.add('hide'); setTimeout(function () { toast.remove(); }, 300); }, 4000);
         }
         async function copyEvidenceToClipboard() {
-            const fullEl = document.getElementById('evidenceFull');
+            const fullEl = document.getElementById('evidenceRawPlain');
             if (!fullEl) return;
             const text = (fullEl.textContent || '').trim();
             if (!text || text === '-') {
@@ -1774,6 +2907,70 @@ ${headHtml}
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!(t instanceof Element)) return;
+            if (t.closest('#shareResultsBtn')) {
+                if (!lastScanId) {
+                    showToast('Share', 'Run and save a scan first, then share it by email.', 'error');
+                    return;
+                }
+                const idEl = document.getElementById('shareScanId');
+                if (idEl) idEl.value = String(lastScanId);
+                const pdf = document.getElementById('shareArtefactsPdf');
+                const doc = document.getElementById('shareArtefactsDoc');
+                const html = document.getElementById('shareArtefactsHtml');
+                const csv = document.getElementById('shareArtefactsCsv');
+                if (pdf) pdf.checked = true;
+                if (doc) doc.checked = !!(lastDownloadUrls && lastDownloadUrls.doc);
+                if (html) html.checked = true;
+                if (csv) csv.checked = true;
+                syncShareAllCheckbox();
+                openShareModal();
+                return;
+            }
+            if (t.closest('#shareModalClose')) {
+                closeShareModal();
+                return;
+            }
+            if (t.closest('#shareSubmitBtn')) {
+                submitShareScan();
+                return;
+            }
+            if (t.closest('#findingEvidenceViewRawBtn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                openFindingEvidenceRawModal();
+                return;
+            }
+            if (t.closest('#findingEvidenceRawClose') || t.id === 'findingEvidenceRawModal') {
+                closeFindingEvidenceRawModal();
+                return;
+            }
+            if (t.closest('#scanTimelineFullClose') || t.id === 'scanTimelineFullModal') {
+                closeScanTimelineFullModal();
+                return;
+            }
+            if (t.closest('#findingPrintBtn')) {
+                printFindingReport();
+                return;
+            }
+            if (t.closest('#findingReportClose') || t.closest('#findingReportDone')) {
+                closeFindingReportModal();
+                return;
+            }
+            const trigger = t.closest('.section-clickable');
+            if (trigger) {
+                const section = trigger.getAttribute('data-section') || '';
+                openFindingSectionModal(section);
+                trigger.classList.add('hint-dismissed');
+                return;
+            }
+            if (t.closest('#findingSectionClose') || t.id === 'findingSectionModal') {
+                closeFindingSectionModal();
+                return;
+            }
+            if (t.id === 'findingReportModal') {
+                closeFindingReportModal();
+                return;
+            }
             if (t.closest('#evidenceModalClose') || t.closest('#evidenceModalDone')) {
                 closeEvidenceModal();
                 return;
@@ -1787,7 +2984,33 @@ ${headHtml}
             }
         });
         document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') closeEvidenceModal();
+            if (e.key === 'Escape') {
+                closeScanTimelineFullModal();
+                closeFindingEvidenceRawModal();
+                closeEvidenceModal();
+                closeFindingReportModal();
+                closeFindingSectionModal();
+            }
+        });
+        document.getElementById('findingPrintBtn')?.addEventListener('click', printFindingReport);
+        document.getElementById('findingSearchInput')?.addEventListener('input', applyFindingsFilters);
+        document.getElementById('findingSeverityFilter')?.addEventListener('change', applyFindingsFilters);
+        document.getElementById('findingCategoryFilter')?.addEventListener('change', applyFindingsFilters);
+        document.getElementById('findingSortSelect')?.addEventListener('change', applyFindingsFilters);
+        document.getElementById('findingResetFiltersBtn')?.addEventListener('click', function () {
+            const s = document.getElementById('findingSearchInput');
+            const sev = document.getElementById('findingSeverityFilter');
+            const cat = document.getElementById('findingCategoryFilter');
+            const sort = document.getElementById('findingSortSelect');
+            if (s) s.value = '';
+            if (sev) sev.value = 'all';
+            if (cat) cat.value = 'all';
+            if (sort) sort.value = 'severity_desc';
+            applyFindingsFilters();
+        });
+        document.querySelectorAll('.section-clickable').forEach(el => {
+            el.addEventListener('mouseenter', () => el.classList.add('hint-visible'));
+            el.addEventListener('mouseleave', () => el.classList.remove('hint-visible'));
         });
     </script>
 
@@ -1845,6 +3068,74 @@ ${headHtml}
             border-color: rgba(59, 130, 246, 0.45) !important;
             color: var(--brand-color) !important;
         }
+        #shareModal #shareModalClose.modal-btn {
+            border-radius: 999px;
+            padding: 10px 16px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-weight: 700;
+            transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+        }
+        #shareModal #shareModalClose.modal-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(15, 23, 42, .15);
+            background: rgba(100, 116, 139, .12);
+        }
+        #shareModal #shareSubmitBtn.modal-btn {
+            border-radius: 999px;
+            padding: 10px 18px;
+            border: none;
+            background: linear-gradient(135deg, var(--brand-color), var(--accent-color));
+            color: #fff;
+            font-weight: 800;
+            transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
+        }
+        #shareModal #shareSubmitBtn.modal-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 24px rgba(37, 99, 235, .28);
+            filter: brightness(1.05);
+        }
+        #shareModal #shareSubmitBtn.modal-btn:disabled {
+            opacity: .6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        #shareModal .modal {
+            border: 1px solid var(--border-color);
+            box-shadow: 0 24px 60px rgba(2, 6, 23, .35);
+            border-radius: 18px;
+            background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(248,250,252,.98));
+            backdrop-filter: blur(3px);
+        }
+        #shareModal h3 {
+            margin: 0 0 12px 0;
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--text-main);
+        }
+        #shareModal #shareEmails {
+            border: 1px solid var(--border-color);
+            background: #fff;
+            color: var(--text-main);
+            resize: vertical;
+            min-height: 96px;
+            transition: border-color .15s ease, box-shadow .2s ease;
+        }
+        #shareModal #shareEmails:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, .5);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, .16);
+        }
+        #shareModal label {
+            color: var(--text-main);
+        }
+        #shareModal input[type="checkbox"] {
+            accent-color: #2563eb;
+            transform: translateY(1px);
+            margin-right: 6px;
+        }
     </style>
     <div id="shareModal" class="modal-overlay"
         style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
@@ -1862,6 +3153,7 @@ ${headHtml}
                 <label style="display:block; margin:4px 0; font-weight:600;"><input type="checkbox"
                         id="shareArtefactsAll"> Select all</label>
                 <label style="display:block; margin:4px 0;"><input type="checkbox" id="shareArtefactsPdf"> PDF</label>
+                <label style="display:block; margin:4px 0;"><input type="checkbox" id="shareArtefactsDoc"> DOC</label>
                 <label style="display:block; margin:4px 0;"><input type="checkbox" id="shareArtefactsHtml"> HTML</label>
                 <label style="display:block; margin:4px 0;"><input type="checkbox" id="shareArtefactsCsv"> CSV</label>
             </div>
@@ -1871,37 +3163,135 @@ ${headHtml}
             </div>
         </div>
     </div>
+    <div id="findingReportModal" class="modal-overlay"
+        style="display:none; position:fixed; inset:0; background:rgba(2, 6, 23, 0.72); z-index:10004; align-items:center; justify-content:center;">
+        <div class="finding-report-modal">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px;">
+                <div>
+                    <div style="font-size:20px; font-weight:800; color:var(--text-main);" id="findingTitle">Finding report</div>
+                    <div style="display:none; font-size:12px; color:var(--text-light);">Structured evidence-based security report</div>
+                    <div id="findingQualityBadge" class="finding-quality-badge ok" style="display:none; margin-top:8px;">
+                        <i class="fas fa-shield-check"></i><span id="findingQualityText">Quality validated</span>
+                    </div>
+                </div>
+                <button type="button" id="findingReportClose" class="icon-btn" title="Close" style="width:40px;height:40px;">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="findingReportLoading" class="finding-loading">
+                <i class="fas fa-spinner fa-spin"></i> Building detailed report...
+            </div>
+            <div id="findingReportBody" class="finding-modal-grid" style="display:none;">
+                <div class="finding-card third finding-kv"><div class="k">Severity</div><div class="v" id="findingSeverity">-</div></div>
+                <div class="finding-card third finding-kv"><div class="k">Category</div><div class="v" id="findingCategory">-</div></div>
+                <div class="finding-card third finding-kv"><div class="k">Result Status</div><div class="v" id="findingStatus">-</div></div>
+                <div class="finding-card third finding-kv"><div class="k">Target</div><div class="v" id="findingTarget">-</div></div>
+                <div class="finding-card third finding-kv" id="findingCardIp"><div class="k">IP Address</div><div class="v" id="findingIp">-</div></div>
+                <div class="finding-card third finding-kv"><div class="k">Detection Time</div><div class="v" id="findingDetectionTime">-</div></div>
+                <div class="finding-card third finding-kv" id="findingCardPort"><div class="k">Port</div><div class="v" id="findingPort">-</div></div>
+                <div class="finding-card third finding-kv" id="findingCardService"><div class="k">Service</div><div class="v" id="findingService">-</div></div>
+                <div class="finding-card third finding-kv" id="findingCardState"><div class="k">State</div><div class="v" id="findingState">-</div></div>
+                <div class="finding-card half finding-kv"><div class="k">Likelihood</div><div class="v" id="findingLikelihood">-</div></div>
+                <div class="finding-card half finding-kv"><div class="k">Remediation Priority</div><div class="v" id="findingPriority">-</div></div>
+                <div class="finding-card half finding-kv important-card section-clickable" id="findingDescCard" data-section="description"><div class="k">Description</div><div class="v" id="findingDescription">-</div><div class="section-hint">Click to view more</div></div>
+                <div class="finding-card half finding-kv important-card section-clickable" id="findingEvidenceCard" data-section="evidence"><div class="k">Evidence</div><div class="v" id="findingEvidence">-</div><div class="section-hint">Click to view more</div></div>
+                <div class="finding-card half finding-kv important-card section-clickable" id="findingRiskCard" data-section="risk_explanation"><div class="k">What This Evidence Indicates</div><div class="v" id="findingRiskExplanation">-</div><div class="section-hint">Click to view more</div></div>
+                <div class="finding-card half important-card section-clickable" id="findingImpactCard" data-section="potential_impact">
+                    <div class="k" style="font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-light); font-weight:700; margin-bottom:8px;">Potential Business and Security Impact</div>
+                    <ul id="findingImpactList" class="finding-list"><li>Not provided.</li></ul>
+                    <div class="section-hint">Click to view more</div>
+                </div>
+                <div class="finding-card important-card section-clickable" id="findingRecoCard" data-section="recommendations">
+                    <div class="k" style="font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-light); font-weight:700; margin-bottom:8px;">Recommended Actions</div>
+                    <ul id="findingRecommendations" class="finding-list"><li>Not provided.</li></ul>
+                    <div class="section-hint">Click to view more</div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+                <button type="button" id="findingPrintBtn" class="modal-btn secondary sq-pill-btn" title="Print report" aria-label="Print report"><i class="fas fa-print"></i></button>
+                <button type="button" id="findingReportDone" class="modal-btn sq-pill-btn finding-close-btn"><i class="fas fa-check-circle"></i><span>Close Report</span></button>
+            </div>
+        </div>
+    </div>
+    <div id="findingSectionModal" class="modal-overlay"
+        style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.72); z-index:10006; align-items:center; justify-content:center;">
+        <div class="modal" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:16px; width:94%; max-width:860px; max-height:88vh; overflow:auto; padding:18px;">
+            <div id="findingSectionHead" class="finding-section-head section-theme-description" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span class="finding-section-icon"><i id="findingSectionIcon" class="fas fa-align-left"></i></span>
+                        <div id="findingSectionTitle" style="font-size:18px;font-weight:800;">Section details</div>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-light);">Extended analysis for this finding section</div>
+                </div>
+                <button type="button" id="findingSectionClose" class="icon-btn" style="width:38px;height:38px;"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="findingSectionContent" style="white-space:pre-wrap;line-height:1.6;font-size:14px;"></div>
+        </div>
+    </div>
+    <div id="findingEvidenceRawModal" class="modal-overlay sq-evidence-raw-modal"
+        style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.78); z-index:10009; align-items:center; justify-content:center;">
+        <div class="modal sq-evidence-raw-inner"
+            style="background:var(--bg-card); padding:20px; border-radius:16px; width:96%; max-width:1100px; border:1px solid var(--border-color); max-height:90vh; overflow:hidden; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; flex-shrink:0;">
+                <div>
+                    <div style="font-size:17px; font-weight:800; color:var(--text-main);">Full raw evidence</div>
+                    <div style="font-size:12px; color:var(--text-light); margin-top:4px;">Verbatim capture (left) · Explained breakdown (right)</div>
+                </div>
+                <button type="button" id="findingEvidenceRawClose" class="icon-btn" title="Close" style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="sq-evidence-raw-split">
+                <div class="sq-evidence-raw-pane sq-evidence-raw-pane-left">
+                    <div class="sq-evidence-raw-pane-label">Raw evidence (as captured)</div>
+                    <pre id="findingEvidenceRawText" class="sq-evidence-raw-pre">-</pre>
+                </div>
+                <div class="sq-evidence-raw-pane sq-evidence-raw-pane-right">
+                    <div class="sq-evidence-raw-pane-label">Explained</div>
+                    <div id="findingEvidenceExplained" class="sq-evidence-explained-scroll"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="scanTimelineFullModal" class="modal-overlay sq-timeline-full-modal"
+        style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.72); z-index:10008; align-items:center; justify-content:center;">
+        <div class="modal sq-timeline-full-inner"
+            style="background:var(--bg-card); padding:22px; border-radius:16px; width:94%; max-width:720px; border:1px solid var(--border-color); max-height:88vh; overflow:auto;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px;">
+                <div>
+                    <div style="font-size:18px; font-weight:800; color:var(--text-main);">Full scan run timeline</div>
+                    <div id="scanTimelineFullSub" style="font-size:12px; color:var(--text-light); margin-top:4px;">All saved runs for this host</div>
+                </div>
+                <button type="button" id="scanTimelineFullClose" class="icon-btn" title="Close" style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="scanTimelineFullBody" class="scan-run-timeline-body"></div>
+        </div>
+    </div>
     <div id="evidenceModal" class="modal-overlay"
         style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10003; align-items:center; justify-content:center;">
-        <div class="modal"
-            style="background:var(--bg-card); padding:20px; border-radius:16px; max-width:760px; width:94%; border:1px solid var(--border-color); max-height:88vh; overflow:auto;">
+        <div class="modal evidence-modal-wide"
+            style="background:var(--bg-card); padding:20px; border-radius:16px; max-width:920px; width:94%; border:1px solid var(--border-color); max-height:88vh; overflow:auto;">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
                 <div>
                     <div id="evidenceModalTitle" style="font-size:16px; font-weight:800;">Vulnerability Evidence</div>
-                    <div style="font-size:12px; color:var(--text-light);">Raw evidence details</div>
+                    <div style="font-size:12px; color:var(--text-light);">Technical capture (left) · Highlighted lines (right)</div>
                 </div>
                 <button type="button" id="evidenceModalClose" class="icon-btn" title="Close" style="width:38px;height:38px;">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
-                <div style="border:1px solid var(--border-color); border-radius:10px; background:var(--bg-main); padding:10px;">
-                    <div style="font-size:12px; font-weight:700; margin-bottom:6px; color:var(--brand-color);">Expected</div>
-                    <div id="evidenceExpected" style="font-size:13px; line-height:1.45; white-space:pre-wrap;">-</div>
+            <div class="evidence-modal-split">
+                <div class="evidence-modal-pane evidence-modal-pane-raw">
+                    <div class="evidence-pane-label">Raw technical data</div>
+                    <pre id="evidenceRawPlain" class="evidence-pre-raw">-</pre>
                 </div>
-                <div style="border:1px solid var(--border-color); border-radius:10px; background:var(--bg-main); padding:10px;">
-                    <div style="font-size:12px; font-weight:700; margin-bottom:6px; color:var(--warning-color);">But Has (Actual)</div>
-                    <div id="evidenceActual" style="font-size:13px; line-height:1.45; white-space:pre-wrap;">-</div>
+                <div class="evidence-modal-pane evidence-modal-pane-colored">
+                    <div class="evidence-pane-label">Highlighted (same data)</div>
+                    <div id="evidenceAnnotated" class="evidence-annotated-wrap"></div>
                 </div>
-            </div>
-            <div style="border:1px solid var(--border-color); border-radius:10px; background:var(--bg-main); padding:10px;">
-                <div style="font-size:12px; font-weight:700; margin-bottom:6px;">Full Evidence</div>
-                <pre id="evidenceFull"
-                    style="margin:0; white-space:pre-wrap; word-break:break-word; font-size:12px; line-height:1.45; color:var(--text-main);">-</pre>
             </div>
             <div style="display:flex; justify-content:flex-end; margin-top:12px;">
                 <button type="button" id="copyEvidenceBtn" class="modal-btn secondary sq-pill-btn" style="margin-right:8px;">
-                    <i class="fas fa-copy" style="margin-right:6px;"></i>Copy Evidence
+                    <i class="fas fa-copy" style="margin-right:6px;"></i>Copy evidence
                 </button>
                 <button type="button" id="evidenceModalDone" class="modal-btn sq-pill-btn">
                     Close

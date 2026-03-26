@@ -49,6 +49,10 @@ $allowedScanRisks = ['all', 'Critical', 'High', 'Medium', 'Low', 'Secure', 'Unkn
 if (!in_array($scansRiskFilter, $allowedScanRisks, true)) {
     $scansRiskFilter = 'all';
 }
+$scansStatusFilter = trim((string) ($_GET['scans_status'] ?? 'active'));
+if (!in_array($scansStatusFilter, ['active', 'deleted', 'all'], true)) {
+    $scansStatusFilter = 'active';
+}
 
 $aiSearch = trim((string) ($_GET['ai_search'] ?? ''));
 $aiEventTypeFilter = trim((string) ($_GET['ai_event_type'] ?? 'all'));
@@ -56,6 +60,19 @@ $allowedAiEventTypes = ['all', 'ask_submitted', 'ask_success', 'ask_error', 'cle
 if (!in_array($aiEventTypeFilter, $allowedAiEventTypes, true)) {
     $aiEventTypeFilter = 'all';
 }
+$aiStatusFilter = trim((string) ($_GET['ai_status'] ?? 'active'));
+if (!in_array($aiStatusFilter, ['active', 'deleted', 'all'], true)) {
+    $aiStatusFilter = 'active';
+}
+$aiPage = max(1, (int) ($_GET['ai_page'] ?? 1));
+$aiPerPageParam = (string) ($_GET['ai_per_page'] ?? (string) DEFAULT_PER_PAGE);
+if (!in_array($aiPerPageParam, $allowedPerPage, true)) {
+    $aiPerPageParam = (string) DEFAULT_PER_PAGE;
+}
+$aiPerPage = $aiPerPageParam === 'all' ? null : (int) $aiPerPageParam;
+$aiTotalPages = 1;
+$aiRecordsStart = 0;
+$aiRecordsEnd = 0;
 
 $logSearch = trim((string) ($_GET['log_search'] ?? ''));
 $logLevelFilter = trim((string) ($_GET['log_level'] ?? 'all'));
@@ -68,6 +85,19 @@ $allowedLogSources = ['all', 'web_scanner.scan_proxy', 'enterprise_ai_api', 'sys
 if (!in_array($logSourceFilter, $allowedLogSources, true)) {
     $logSourceFilter = 'all';
 }
+$logStatusFilter = trim((string) ($_GET['log_status'] ?? 'active'));
+if (!in_array($logStatusFilter, ['active', 'deleted', 'all'], true)) {
+    $logStatusFilter = 'active';
+}
+$logPage = max(1, (int) ($_GET['log_page'] ?? 1));
+$logPerPageParam = (string) ($_GET['log_per_page'] ?? (string) DEFAULT_PER_PAGE);
+if (!in_array($logPerPageParam, $allowedPerPage, true)) {
+    $logPerPageParam = (string) DEFAULT_PER_PAGE;
+}
+$logPerPage = $logPerPageParam === 'all' ? null : (int) $logPerPageParam;
+$logTotalPages = 1;
+$logRecordsStart = 0;
+$logRecordsEnd = 0;
 
 $totalItems = 0;
 $totalPages = 1;
@@ -84,6 +114,9 @@ $serverLogMetrics = [
     'unique_users_24h' => 0,
     'scanner_related_24h' => 0,
 ];
+$serverLogsTimelineLabels = [];
+$serverLogsTimelineErrors = [];
+$serverLogsTimelineWarnings = [];
 $aiMetrics = [
     'total_events' => 0,
     'unique_users' => 0,
@@ -91,6 +124,8 @@ $aiMetrics = [
     'ask_success' => 0,
 ];
 $showDeleteSuccess = isset($_GET['deleted']) && (string) $_GET['deleted'] === '1';
+$showActionToast = isset($_GET['action_done']) && (string) $_GET['action_done'] === '1';
+$lastActionName = (string) ($_GET['action'] ?? '');
 $adminName = $_SESSION['user_name'] ?? 'Admin';
 $profile_photo = $_SESSION['profile_photo'] ?? null;
 if (!empty($profile_photo)) {
@@ -107,14 +142,41 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 
-    // Delete action for admins (POST only)
-    if (isset($_POST['delete_id'])) {
-        $deleteId = (int) $_POST['delete_id'];
-        if ($deleteId > 0) {
-            $stmt = $pdo->prepare('DELETE FROM scan_results WHERE id = :id');
-            $stmt->execute([':id' => $deleteId]);
+    // Ensure soft-delete columns exist.
+    try {
+        $pdo->exec("ALTER TABLE scan_results ADD COLUMN deleted_at DATETIME NULL");
+    } catch (Exception $e) {
+    }
+    // Delete/restore action for admins (POST only)
+    if (isset($_POST['record_action'], $_POST['record_type'], $_POST['record_id'])) {
+        $action = (string) $_POST['record_action'];
+        $type = (string) $_POST['record_type'];
+        $id = (int) $_POST['record_id'];
+        $redirectView = in_array($type, ['scans', 'ai', 'server_logs'], true) ? $type : 'scans';
+        if ($id > 0) {
+            $tableMap = [
+                'scans' => 'scan_results',
+                'ai' => 'enterprise_ai_usage_events',
+                'server_logs' => 'system_server_logs',
+            ];
+            if (isset($tableMap[$type])) {
+                $table = $tableMap[$type];
+                if ($action === 'soft_delete') {
+                    $stmt = $pdo->prepare("UPDATE {$table} SET deleted_at = NOW() WHERE id = :id");
+                    $stmt->execute([':id' => $id]);
+                } elseif ($action === 'restore') {
+                    $stmt = $pdo->prepare("UPDATE {$table} SET deleted_at = NULL WHERE id = :id");
+                    $stmt->execute([':id' => $id]);
+                } elseif ($action === 'hard_delete') {
+                    $stmt = $pdo->prepare("DELETE FROM {$table} WHERE id = :id");
+                    $stmt->execute([':id' => $id]);
+                } elseif ($action === 'clear_chat' && $type === 'ai') {
+                    $stmt = $pdo->prepare("UPDATE enterprise_ai_usage_events SET meta_json = NULL WHERE id = :id");
+                    $stmt->execute([':id' => $id]);
+                }
+            }
         }
-        header('Location: admin_data_management.php?deleted=1&view=scans');
+        header('Location: admin_data_management.php?view=' . urlencode($redirectView) . '&action_done=1&action=' . urlencode($action));
         exit;
     }
 
@@ -125,13 +187,16 @@ try {
                s.target_url,
                s.scan_json,
                s.created_at,
+               s.deleted_at,
                s.pdf_path,
+               s.doc_path,
                s.html_path,
                s.csv_path,
                u.email,
                u.user_name
         FROM scan_results s
         LEFT JOIN users u ON u.user_id = s.user_id
+        WHERE s.deleted_at IS NULL
         ORDER BY s.created_at DESC
         LIMIT 200
     ";
@@ -158,13 +223,20 @@ try {
     $searchableExprs = [
         's.target_url' => 'target_url',
         's.pdf_path' => 'pdf_path',
+        's.doc_path' => 'doc_path',
         's.html_path' => 'html_path',
         's.csv_path' => 'csv_path',
         'u.email' => 'email',
         'u.user_name' => 'user_name',
     ];
 
-    $whereSql = '';
+    if ($scansStatusFilter === 'deleted') {
+        $whereSql = 'WHERE s.deleted_at IS NOT NULL';
+    } elseif ($scansStatusFilter === 'all') {
+        $whereSql = 'WHERE 1=1';
+    } else {
+        $whereSql = 'WHERE s.deleted_at IS NULL';
+    }
     $whereParams = [];
     if ($scansSearch !== '') {
         $searchTerm = '%' . $scansSearch . '%';
@@ -173,15 +245,11 @@ try {
             $orParts[] = "CAST($expr AS CHAR) LIKE ?";
             $whereParams[] = $searchTerm;
         }
-        $whereSql = 'WHERE ' . implode(' OR ', $orParts);
+        $whereSql .= ' AND (' . implode(' OR ', $orParts) . ')';
     }
     if ($scansRiskFilter !== 'all') {
         $riskClause = "CAST(s.scan_json AS CHAR) LIKE ?";
-        if ($whereSql === '') {
-            $whereSql = "WHERE $riskClause";
-        } else {
-            $whereSql .= " AND $riskClause";
-        }
+        $whereSql .= " AND $riskClause";
         $whereParams[] = '%"risk_level":"' . $scansRiskFilter . '"%';
     }
 
@@ -206,7 +274,9 @@ try {
                s.target_url,
                s.scan_json,
                s.created_at,
+               s.deleted_at,
                s.pdf_path,
+               s.doc_path,
                s.html_path,
                s.csv_path,
                u.email,
@@ -216,10 +286,8 @@ try {
         ORDER BY s.created_at DESC
     ";
 
-    if ($whereSql !== '') {
-        // Insert WHERE clause before ORDER BY.
-        $tableBaseSql = str_replace('ORDER BY s.created_at DESC', $whereSql . ' ORDER BY s.created_at DESC', $tableBaseSql);
-    }
+    // Insert WHERE clause before ORDER BY.
+    $tableBaseSql = str_replace('ORDER BY s.created_at DESC', $whereSql . ' ORDER BY s.created_at DESC', $tableBaseSql);
 
     if ($effectivePerPage === null) {
         $pageSql = $tableBaseSql;
@@ -239,12 +307,17 @@ try {
         meta_json TEXT NULL,
         ip_address VARCHAR(64) NULL,
         user_agent VARCHAR(255) NULL,
+        deleted_at DATETIME NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_scan (scan_id),
         INDEX idx_user (user_id),
         INDEX idx_event (event_type),
         INDEX idx_created (created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {
+        $pdo->exec("ALTER TABLE enterprise_ai_usage_events ADD COLUMN deleted_at DATETIME NULL");
+    } catch (Exception $e) {
+    }
 
     $aiWhereParts = [];
     $aiWhereParams = [];
@@ -257,6 +330,11 @@ try {
         $aiWhereParts[] = "e.event_type = ?";
         $aiWhereParams[] = $aiEventTypeFilter;
     }
+    if ($aiStatusFilter === 'deleted') {
+        $aiWhereParts[] = "e.deleted_at IS NOT NULL";
+    } elseif ($aiStatusFilter !== 'all') {
+        $aiWhereParts[] = "e.deleted_at IS NULL";
+    }
     $aiWhereSql = empty($aiWhereParts) ? '' : ('WHERE ' . implode(' AND ', $aiWhereParts));
 
     $aiEventTotalStmt = $pdo->prepare("
@@ -267,15 +345,25 @@ try {
     ");
     $aiEventTotalStmt->execute($aiWhereParams);
     $aiEventTotal = (int) $aiEventTotalStmt->fetchColumn();
+    $aiTotalPages = $aiPerPage === null || $aiEventTotal === 0 ? 1 : (int) ceil($aiEventTotal / $aiPerPage);
+    if ($aiPage > $aiTotalPages) {
+        $aiPage = $aiTotalPages;
+    }
+    $aiOffset = $aiPerPage === null ? 0 : (($aiPage - 1) * $aiPerPage);
+    $aiRecordsStart = $aiEventTotal === 0 ? 0 : ($aiOffset + 1);
+    $aiRecordsEnd = $aiPerPage === null ? $aiEventTotal : (int) min($aiOffset + $aiPerPage, $aiEventTotal);
 
-    $aiStmt = $pdo->prepare("
-        SELECT e.id, e.user_id, e.scan_id, e.event_type, e.meta_json, e.ip_address, e.created_at, u.user_name, u.email
+    $aiSql = "
+        SELECT e.id, e.user_id, e.scan_id, e.event_type, e.meta_json, e.ip_address, e.created_at, e.deleted_at, u.user_name, u.email
         FROM enterprise_ai_usage_events e
         LEFT JOIN users u ON u.user_id = e.user_id
         $aiWhereSql
         ORDER BY e.created_at DESC
-        LIMIT 150
-    ");
+    ";
+    if ($aiPerPage !== null) {
+        $aiSql .= " LIMIT " . (int) $aiPerPage . " OFFSET " . (int) $aiOffset;
+    }
+    $aiStmt = $pdo->prepare($aiSql);
     $aiStmt->execute($aiWhereParams);
     $aiEventRows = $aiStmt->fetchAll() ?: [];
     $aiMetrics['total_events'] = count($aiEventRows);
@@ -305,6 +393,7 @@ try {
         user_id VARCHAR(64) NULL,
         request_ip VARCHAR(64) NULL,
         request_uri VARCHAR(255) NULL,
+        deleted_at DATETIME NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_created_at (created_at),
         INDEX idx_level (level),
@@ -312,6 +401,10 @@ try {
         INDEX idx_event_key (event_key),
         INDEX idx_user_id (user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    try {
+        $pdo->exec("ALTER TABLE system_server_logs ADD COLUMN deleted_at DATETIME NULL");
+    } catch (Exception $e) {
+    }
 
     $logWhereParts = [];
     $logWhereParams = [];
@@ -332,19 +425,34 @@ try {
             $logWhereParams[] = $logSourceFilter;
         }
     }
+    if ($logStatusFilter === 'deleted') {
+        $logWhereParts[] = "deleted_at IS NOT NULL";
+    } elseif ($logStatusFilter !== 'all') {
+        $logWhereParts[] = "deleted_at IS NULL";
+    }
     $logWhereSql = empty($logWhereParts) ? '' : ('WHERE ' . implode(' AND ', $logWhereParts));
 
     $serverLogTotalStmt = $pdo->prepare("SELECT COUNT(*) FROM system_server_logs $logWhereSql");
     $serverLogTotalStmt->execute($logWhereParams);
     $serverLogTotal = (int) $serverLogTotalStmt->fetchColumn();
+    $logTotalPages = $logPerPage === null || $serverLogTotal === 0 ? 1 : (int) ceil($serverLogTotal / $logPerPage);
+    if ($logPage > $logTotalPages) {
+        $logPage = $logTotalPages;
+    }
+    $logOffset = $logPerPage === null ? 0 : (($logPage - 1) * $logPerPage);
+    $logRecordsStart = $serverLogTotal === 0 ? 0 : ($logOffset + 1);
+    $logRecordsEnd = $logPerPage === null ? $serverLogTotal : (int) min($logOffset + $logPerPage, $serverLogTotal);
 
-    $serverLogRowsStmt = $pdo->prepare("
-        SELECT id, event_key, level, source, message, user_id, request_ip, request_uri, created_at
+    $logSql = "
+        SELECT id, event_key, level, source, message, user_id, request_ip, request_uri, created_at, deleted_at
         FROM system_server_logs
         $logWhereSql
         ORDER BY created_at DESC
-        LIMIT 200
-    ");
+    ";
+    if ($logPerPage !== null) {
+        $logSql .= " LIMIT " . (int) $logPerPage . " OFFSET " . (int) $logOffset;
+    }
+    $serverLogRowsStmt = $pdo->prepare($logSql);
     $serverLogRowsStmt->execute($logWhereParams);
     $serverLogRows = $serverLogRowsStmt->fetchAll() ?: [];
 
@@ -362,11 +470,39 @@ try {
     $serverLogMetrics['warnings_24h'] = (int) ($serverLogMetricRow['warnings_24h'] ?? 0);
     $serverLogMetrics['unique_users_24h'] = (int) ($serverLogMetricRow['unique_users_24h'] ?? 0);
     $serverLogMetrics['scanner_related_24h'] = (int) ($serverLogMetricRow['scanner_related_24h'] ?? 0);
+
+    // 7-day timeline for server log chart (errors/warnings by day).
+    $timelineStmt = $pdo->query("
+        SELECT DATE(created_at) AS day_key,
+               SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error_count,
+               SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END) AS warning_count
+        FROM system_server_logs
+        WHERE created_at >= (CURDATE() - INTERVAL 6 DAY)
+          AND deleted_at IS NULL
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at) ASC
+    ");
+    $timelineRows = $timelineStmt->fetchAll() ?: [];
+    $timelineMap = [];
+    foreach ($timelineRows as $tr) {
+        $k = (string) ($tr['day_key'] ?? '');
+        if ($k === '') continue;
+        $timelineMap[$k] = [
+            'error' => (int) ($tr['error_count'] ?? 0),
+            'warning' => (int) ($tr['warning_count'] ?? 0),
+        ];
+    }
+    for ($i = 6; $i >= 0; $i--) {
+        $dayKey = date('Y-m-d', strtotime("-{$i} day"));
+        $serverLogsTimelineLabels[] = date('M j', strtotime($dayKey));
+        $serverLogsTimelineErrors[] = (int) (($timelineMap[$dayKey]['error'] ?? 0));
+        $serverLogsTimelineWarnings[] = (int) (($timelineMap[$dayKey]['warning'] ?? 0));
+    }
 } catch (Exception $e) {
     $adminError = 'Unable to load scan data right now.';
 }
 
-$downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Backend/download_scan.php';
+$downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PHP/Backend/download_scan_admin.php';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1232,7 +1368,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
             display: flex;
             flex-direction: column;
             gap: 12px;
-            z-index: 1000;
+            z-index: 4000;
         }
 
         .toast {
@@ -1277,6 +1413,18 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
         .toast-icon.warning {
             background: rgba(245, 158, 11, 0.1);
             color: var(--warning-color);
+        }
+
+        .toast-content h4 {
+            font-size: 13px;
+            margin: 0 0 2px;
+            color: var(--text-main);
+        }
+
+        .toast-content p {
+            font-size: 12px;
+            margin: 0;
+            color: var(--text-light);
         }
 
         /* Responsive */
@@ -1597,6 +1745,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                             <div class="kpi-value"><?php echo (int) $metrics['by_risk']['Secure']; ?></div>
                         </div>
                     </div>
+                    <div class="chart-card" style="margin-bottom:18px;">
+                        <div class="chart-header">
+                            <div class="chart-title"><i class="fas fa-chart-pie"></i> Scan Risk Distribution</div>
+                        </div>
+                        <div class="chart-container"><canvas id="scansRiskChart"></canvas></div>
+                    </div>
 
                     <div class="card quality-card">
                         <div class="quality-header">
@@ -1620,6 +1774,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                             <?php echo $riskOpt === 'all' ? 'All Risks' : $riskOpt; ?>
                                         </option>
                                     <?php endforeach; ?>
+                                </select>
+                                <select name="scans_status"
+                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 150px;">
+                                    <option value="active" <?php echo $scansStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
+                                    <option value="deleted" <?php echo $scansStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
+                                    <option value="all" <?php echo $scansStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
                                 </select>
                                 <button type="submit" class="action-btn" style="padding: 10px 14px; text-decoration:none;">
                                     <i class="fas fa-filter"></i> Filter
@@ -1662,8 +1822,6 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                             $createdAt = $row['created_at'] ?? '';
                                             $targetUrl = $row['target_url'] ?? ($data['target'] ?? '');
                                             $userLabel = $row['user_name'] ?: ($row['email'] ?: $row['user_id']);
-                                            // Mask user label and URL to reduce data mining risk
-                                            $maskedUser = $userLabel ? (substr($userLabel, 0, 1) . '***') : 'N/A';
                                             $parsed = parse_url($targetUrl);
                                             $host = $parsed['host'] ?? '';
                                             if ($host !== '') {
@@ -1679,7 +1837,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                             $matchedInStr = '-';
                                             if ($scansSearch !== '') {
                                                 $matchedCols = [];
-                                                foreach (['target_url', 'pdf_path', 'html_path', 'csv_path', 'email', 'user_name'] as $key) {
+                                                foreach (['target_url', 'pdf_path', 'doc_path', 'html_path', 'csv_path', 'email', 'user_name'] as $key) {
                                                     $val = $row[$key] ?? '';
                                                     if ($val === null)
                                                         continue;
@@ -1697,7 +1855,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                                         <div class="module-icon">
                                                             <i class="fas fa-user-shield"></i>
                                                         </div>
-                                                        <span><?php echo htmlspecialchars($maskedUser); ?></span>
+                                                        <span><?php echo htmlspecialchars($userLabel ?: 'N/A'); ?></span>
                                                     </div>
                                                 </td>
                                                 <td><?php echo htmlspecialchars($maskedTarget); ?></td>
@@ -1714,23 +1872,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                                     <td><?php echo htmlspecialchars($matchedInStr); ?></td>
                                                 <?php endif; ?>
                                                 <td>
-                                                    <div class="action-group">
-                                                        <a class="action-btn html"
-                                                            href="<?php echo $downloadBaseAdmin . '?id=' . (int) $row['id'] . '&type=html'; ?>">
-                                                            <i class="fas fa-file-code"></i> HTML
-                                                        </a>
-                                                        <a class="action-btn csv"
-                                                            href="<?php echo $downloadBaseAdmin . '?id=' . (int) $row['id'] . '&type=csv'; ?>">
-                                                            <i class="fas fa-file-csv"></i> CSV
-                                                        </a>
-                                                        <span class="action-btn pdf disabled" title="PDF temporarily disabled">
-                                                            <i class="fas fa-file-pdf"></i> PDF
-                                                        </span>
-                                                        <button type="button" class="action-btn delete js-delete-btn"
-                                                            data-delete-id="<?php echo (int) $row['id']; ?>">
-                                                            <i class="fas fa-trash"></i> Delete
-                                                        </button>
-                                                    </div>
+                                                    <button type="button" class="action-btn js-open-scan-actions"
+                                                        data-scan-id="<?php echo (int) $row['id']; ?>"
+                                                        data-has-pdf="<?php echo !empty($row['pdf_path']) ? '1' : '0'; ?>"
+                                                        data-deleted="<?php echo !empty($row['deleted_at']) ? '1' : '0'; ?>">
+                                                        <i class="fas fa-ellipsis-h"></i> Actions
+                                                    </button>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -1772,6 +1919,9 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                     }
                                     if ($scansRiskFilter !== 'all') {
                                         $queryParams .= "&scans_risk=" . urlencode($scansRiskFilter);
+                                    }
+                                    if ($scansStatusFilter !== 'active') {
+                                        $queryParams .= "&scans_status=" . urlencode($scansStatusFilter);
                                     }
                                     $startPage = max(1, $page - 2);
                                     $endPage = min((int) $totalPages, $page + 2);
@@ -1858,6 +2008,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                             <div class="kpi-value"><?php echo number_format((int) $aiMetrics['ask_success']); ?></div>
                         </div>
                     </div>
+                    <div class="chart-card" style="margin-bottom:18px;">
+                        <div class="chart-header">
+                            <div class="chart-title"><i class="fas fa-chart-bar"></i> Enterprise AI Event Types</div>
+                        </div>
+                        <div class="chart-container"><canvas id="aiEventsChart"></canvas></div>
+                    </div>
 
                     <div class="card quality-card">
                         <div class="quality-header">
@@ -1878,6 +2034,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                             <?php echo $eventOpt === 'all' ? 'All Event Types' : $eventOpt; ?>
                                         </option>
                                     <?php endforeach; ?>
+                                </select>
+                                <select name="ai_status"
+                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 150px;">
+                                    <option value="active" <?php echo $aiStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
+                                    <option value="deleted" <?php echo $aiStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
+                                    <option value="all" <?php echo $aiStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
                                 </select>
                                 <button type="submit" class="action-btn" style="padding: 10px 14px; text-decoration:none;">
                                     <i class="fas fa-filter"></i> Filter
@@ -1910,7 +2072,6 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                         <?php foreach ($aiEventRows as $ev): ?>
                                             <?php
                                             $evUser = $ev['user_name'] ?: ($ev['email'] ?: $ev['user_id']);
-                                            $evMaskedUser = $evUser ? (substr($evUser, 0, 1) . '***') : 'N/A';
                                             $metaShort = '';
                                             if (!empty($ev['meta_json'])) {
                                                 $metaShort = trim((string) $ev['meta_json']);
@@ -1923,10 +2084,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                             $evScanId = (int) ($ev['scan_id'] ?? 0);
                                             ?>
                                             <tr>
-                                                <td><?php echo htmlspecialchars($evMaskedUser); ?></td>
+                                                <td><?php echo htmlspecialchars($evUser ?: 'N/A'); ?></td>
                                                 <td><?php echo $evScanId; ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($ev['event_type'] ?? '')); ?></td>
-                                                <td><?php echo htmlspecialchars($metaShort); ?></td>
+                                                <td title="<?php echo htmlspecialchars((string) ($ev['meta_json'] ?? '')); ?>">
+                                                    <?php echo htmlspecialchars($metaShort); ?>
+                                                </td>
                                                 <td><?php echo htmlspecialchars((string) ($ev['ip_address'] ?? '-')); ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($ev['created_at'] ?? '')); ?></td>
                                                 <td>
@@ -1935,9 +2098,32 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                                             href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/enterprise_ai_overview.php?scan_id=<?php echo $evScanId; ?>">
                                                             <i class="fas fa-up-right-from-square"></i> Open AI Page
                                                         </a>
-                                                    <?php else: ?>
-                                                        <span class="action-btn disabled">N/A</span>
                                                     <?php endif; ?>
+                                                    <form method="POST" action="admin_data_management.php" style="display:inline;">
+                                                        <input type="hidden" name="record_action" value="clear_chat">
+                                                        <input type="hidden" name="record_type" value="ai">
+                                                        <input type="hidden" name="record_id" value="<?php echo (int) $ev['id']; ?>">
+                                                        <button type="submit" class="action-btn" title="Clear chat"><i class="fas fa-eraser"></i></button>
+                                                    </form>
+                                                    <?php if (!empty($ev['deleted_at'])): ?>
+                                                        <form method="POST" action="admin_data_management.php" style="display:inline;">
+                                                            <input type="hidden" name="record_action" value="restore">
+                                                            <input type="hidden" name="record_type" value="ai">
+                                                            <input type="hidden" name="record_id" value="<?php echo (int) $ev['id']; ?>">
+                                                            <button type="submit" class="action-btn" title="Restore"><i class="fas fa-rotate-left"></i></button>
+                                                        </form>
+                                                    <?php else: ?>
+                                                        <button type="button" class="action-btn delete js-record-action" title="Delete"
+                                                            data-record-action="soft_delete" data-record-type="ai"
+                                                            data-record-id="<?php echo (int) $ev['id']; ?>">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    <?php endif; ?>
+                                                    <button type="button" class="action-btn delete js-record-action" title="Delete forever"
+                                                        data-record-action="hard_delete" data-record-type="ai"
+                                                        data-record-id="<?php echo (int) $ev['id']; ?>">
+                                                        <i class="fas fa-ban"></i>
+                                                    </button>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -1945,6 +2131,43 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                 </tbody>
                             </table>
                         </div>
+                        <?php if ($aiEventTotal > 0): ?>
+                            <div class="sq-admin-pagination-bar">
+                                <label>
+                                    Show
+                                    <select onchange="sqUpdateTabPerPage('ai', this.value)">
+                                        <?php foreach (['5', '10', '20', '50', '100', '200', 'all'] as $opt): ?>
+                                            <option value="<?php echo $opt; ?>" <?php echo $aiPerPageParam === $opt ? 'selected' : ''; ?>>
+                                                <?php echo $opt === 'all' ? 'All' : $opt; ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    entries
+                                </label>
+                                <span class="sq-admin-record-info">
+                                    Showing <?php echo (int) $aiRecordsStart; ?>–<?php echo (int) $aiRecordsEnd; ?> of
+                                    <?php echo number_format((int) $aiEventTotal); ?>
+                                </span>
+                            </div>
+                        <?php endif; ?>
+                        <?php if ($aiTotalPages > 1): ?>
+                            <div class="sq-admin-pagination">
+                                <?php
+                                $aiParams = 'view=ai&ai_per_page=' . urlencode($aiPerPageParam) . '&ai_search=' . urlencode($aiSearch) . '&ai_event_type=' . urlencode($aiEventTypeFilter) . '&ai_status=' . urlencode($aiStatusFilter);
+                                ?>
+                                <?php if ($aiPage > 1): ?>
+                                    <a class="sq-admin-page-btn" href="admin_data_management.php?<?php echo $aiParams; ?>&ai_page=<?php echo $aiPage - 1; ?>"><i class="fas fa-chevron-left"></i></a>
+                                <?php else: ?>
+                                    <span class="sq-admin-page-btn disabled"><i class="fas fa-chevron-left"></i></span>
+                                <?php endif; ?>
+                                <span class="sq-admin-page-btn active"><?php echo $aiPage; ?></span>
+                                <?php if ($aiPage < $aiTotalPages): ?>
+                                    <a class="sq-admin-page-btn" href="admin_data_management.php?<?php echo $aiParams; ?>&ai_page=<?php echo $aiPage + 1; ?>"><i class="fas fa-chevron-right"></i></a>
+                                <?php else: ?>
+                                    <span class="sq-admin-page-btn disabled"><i class="fas fa-chevron-right"></i></span>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 <?php else: ?>
                     <div class="kpi-grid">
@@ -1980,6 +2203,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                             </div>
                         </div>
                     </div>
+                    <div class="chart-card" style="margin-bottom:18px;">
+                        <div class="chart-header">
+                            <div class="chart-title"><i class="fas fa-chart-column"></i> Server Log Levels (24h)</div>
+                        </div>
+                        <div class="chart-container"><canvas id="serverLogLevelsChart"></canvas></div>
+                    </div>
 
                     <div class="card quality-card">
                         <div class="quality-header">
@@ -2006,6 +2235,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                     <option value="enterprise_ai_api" <?php echo $logSourceFilter === 'enterprise_ai_api' ? 'selected' : ''; ?>>Enterprise AI API</option>
                                     <option value="system" <?php echo $logSourceFilter === 'system' ? 'selected' : ''; ?>>System (Other)</option>
                                 </select>
+                                <select name="log_status"
+                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 150px;">
+                                    <option value="active" <?php echo $logStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
+                                    <option value="deleted" <?php echo $logStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
+                                    <option value="all" <?php echo $logStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
+                                </select>
                                 <button type="submit" class="action-btn" style="padding: 10px 14px; text-decoration:none;">
                                     <i class="fas fa-filter"></i> Filter
                                 </button>
@@ -2027,12 +2262,13 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                         <th>User</th>
                                         <th>IP</th>
                                         <th>URI</th>
+                                        <th>Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <?php if (empty($serverLogRows)): ?>
                                         <tr>
-                                            <td colspan="8">No server logs available yet.</td>
+                                            <td colspan="9">No server logs available yet.</td>
                                         </tr>
                                     <?php else: ?>
                                         <?php foreach ($serverLogRows as $log): ?>
@@ -2055,12 +2291,70 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
                                                 <td><?php echo htmlspecialchars((string) ($log['user_id'] ?? '-')); ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($log['request_ip'] ?? '-')); ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($log['request_uri'] ?? '-')); ?></td>
+                                                <td>
+                                                    <?php if (!empty($log['deleted_at'])): ?>
+                                                        <form method="POST" action="admin_data_management.php" style="display:inline;">
+                                                            <input type="hidden" name="record_action" value="restore">
+                                                            <input type="hidden" name="record_type" value="server_logs">
+                                                            <input type="hidden" name="record_id" value="<?php echo (int) $log['id']; ?>">
+                                                            <button type="submit" class="action-btn" title="Restore"><i class="fas fa-rotate-left"></i></button>
+                                                        </form>
+                                                    <?php else: ?>
+                                                        <button type="button" class="action-btn delete js-record-action" title="Delete"
+                                                            data-record-action="soft_delete" data-record-type="server_logs"
+                                                            data-record-id="<?php echo (int) $log['id']; ?>">
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    <?php endif; ?>
+                                                    <button type="button" class="action-btn delete js-record-action" title="Delete forever"
+                                                        data-record-action="hard_delete" data-record-type="server_logs"
+                                                        data-record-id="<?php echo (int) $log['id']; ?>">
+                                                        <i class="fas fa-ban"></i>
+                                                    </button>
+                                                </td>
                                             </tr>
                                         <?php endforeach; ?>
                                     <?php endif; ?>
                                 </tbody>
                             </table>
                         </div>
+                        <?php if ($serverLogTotal > 0): ?>
+                            <div class="sq-admin-pagination-bar">
+                                <label>
+                                    Show
+                                    <select onchange="sqUpdateTabPerPage('server_logs', this.value)">
+                                        <?php foreach (['5', '10', '20', '50', '100', '200', 'all'] as $opt): ?>
+                                            <option value="<?php echo $opt; ?>" <?php echo $logPerPageParam === $opt ? 'selected' : ''; ?>>
+                                                <?php echo $opt === 'all' ? 'All' : $opt; ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    entries
+                                </label>
+                                <span class="sq-admin-record-info">
+                                    Showing <?php echo (int) $logRecordsStart; ?>–<?php echo (int) $logRecordsEnd; ?> of
+                                    <?php echo number_format((int) $serverLogTotal); ?>
+                                </span>
+                            </div>
+                        <?php endif; ?>
+                        <?php if ($logTotalPages > 1): ?>
+                            <div class="sq-admin-pagination">
+                                <?php
+                                $logParams = 'view=server_logs&log_per_page=' . urlencode($logPerPageParam) . '&log_search=' . urlencode($logSearch) . '&log_level=' . urlencode($logLevelFilter) . '&log_source=' . urlencode($logSourceFilter) . '&log_status=' . urlencode($logStatusFilter);
+                                ?>
+                                <?php if ($logPage > 1): ?>
+                                    <a class="sq-admin-page-btn" href="admin_data_management.php?<?php echo $logParams; ?>&log_page=<?php echo $logPage - 1; ?>"><i class="fas fa-chevron-left"></i></a>
+                                <?php else: ?>
+                                    <span class="sq-admin-page-btn disabled"><i class="fas fa-chevron-left"></i></span>
+                                <?php endif; ?>
+                                <span class="sq-admin-page-btn active"><?php echo $logPage; ?></span>
+                                <?php if ($logPage < $logTotalPages): ?>
+                                    <a class="sq-admin-page-btn" href="admin_data_management.php?<?php echo $logParams; ?>&log_page=<?php echo $logPage + 1; ?>"><i class="fas fa-chevron-right"></i></a>
+                                <?php else: ?>
+                                    <span class="sq-admin-page-btn disabled"><i class="fas fa-chevron-right"></i></span>
+                                <?php endif; ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 <?php endif; ?>
 
@@ -2072,43 +2366,41 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
         <i class="fas fa-arrow-up"></i>
     </button>
 
+    <div class="modal-overlay" id="scanActionsModal" role="dialog" aria-modal="true" aria-labelledby="scanActionsTitle">
+        <div class="modal-card">
+            <div class="modal-head">
+                <span class="warn-icon" style="background: rgba(59,130,246,0.12); color: var(--brand-color);"><i
+                        class="fas fa-layer-group"></i></span>
+                <div class="modal-title" id="scanActionsTitle">Scan Actions</div>
+            </div>
+            <div class="modal-body">
+                <div id="scanActionsList" class="action-group" style="flex-wrap: wrap;"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="modal-btn" id="scanActionsCloseBtn">Close</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="deleteModal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
         <div class="modal-card">
             <div class="modal-head">
                 <span class="warn-icon"><i class="fas fa-trash-alt"></i></span>
-                <div class="modal-title" id="deleteModalTitle">Delete scan record</div>
+                <div class="modal-title" id="deleteModalTitle">Confirm Action</div>
             </div>
-            <div class="modal-body">
-                Are you sure you want to delete this scan record? This action cannot be undone.
-            </div>
+            <div class="modal-body" id="deleteModalBody">Are you sure you want to continue?</div>
             <div class="modal-actions">
                 <button type="button" class="modal-btn" id="deleteCancelBtn">Cancel</button>
-                <button type="button" class="modal-btn primary-danger" id="deleteConfirmBtn">Delete</button>
+                <button type="button" class="modal-btn primary-danger" id="deleteConfirmBtn">Confirm</button>
             </div>
         </div>
     </div>
-
-    <div class="modal-overlay" id="deleteSuccessModal" role="dialog" aria-modal="true"
-        aria-labelledby="deleteSuccessTitle">
-        <div class="modal-card">
-            <div class="modal-head">
-                <span class="warn-icon" style="background: rgba(16, 185, 129, 0.15); color: var(--success-color);">
-                    <i class="fas fa-check-circle"></i>
-                </span>
-                <div class="modal-title" id="deleteSuccessTitle">Deleted successfully</div>
-            </div>
-            <div class="modal-body">
-                The scan record has been removed successfully.
-            </div>
-            <div class="modal-actions">
-                <button type="button" class="modal-btn" id="deleteSuccessOkBtn">OK</button>
-            </div>
-        </div>
-    </div>
-
-    <form id="deleteForm" method="POST" action="admin_data_management.php" style="display:none;">
-        <input type="hidden" name="delete_id" id="deleteIdInput" value="">
+    <form id="recordActionForm" method="POST" action="admin_data_management.php" style="display:none;">
+        <input type="hidden" name="record_action" id="recordActionInput" value="">
+        <input type="hidden" name="record_type" id="recordTypeInput" value="">
+        <input type="hidden" name="record_id" id="recordIdInput" value="">
     </form>
+    <div class="toast-container" id="toastContainer"></div>
 
     <style>
         .sq-admin-pagination-bar {
@@ -2351,6 +2643,21 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
             url.searchParams.set('view', 'scans');
             window.location.href = url.toString();
         }
+        function sqUpdateTabPerPage(view, perPageValue) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('view', view);
+            if (view === 'ai') {
+                url.searchParams.set('ai_per_page', perPageValue);
+                url.searchParams.set('ai_page', '1');
+            } else if (view === 'server_logs') {
+                url.searchParams.set('log_per_page', perPageValue);
+                url.searchParams.set('log_page', '1');
+            } else {
+                url.searchParams.set('per_page', perPageValue);
+                url.searchParams.set('page', '1');
+            }
+            window.location.href = url.toString();
+        }
 
         (function () {
             const backToTopBtn = document.getElementById('backToTopBtn');
@@ -2369,67 +2676,179 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Ba
         })();
 
         (function () {
-            const modal = document.getElementById('deleteModal');
+            const deleteModal = document.getElementById('deleteModal');
+            const deleteBody = document.getElementById('deleteModalBody');
             const cancelBtn = document.getElementById('deleteCancelBtn');
             const confirmBtn = document.getElementById('deleteConfirmBtn');
-            const deleteIdInput = document.getElementById('deleteIdInput');
-            const deleteForm = document.getElementById('deleteForm');
-            let selectedId = null;
+            const form = document.getElementById('recordActionForm');
+            const actionInput = document.getElementById('recordActionInput');
+            const typeInput = document.getElementById('recordTypeInput');
+            const idInput = document.getElementById('recordIdInput');
+            const scanActionsModal = document.getElementById('scanActionsModal');
+            const scanActionsList = document.getElementById('scanActionsList');
+            const scanActionsCloseBtn = document.getElementById('scanActionsCloseBtn');
+            let pending = null;
 
-            function openDeleteModal(id) {
-                selectedId = parseInt(id, 10);
-                if (!selectedId) return;
-                modal.classList.add('active');
+            function showToast(title, message, kind) {
+                const container = document.getElementById('toastContainer');
+                if (!container) return;
+                const toast = document.createElement('div');
+                toast.className = 'toast';
+                const icon = kind === 'error' ? 'fa-circle-xmark' : 'fa-circle-check';
+                toast.innerHTML = '<div class="toast-icon ' + (kind === 'error' ? 'warning' : 'success') + '"><i class="fas ' + icon + '"></i></div><div class="toast-content"><h4>' + title + '</h4><p>' + message + '</p></div>';
+                container.appendChild(toast);
+                setTimeout(() => { toast.remove(); }, 3400);
             }
 
-            function closeDeleteModal() {
-                modal.classList.remove('active');
-                selectedId = null;
+            const actionLabel = { soft_delete: 'delete this record', hard_delete: 'permanently delete this record', restore: 'restore this record' };
+            function openConfirm(action, type, id) {
+                pending = { action, type, id };
+                if (deleteBody) deleteBody.textContent = 'Are you sure you want to ' + (actionLabel[action] || 'continue') + '?';
+                deleteModal?.classList.add('active');
             }
+            function closeConfirm() { deleteModal?.classList.remove('active'); pending = null; }
 
-            document.querySelectorAll('.js-delete-btn').forEach(function (btn) {
-                btn.addEventListener('click', function () {
-                    openDeleteModal(this.getAttribute('data-delete-id'));
-                });
+            document.addEventListener('click', function (e) {
+                const t = e.target;
+                if (!(t instanceof Element)) return;
+                const actionBtn = t.closest('.js-record-action');
+                if (actionBtn) {
+                    e.preventDefault();
+                    openConfirm(actionBtn.getAttribute('data-record-action') || '', actionBtn.getAttribute('data-record-type') || '', actionBtn.getAttribute('data-record-id') || '');
+                    return;
+                }
+                const scanBtn = t.closest('.js-open-scan-actions');
+                if (scanBtn) {
+                    const id = scanBtn.getAttribute('data-scan-id');
+                    const hasPdf = scanBtn.getAttribute('data-has-pdf') === '1';
+                    const isDeleted = scanBtn.getAttribute('data-deleted') === '1';
+                    if (scanActionsList) {
+                        scanActionsList.innerHTML =
+                            '<a class="action-btn html" href="<?php echo $downloadBaseAdmin; ?>?id=' + id + '&type=html"><i class="fas fa-file-code"></i> HTML</a>' +
+                            '<a class="action-btn csv" href="<?php echo $downloadBaseAdmin; ?>?id=' + id + '&type=csv"><i class="fas fa-file-csv"></i> CSV</a>' +
+                            '<a class="action-btn" href="<?php echo $downloadBaseAdmin; ?>?id=' + id + '&type=doc"><i class="fas fa-file-word"></i> DOC</a>' +
+                            (hasPdf ? '<a class="action-btn pdf" href="<?php echo $downloadBaseAdmin; ?>?id=' + id + '&type=pdf"><i class="fas fa-file-pdf"></i> PDF</a>' : '<span class="action-btn disabled"><i class="fas fa-file-pdf"></i> PDF</span>') +
+                            (isDeleted
+                                ? '<button type="button" class="action-btn js-record-action" data-record-action="restore" data-record-type="scans" data-record-id="' + id + '" title="Restore"><i class="fas fa-rotate-left"></i></button>'
+                                : '<button type="button" class="action-btn delete js-record-action" data-record-action="soft_delete" data-record-type="scans" data-record-id="' + id + '" title="Delete"><i class="fas fa-trash"></i></button>') +
+                            '<button type="button" class="action-btn delete js-record-action" data-record-action="hard_delete" data-record-type="scans" data-record-id="' + id + '" title="Delete forever"><i class="fas fa-ban"></i></button>';
+                    }
+                    scanActionsModal?.classList.add('active');
+                    return;
+                }
             });
 
-            cancelBtn?.addEventListener('click', closeDeleteModal);
-            modal?.addEventListener('click', function (e) {
-                if (e.target === modal) closeDeleteModal();
-            });
-            document.addEventListener('keydown', function (e) {
-                if (e.key === 'Escape' && modal?.classList.contains('active')) closeDeleteModal();
-            });
-
+            cancelBtn?.addEventListener('click', closeConfirm);
+            scanActionsCloseBtn?.addEventListener('click', () => scanActionsModal?.classList.remove('active'));
+            deleteModal?.addEventListener('click', (e) => { if (e.target === deleteModal) closeConfirm(); });
+            scanActionsModal?.addEventListener('click', (e) => { if (e.target === scanActionsModal) scanActionsModal.classList.remove('active'); });
             confirmBtn?.addEventListener('click', function () {
-                if (!selectedId) return;
-                deleteIdInput.value = String(selectedId);
-                deleteForm.submit();
+                if (!pending) return;
+                actionInput.value = pending.action;
+                typeInput.value = pending.type;
+                idInput.value = pending.id;
+                form.submit();
             });
+
+            const done = <?php echo $showActionToast ? 'true' : 'false'; ?>;
+            if (done) {
+                const map = {
+                    soft_delete: 'Record moved to deleted.',
+                    hard_delete: 'Record deleted permanently.',
+                    restore: 'Record restored.',
+                    clear_chat: 'Chat/meta cleared.'
+                };
+                showToast('Action completed', map[<?php echo json_encode($lastActionName); ?>] || 'Changes saved.', 'success');
+                const url = new URL(window.location.href);
+                url.searchParams.delete('action_done');
+                url.searchParams.delete('action');
+                window.history.replaceState({}, '', url.toString());
+            }
         })();
 
         (function () {
-            const shouldShow = <?php echo $showDeleteSuccess ? 'true' : 'false'; ?>;
-            if (!shouldShow) return;
-            const successModal = document.getElementById('deleteSuccessModal');
-            const okBtn = document.getElementById('deleteSuccessOkBtn');
-            if (!successModal) return;
-
-            function closeSuccessModal() {
-                successModal.classList.remove('active');
-                const url = new URL(window.location.href);
-                url.searchParams.delete('deleted');
-                window.history.replaceState({}, '', url.toString());
+            const activeView = <?php echo json_encode($activeView); ?>;
+            if (activeView === 'scans') {
+                const el = document.getElementById('scansRiskChart');
+                if (!el) return;
+                new Chart(el, {
+                    type: 'doughnut',
+                    data: {
+                        labels: <?php echo json_encode(array_keys($metrics['by_risk'])); ?>,
+                        datasets: [{
+                            data: <?php echo json_encode(array_values($metrics['by_risk'])); ?>,
+                            backgroundColor: ['#dc2626', '#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#94a3b8']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { position: 'bottom' } },
+                        cutout: '62%'
+                    }
+                });
+            } else if (activeView === 'ai') {
+                const el = document.getElementById('aiEventsChart');
+                if (!el) return;
+                new Chart(el, {
+                    type: 'bar',
+                    data: {
+                        labels: ['Submitted', 'Success', 'Other'],
+                        datasets: [{
+                            data: [
+                                <?php echo (int) $aiMetrics['ask_submitted']; ?>,
+                                <?php echo (int) $aiMetrics['ask_success']; ?>,
+                                <?php echo max(0, (int) $aiEventTotal - (int) $aiMetrics['ask_submitted'] - (int) $aiMetrics['ask_success']); ?>
+                            ],
+                            backgroundColor: ['#3b82f6', '#10b981', '#94a3b8']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                    }
+                });
+            } else if (activeView === 'server_logs') {
+                const el = document.getElementById('serverLogLevelsChart');
+                if (!el) return;
+                new Chart(el, {
+                    type: 'line',
+                    data: {
+                        labels: <?php echo json_encode($serverLogsTimelineLabels); ?>,
+                        datasets: [{
+                            label: 'Errors',
+                            data: <?php echo json_encode($serverLogsTimelineErrors); ?>,
+                            borderColor: '#ef4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                            pointBackgroundColor: '#ef4444',
+                            pointBorderColor: '#ffffff',
+                            pointRadius: 5,
+                            pointHoverRadius: 6,
+                            tension: 0.35,
+                            fill: true
+                        }, {
+                            label: 'Warnings',
+                            data: <?php echo json_encode($serverLogsTimelineWarnings); ?>,
+                            borderColor: '#f59e0b',
+                            backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                            pointBackgroundColor: '#f59e0b',
+                            pointBorderColor: '#ffffff',
+                            pointRadius: 5,
+                            pointHoverRadius: 6,
+                            tension: 0.35,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: true, position: 'bottom' } },
+                        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                    }
+                });
             }
-
-            successModal.classList.add('active');
-            okBtn?.addEventListener('click', closeSuccessModal);
-            successModal.addEventListener('click', function (e) {
-                if (e.target === successModal) closeSuccessModal();
-            });
-            document.addEventListener('keydown', function (e) {
-                if (e.key === 'Escape' && successModal.classList.contains('active')) closeSuccessModal();
-            });
         })();
     </script>
 

@@ -123,6 +123,17 @@ if ($raw === false || $raw === '') {
 
 $requestData = json_decode($raw, true);
 $targetUrl = is_array($requestData) ? (string) ($requestData['target'] ?? $requestData['url'] ?? '') : '';
+if (!is_array($requestData)) {
+    failWithUserSafeError('bad_json', 'Unable to process this scan request right now.', 400);
+}
+$targetUrl = trim($targetUrl);
+if ($targetUrl === '' || strlen($targetUrl) > 2048) {
+    failWithUserSafeError('bad_target', 'Please enter a valid target URL.', 400, ['target' => $targetUrl]);
+}
+$parts = parse_url($targetUrl);
+if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host']) || !in_array(strtolower((string) $parts['scheme']), ['http', 'https'], true)) {
+    failWithUserSafeError('bad_target_scheme', 'Please enter a valid http or https URL.', 400, ['target' => $targetUrl]);
+}
 writeServerLog('scan_request_received', 'info', 'Scan request received', [
     'target' => $targetUrl,
 ]);
@@ -141,7 +152,8 @@ curl_setopt_array($ch, [
     ],
     CURLOPT_RETURNTRANSFER => true,
     // Keep below PHP max execution window so we can return a safe JSON error.
-    CURLOPT_TIMEOUT => 90,
+    // Increased to better align with scanner full-run timeout.
+    CURLOPT_TIMEOUT => 170,
     CURLOPT_CONNECTTIMEOUT => 10,
 ]);
 

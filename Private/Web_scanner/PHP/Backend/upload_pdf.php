@@ -58,7 +58,8 @@ if (str_starts_with($pdf_b64, 'data:')) {
 }
 
 $bin = base64_decode($pdf_b64, true);
-if ($bin === false || strlen($bin) < 8000) {
+// Accept small but valid PDFs; keep a minimal guard to reject corrupt payloads.
+if ($bin === false || strlen($bin) < 1200) {
     echo json_encode(['ok' => false, 'error' => 'Invalid PDF data']);
     exit;
 }
@@ -95,15 +96,19 @@ try {
     $safe = preg_replace('/[^a-zA-Z0-9_-]/', '_', parse_url((string)($row['target_url'] ?? ''), PHP_URL_HOST) ?: 'scan');
     $baseName = $user_id . '_pdf_' . $scan_id . '_' . $ts . '_' . substr($safe, 0, 32);
     $pdfPath = $storageDir . DIRECTORY_SEPARATOR . $baseName . '.pdf';
-    file_put_contents($pdfPath, $bin);
+    $written = @file_put_contents($pdfPath, $bin);
+    if ($written === false || !is_file($pdfPath) || filesize($pdfPath) < 1200) {
+        echo json_encode(['ok' => false, 'error' => 'Failed to write PDF file to storage']);
+        exit;
+    }
 
     $rel = 'Storage/Scan_results/' . $baseName . '.pdf';
     $upd = $pdo->prepare("UPDATE scan_results SET pdf_path = ? WHERE id = ? AND (user_id = ? OR user_id = ?)");
     $upd->execute([$rel, $scan_id, $user_id, $userPk !== null ? (string) $userPk : $user_id]);
 
     echo json_encode(['ok' => true, 'pdf_path' => $rel, 'download' => 'download_scan.php?id=' . $scan_id . '&type=pdf']);
-} catch (Exception $e) {
+} catch (Throwable $e) {
     error_log('upload_pdf: ' . $e->getMessage());
-    echo json_encode(['ok' => false, 'error' => 'Failed to save PDF']);
+    echo json_encode(['ok' => false, 'error' => 'Failed to save PDF: ' . $e->getMessage()]);
 }
 

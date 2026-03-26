@@ -36,7 +36,7 @@ if (isset($_SESSION['user_uid']) && $_SESSION['user_uid']) {
 
 $id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
 $type = isset($_GET['type']) ? strtolower($_GET['type']) : '';
-if (!in_array($type, ['pdf', 'html', 'csv'], true) || $id <= 0) {
+if (!in_array($type, ['pdf', 'html', 'csv', 'doc'], true) || $id <= 0) {
     header('HTTP/1.1 400 Bad Request');
     exit('Invalid id or type');
 }
@@ -47,7 +47,7 @@ try {
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
-    $stmt = $pdo->prepare("SELECT pdf_path, html_path, csv_path FROM scan_results WHERE id = ? AND (user_id = ? OR user_id = ?)");
+    $stmt = $pdo->prepare("SELECT pdf_path, doc_path, html_path, csv_path FROM scan_results WHERE id = ? AND (user_id = ? OR user_id = ?)");
     $stmt->execute([$id, $user_id, $userPk !== null ? (string) $userPk : $user_id]);
     $row = $stmt->fetch();
     if (!$row) {
@@ -77,11 +77,13 @@ try {
 
     $mimes = [
         'pdf' => 'application/pdf',
+        'doc' => 'application/msword',
         'html' => 'text/html; charset=utf-8',
         'csv' => 'text/csv; charset=utf-8',
     ];
     $ext = [
         'pdf' => 'pdf',
+        'doc' => 'doc',
         'html' => 'html',
         'csv' => 'csv',
     ];

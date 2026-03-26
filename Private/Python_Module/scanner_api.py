@@ -20,8 +20,8 @@ from dataclasses import dataclass, asdict, field
 from enum import Enum
 import subprocess
 import platform
+from threading import Lock
 
-# Disable SSL warnings for scanning purposes
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logging.basicConfig(
@@ -30,16 +30,144 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# East Africa (EAT, UTC+03:00) without requiring tzdata/zoneinfo.
-# Using a fixed offset keeps timestamps consistent and avoids ModuleNotFoundError on Windows.
+
+# ─────────────────────────────────────────────
+# EVIDENCE HELPERS
+# ─────────────────────────────────────────────
+
+def _format_request_headers(headers: dict) -> str:
+    """Format outgoing request headers for evidence."""
+    if not headers:
+        return "  (none)"
+    return "\n".join(f"  {k}: {v}" for k, v in headers.items())
+
+
+def _format_response_headers(response: requests.Response) -> str:
+    """Format all received response headers for evidence."""
+    if response is None:
+        return "  (no response)"
+    return "\n".join(f"  {k}: {v}" for k, v in response.headers.items())
+
+
+def _highlight_in_body(body: str, needle: str, context_chars: int = 200) -> str:
+    """
+    Find needle in body and return surrounding context with the needle
+    wrapped in >>> ... <<< markers so it stands out in the evidence block.
+    Returns up to context_chars characters either side.
+    """
+    if not body or not needle:
+        return "(not found in body)"
+    idx = body.find(needle)
+    if idx == -1:
+        idx = body.lower().find(needle.lower())
+    if idx == -1:
+        return f"(payload not found verbatim; body length={len(body)})"
+    start  = max(0, idx - context_chars)
+    end    = min(len(body), idx + len(needle) + context_chars)
+    before = body[start:idx].replace('\n', ' ').replace('\r', '')
+    match  = body[idx:idx + len(needle)]
+    after  = body[idx + len(needle):end].replace('\n', ' ').replace('\r', '')
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(body) else ""
+    return f"{prefix}{before}>>>{match}<<<{after}{suffix}"
+
+
+def _body_preview(body: str, max_chars: int = 400) -> str:
+    if not body:
+        return "(empty body)"
+    cleaned = body[:max_chars].replace('\r', '').strip()
+    return cleaned + ("..." if len(body) > max_chars else "")
+
+
+def _classify_response_body(body: str, content_type: str) -> str:
+    """
+    Returns a short human-readable label for what the response body appears to be.
+    Helps non-technical readers understand what was returned.
+    """
+    ct = content_type.lower()
+    if 'json' in ct:
+        return "JSON API response"
+    if 'xml' in ct:
+        return "XML document"
+    if 'text/plain' in ct:
+        return "Plain text"
+    if 'html' in ct:
+        # Distinguish error pages, login pages, app pages
+        bl = body.lower()
+        if any(k in bl for k in ['exception', 'stack trace', 'traceback', 'fatal error']):
+            return "Error/exception page (contains debug output)"
+        if any(k in bl for k in ['login', 'sign in', 'password', 'username']):
+            return "Login or authentication page"
+        if any(k in bl for k in ['404', 'not found', 'page not found']):
+            return "404 / Not Found page"
+        if any(k in bl for k in ['403', 'forbidden', 'access denied']):
+            return "403 / Forbidden page"
+        return "HTML web page"
+    if not body.strip():
+        return "Empty response body"
+    return "Binary or unrecognised content"
+
+
+def _extract_title(body: str) -> str:
+    """Extract <title> from HTML for evidence context."""
+    m = re.search(r'<title[^>]*>([^<]{1,120})</title>', body, re.I)
+    return m.group(1).strip() if m else "(no title)"
+
+
+def _collapse_nested_expansions(text: str) -> str:
+    if not text:
+        return text
+    for _ in range(10):
+        before = text
+        text = re.sub(
+            r"Hypertext Transfer Protocol \(Hypertext Transfer Protocol \(HTTP\)\)",
+            "Hypertext Transfer Protocol (HTTP)", text)
+        text = re.sub(
+            r"Hypertext Transfer Protocol Secure \(Hypertext Transfer Protocol Secure \(HTTPS\)\)",
+            "Hypertext Transfer Protocol Secure (HTTPS)", text)
+        text = re.sub(
+            r"Cross-Site Scripting \(Cross-Site Scripting \(Cross-Site Scripting \(XSS\)\)\)",
+            "Cross-Site Scripting (XSS)", text)
+        text = re.sub(
+            r"Cross-Site Scripting \(Cross-Site Scripting \(XSS\)\)",
+            "Cross-Site Scripting (XSS)", text)
+        if text == before:
+            break
+    return text
+
+
+def expand_security_terms(text: Optional[str]) -> str:
+    if not text:
+        return ""
+    out = str(text)
+    replacements = [
+        (r"\bCORS\b",                    "Cross-Origin Resource Sharing (CORS)"),
+        (r"\bSQLi\b",                    "Structured Query Language injection (SQL injection)"),
+        (r"\bSQL\b",                     "Structured Query Language (SQL)"),
+        (r"\bXSS\b",                     "Cross-Site Scripting (XSS)"),
+        (r"\bTLS\b",                     "Transport Layer Security (TLS)"),
+        (r"\bSSL\b",                     "Secure Sockets Layer / Transport Layer Security (SSL/TLS)"),
+        (r"\bCSRF\b",                    "Cross-Site Request Forgery (CSRF)"),
+        (r"(?<!\()\bHTTP\b(?!\))",       "Hypertext Transfer Protocol (HTTP)"),
+        (r"(?<!\()\bHTTPS\b(?!\))",      "Hypertext Transfer Protocol Secure (HTTPS)"),
+        (r"\bCVE\b",                     "Common Vulnerabilities and Exposures (CVE)"),
+        (r"\bRCE\b",                     "Remote Code Execution (RCE)"),
+        (r"\bVPN\b",                     "Virtual Private Network (VPN)"),
+        (r"\bAPI\b",                     "Application Programming Interface (API)"),
+    ]
+    for pattern, replacement in replacements:
+        out = re.sub(pattern, replacement, out)
+    return _collapse_nested_expansions(out)
+
+
 EAT_TZ = timezone(timedelta(hours=3))
 
 def now_eat_iso() -> str:
     return datetime.now(EAT_TZ).isoformat()
 
 def now_eat_naive() -> datetime:
-    # Return naive datetime (no tzinfo) for safe arithmetic with naive datetimes.
     return datetime.now(EAT_TZ).replace(tzinfo=None)
+
 
 app = Flask(__name__)
 
@@ -57,6 +185,25 @@ limiter = Limiter(
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"]
 )
+
+SCAN_PROGRESS: Dict[str, Dict] = {}
+SCAN_PROGRESS_LOCK = Lock()
+
+
+def set_scan_progress(scan_token: Optional[str], stage: str, progress: int,
+                      status: str = "running", detail: str = "") -> None:
+    if not scan_token:
+        return
+    with SCAN_PROGRESS_LOCK:
+        SCAN_PROGRESS[scan_token] = {
+            "scan_token":  scan_token,
+            "stage":       stage,
+            "progress":    max(0, min(100, int(progress))),
+            "status":      status,
+            "detail":      detail,
+            "updated_at":  now_eat_iso(),
+        }
+
 
 # ─────────────────────────────────────────────
 # DATA MODELS
@@ -78,42 +225,43 @@ class PortStatus(Enum):
 
 @dataclass
 class Vulnerability:
-    name: str
-    severity: Severity
-    description: str
-    evidence: str
-    remediation: str
-    cvss_score: Optional[float] = None
+    name:          str
+    severity:      Severity
+    description:   str
+    evidence:      str
+    remediation:   str
+    cvss_score:    Optional[float] = None
     what_we_tested: Optional[str] = None
-    indicates: Optional[str] = None
-    how_exploited: Optional[str] = None
+    indicates:     Optional[str]  = None
+    how_exploited: Optional[str]  = None
 
     def dedup_key(self) -> str:
-        """Stable key used to deduplicate identical findings."""
-        return hashlib.md5(f"{self.name}|{self.severity.value}|{self.description[:60]}".encode()).hexdigest()
+        return hashlib.md5(
+            f"{self.name}|{self.severity.value}|{self.description[:60]}".encode()
+        ).hexdigest()
 
 @dataclass
 class PortInfo:
-    port: int
-    status: PortStatus
+    port:    int
+    status:  PortStatus
     service: str
-    banner: Optional[str] = None
+    banner:  Optional[str] = None
     version: Optional[str] = None
-    risk: str = "info"
+    risk:    str = "info"
 
 @dataclass
 class ScanResult:
-    target: str
-    timestamp: str
-    scan_duration: float
-    ssl_info: Dict
-    headers: Dict
+    target:         str
+    timestamp:      str
+    scan_duration:  float
+    ssl_info:       Dict
+    headers:        Dict
     vulnerabilities: List[Vulnerability]
-    port_scan: Dict
-    summary: Dict
-    error: Optional[str] = None
-    server_info: Optional[Dict] = None
-    crawler: Optional[Dict] = None
+    port_scan:      Dict
+    summary:        Dict
+    error:          Optional[str] = None
+    server_info:    Optional[Dict] = None
+    crawler:        Optional[Dict] = None
 
 
 # ─────────────────────────────────────────────
@@ -121,8 +269,6 @@ class ScanResult:
 # ─────────────────────────────────────────────
 
 class PortScanner:
-    """TCP Connect and SYN port scanner with service detection."""
-
     COMMON_PORTS = {
         21:    ('FTP',           'high'),
         22:    ('SSH',           'medium'),
@@ -158,37 +304,22 @@ class PortScanner:
         'kubernetes':    'critical',
     }
 
-    # HTTP-based admin panels that often appear on alternative ports
-    ADMIN_PANEL_PATHS = [
-        '/',
-        '/admin',
-        '/manager',
-        '/console',
-        '/dashboard',
-        '/phpmyadmin',
-        '/wp-admin',
-    ]
+    ADMIN_PANEL_PATHS = ['/', '/admin', '/manager', '/console',
+                         '/dashboard', '/phpmyadmin', '/wp-admin']
 
     def __init__(self, timeout: float = 2.0, max_workers: int = 50):
-        self.timeout   = timeout
-        self.max_workers = max_workers
-        self.os_type   = platform.system().lower()
+        self.timeout      = timeout
+        self.max_workers  = max_workers
+        self.os_type      = platform.system().lower()
 
     def scan_host(self, hostname: str, ports: Optional[List[int]] = None,
                   scan_type: str = "connect") -> Dict:
         result = {
-            'target':       hostname,
-            'scan_type':    scan_type,
-            'ports_scanned': 0,
-            'open_ports':   [],
-            'closed_ports': [],
-            'filtered_ports': [],
-            'services_found': [],
-            'vulnerabilities': [],
-            'start_time':   now_eat_iso(),
-            'duration':     0.0
+            'target': hostname, 'scan_type': scan_type,
+            'ports_scanned': 0, 'open_ports': [], 'closed_ports': [],
+            'filtered_ports': [], 'services_found': [], 'vulnerabilities': [],
+            'start_time': now_eat_iso(), 'duration': 0.0
         }
-
         start_time = time.time()
 
         try:
@@ -212,17 +343,99 @@ class PortScanner:
         else:
             open_ports = self._connect_scan(target_ip, ports)
 
+        def _port_evidence(title: str, info: PortInfo) -> str:
+            """
+            Forensic-quality port evidence.
+            Covers: what was tested, what the scanner did, exactly what it found,
+            what a layperson should understand, and what a developer can act on.
+            """
+            protocol = "TCP"
+            state    = info.status.value.upper() if hasattr(info.status, "value") else "OPEN"
+            risk_label = {
+                'critical': 'CRITICAL — Do not expose to the internet',
+                'high':     'HIGH — Should be restricted or hidden behind a firewall',
+                'medium':   'MEDIUM — Review whether internet access is necessary',
+                'low':      'LOW — Generally acceptable but worth reviewing',
+                'info':     'INFO — Expected open port',
+            }.get(info.risk.lower(), info.risk.upper())
+
+            lines = [
+                f"{'='*60}",
+                f"PORT SCAN EVIDENCE — {title}",
+                f"{'='*60}",
+                "",
+                "WHAT WE DID",
+                f"{'-'*40}",
+                f"  Scan Method      : TCP {scan_type.upper()} connect — we attempted a full",
+                f"                     TCP handshake with port {info.port} on the target host.",
+                f"  Target Hostname  : {hostname}",
+                f"  Resolved IP      : {target_ip}",
+                f"  Port Tested      : {info.port}/{protocol.lower()}",
+                f"  Scan Timestamp   : {now_eat_iso()}",
+                "",
+                "WHAT WE FOUND",
+                f"{'-'*40}",
+                f"  Port             : {info.port}/{protocol.lower()}",
+                f"  Observed State   : {state}",
+                f"  Detected Service : {info.service}",
+                f"  Risk Rating      : {risk_label}",
+                "",
+                "SERVICE FINGERPRINT",
+                f"{'-'*40}",
+            ]
+
+            if info.banner:
+                banner_clean = info.banner.replace('\r\n', '\n').replace('\r', '\n').strip()
+                lines.append(f"  Banner Received  : Yes — the service sent the following greeting:")
+                for banner_line in banner_clean.split('\n')[:8]:
+                    lines.append(f"    | {banner_line}")
+                lines.append(f"  Banner Length    : {len(info.banner)} characters")
+            else:
+                lines.append("  Banner Received  : No — port accepted connection but sent no greeting data.")
+                lines.append("  Implication      : Service is listening but silent (common for databases, proxies).")
+
+            if info.version:
+                lines.append(f"  Version String   : {info.version}")
+                lines.append(f"  Implication      : Exact version is visible — enables targeted CVE lookup.")
+
+            lines += [
+                "",
+                "NETWORK REACHABILITY",
+                f"{'-'*40}",
+                f"  Connection Result  : TCP handshake completed successfully",
+                f"  Firewall Status    : Not filtered — connection completed within {self.timeout:.1f}s timeout",
+                f"  Internet Exposure  : This port is reachable from outside your network",
+                "",
+                "SUMMARY",
+                f"{'-'*40}",
+                f"  Port {info.port} on your server is open and responding to anyone on the internet.",
+                f"  The service running here is identified as: {info.service}.",
+            ]
+
+            if info.risk in ('critical', 'high'):
+                lines += [
+                    f"  This type of service ({info.service}) is commonly targeted by automated",
+                    f"  attack tools. It should not be directly reachable from the public internet.",
+                    f"  If you need it, restrict access to specific IP addresses using a firewall rule.",
+                ]
+            elif info.risk == 'medium':
+                lines += [
+                    f"  This service does not need to be publicly accessible in most deployments.",
+                    f"  Verify whether internet access is intentional and restrict if not needed.",
+                ]
+            else:
+                lines.append(f"  This is an expected open port for serving web traffic.")
+
+            return "\n".join(lines) + "\n"
+
         for port_info in open_ports:
             entry = {
-                'port':    port_info.port,
-                'service': port_info.service,
-                'banner':  port_info.banner,
-                'version': port_info.version,
-                'risk':    port_info.risk
+                'port': port_info.port, 'service': port_info.service,
+                'banner': port_info.banner, 'version': port_info.version,
+                'risk': port_info.risk
             }
             result['open_ports'].append(entry)
 
-            # ── Risky service check ───────────────────────────────────────
             service_lower = port_info.service.lower()
             if any(risky in service_lower for risky in self.RISKY_SERVICES):
                 risk_level = self.RISKY_SERVICES.get(
@@ -230,12 +443,11 @@ class PortScanner:
                 )
                 severity = (Severity.CRITICAL if risk_level == 'critical' else
                             Severity.HIGH     if risk_level == 'high'     else Severity.MEDIUM)
-
                 result['vulnerabilities'].append(Vulnerability(
                     name=f"Exposed {port_info.service} Service",
                     severity=severity,
                     description=f"Port {port_info.port} ({port_info.service}) is open and accessible from the internet",
-                    evidence=f"Service detected: {port_info.banner or port_info.service}",
+                    evidence=_port_evidence(f"Exposed {port_info.service} Service", port_info),
                     remediation=f"Restrict access to {port_info.service} using firewall rules. Consider VPN or IP whitelisting.",
                     cvss_score=7.5 if risk_level == 'critical' else 6.5,
                     what_we_tested=f"We probed port {port_info.port} and identified the service running on it.",
@@ -243,52 +455,48 @@ class PortScanner:
                     how_exploited="Attackers scan for this port, then target known CVEs for the service, attempt brute-force logins, or use it for lateral movement."
                 ))
 
-            # ── Specific per-service checks ───────────────────────────────
             if port_info.port == 23:
                 result['vulnerabilities'].append(Vulnerability(
                     name="Telnet Service Detected",
                     severity=Severity.CRITICAL,
                     description="Telnet transmits all data including credentials in plaintext",
-                    evidence="Port 23 is open",
+                    evidence=_port_evidence("Telnet Plaintext Service", port_info),
                     remediation="Disable Telnet immediately and use SSH instead",
                     cvss_score=9.8,
                     what_we_tested="We detected an open Telnet service (port 23).",
                     indicates="Telnet means credentials and all traffic can be read by anyone on the network path.",
                     how_exploited="A network-level attacker can sniff usernames and passwords; or brute-force the login directly."
                 ))
-
             elif port_info.port == 6379:
                 result['vulnerabilities'].append(Vulnerability(
                     name="Redis Exposed to Internet",
                     severity=Severity.CRITICAL,
                     description="Redis is accessible without network-level restriction",
-                    evidence=f"Port 6379 open. Banner: {port_info.banner or 'none'}",
+                    evidence=_port_evidence("Redis Unauthenticated Access", port_info),
                     remediation="Bind Redis to 127.0.0.1 in redis.conf. Enable requirepass. Block port 6379 at the firewall.",
                     cvss_score=10.0,
                     what_we_tested="We probed the Redis port for open access.",
                     indicates="Publicly accessible Redis frequently allows unauthenticated data access and remote code execution.",
                     how_exploited="Attackers read/write all data, plant SSH keys via config SET, or write a cron job for shell access."
                 ))
-
             elif port_info.port == 27017:
                 result['vulnerabilities'].append(Vulnerability(
                     name="MongoDB Exposed to Internet",
                     severity=Severity.CRITICAL,
                     description="MongoDB port is accessible without network-level restriction",
-                    evidence="Port 27017 open",
+                    evidence=_port_evidence("MongoDB Unauthenticated Access", port_info),
                     remediation="Bind MongoDB to 127.0.0.1. Enable authentication. Block port 27017 at the firewall.",
                     cvss_score=10.0,
                     what_we_tested="We probed the MongoDB port for open access.",
-                    indicates="Publicly accessible MongoDB has historically led to mass data theft (hundreds of thousands of databases ransomed).",
+                    indicates="Publicly accessible MongoDB has historically led to mass data theft.",
                     how_exploited="An attacker connects with any MongoDB client, dumps all databases, deletes them, and leaves a ransom note."
                 ))
-
             elif port_info.port == 9200:
                 result['vulnerabilities'].append(Vulnerability(
                     name="Elasticsearch Exposed to Internet",
                     severity=Severity.HIGH,
                     description="Elasticsearch REST API is publicly accessible",
-                    evidence="Port 9200 open",
+                    evidence=_port_evidence("Elasticsearch REST API Exposure", port_info),
                     remediation="Restrict port 9200 to localhost or VPN. Enable Elasticsearch security features (X-Pack).",
                     cvss_score=8.5,
                     what_we_tested="We probed the Elasticsearch REST API port.",
@@ -296,16 +504,24 @@ class PortScanner:
                     how_exploited="Attacker calls /_cat/indices and /_search to dump all data, or deletes indices."
                 ))
 
-            # ── Admin panel detection on HTTP ports ───────────────────────
             if port_info.service in ('HTTP', 'HTTP-Proxy', 'HTTPS-Alt') or port_info.port in (8080, 8443, 8888, 9090):
-                admin_found = self._probe_admin_panels(hostname, port_info.port,
-                                                        'https' if port_info.port in (8443,) else 'http')
+                admin_found = self._probe_admin_panels(
+                    hostname, port_info.port,
+                    'https' if port_info.port in (8443,) else 'http'
+                )
                 if admin_found:
                     result['vulnerabilities'].append(Vulnerability(
                         name=f"Admin Panel Accessible on Port {port_info.port}",
                         severity=Severity.HIGH,
                         description=f"An admin or management interface was found at port {port_info.port}",
-                        evidence=f"Accessible path(s): {', '.join(admin_found)}",
+                        evidence=(
+                            _port_evidence("Administrative Interface Exposure", port_info) +
+                            f"\nADMIN PATH RESULTS\n{'-'*40}\n" +
+                            "\n".join(f"  GET {p} -> returned HTTP 200/30x/401/403 (path exists)" for p in admin_found) +
+                            f"\n\n  These paths responded — they exist and may be accessible.\n"
+                            f"  A 401/403 response means the path is protected but reachable from the internet.\n"
+                            f"  A 200 response means it is fully open with no authentication.\n"
+                        ),
                         remediation="Restrict admin interfaces to internal IPs or VPN only. Add authentication if not present.",
                         cvss_score=7.0,
                         what_we_tested=f"We probed common admin paths on port {port_info.port}.",
@@ -313,13 +529,12 @@ class PortScanner:
                         how_exploited="Attacker accesses the panel directly and attempts default or brute-forced credentials."
                     ))
 
-        result['duration']    = round(time.time() - start_time, 2)
-        result['open_count']  = len(result['open_ports'])
+        result['duration']   = round(time.time() - start_time, 2)
+        result['open_count'] = len(result['open_ports'])
         return result
 
     def _probe_admin_panels(self, hostname: str, port: int, scheme: str) -> List[str]:
-        """Try common admin paths on an HTTP port. Returns accessible paths."""
-        found = []
+        found   = []
         session = requests.Session()
         session.headers['User-Agent'] = 'ScanQuotient/2.2'
         for path in self.ADMIN_PANEL_PATHS:
@@ -347,9 +562,8 @@ class PortScanner:
                     version = None
                     try:
                         sock.settimeout(1.0)
-                        # Protocol-aware probes
                         if port == 22:
-                            banner = sock.recv(256).decode('utf-8', errors='ignore').strip()
+                            banner  = sock.recv(256).decode('utf-8', errors='ignore').strip()
                             version = banner.split('\n')[0] if banner else None
                             service_name = 'SSH'
                         elif port == 21:
@@ -378,12 +592,9 @@ class PortScanner:
 
                     risk = self.COMMON_PORTS.get(port, ('Unknown', 'info'))[1]
                     return PortInfo(
-                        port=port,
-                        status=PortStatus.OPEN,
-                        service=service_name,
-                        banner=banner[:200] if banner else None,
-                        version=version,
-                        risk=risk
+                        port=port, status=PortStatus.OPEN, service=service_name,
+                        banner=banner[:400] if banner else None,
+                        version=version, risk=risk
                     )
             except socket.timeout:
                 return PortInfo(port=port, status=PortStatus.FILTERED, service='unknown', risk='info')
@@ -418,7 +629,7 @@ class PortScanner:
             raise RuntimeError("nmap not available")
 
         port_str = ','.join(map(str, ports))
-        cmd = ['nmap', '-sS', '-p', port_str, '-T4', '--open', '-oX', '-', target_ip]
+        cmd      = ['nmap', '-sS', '-p', port_str, '-T4', '--open', '-oX', '-', target_ip]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             for line in result.stdout.split('\n'):
@@ -429,8 +640,7 @@ class PortScanner:
                         service_match = re.search(r'name="([^"]+)"', line)
                         service = service_match.group(1) if service_match else 'unknown'
                         open_ports.append(PortInfo(
-                            port=port,
-                            status=PortStatus.OPEN,
+                            port=port, status=PortStatus.OPEN,
                             service=service.upper(),
                             risk=self.RISKY_SERVICES.get(service.lower(), 'low')
                         ))
@@ -463,35 +673,22 @@ class SecurityScanner:
         self.session.headers.update({
             'User-Agent': 'ScanQuotient Security Scanner/2.2 (Security Assessment Tool)'
         })
-        self.timeout      = 10
+        self.timeout       = 10
         self.max_redirects = 5
         self.port_scanner  = PortScanner(timeout=2.0, max_workers=30)
 
-        # ── Payloads ──────────────────────────────────────────────────────
         self.sql_payloads = [
-            "'",
-            "''",
-            "' OR '1'='1",
-            "' OR 1=1--",
-            "' UNION SELECT NULL--",
-            "' AND 1=1--",
-            "' AND 1=2--",
-            "'; DROP TABLE users--",
-            "1' AND 1=1--",
-            "1' AND 1=2--",
-            "' OR 'x'='x",
-            "') OR ('1'='1",
-            "1; SELECT * FROM users",
-            "' OR 1=1#",
-            "' OR 1=1/*"
+            "'", "''", "' OR '1'='1", "' OR 1=1--", "' UNION SELECT NULL--",
+            "' AND 1=1--", "' AND 1=2--", "'; DROP TABLE users--",
+            "1' AND 1=1--", "1' AND 1=2--", "' OR 'x'='x",
+            "') OR ('1'='1", "1; SELECT * FROM users", "' OR 1=1#", "' OR 1=1/*"
         ]
 
-        # Time-based blind SQLi payloads mapped to DB type
         self.blind_sql_payloads = [
-            ("' AND SLEEP(4)--",          "MySQL"),
-            ("'; WAITFOR DELAY '0:0:4'--", "MSSQL"),
-            ("' AND pg_sleep(4)--",        "PostgreSQL"),
-            ("' AND 1=BENCHMARK(5000000,MD5(1))--", "MySQL-benchmark"),
+            ("' AND SLEEP(4)--",                          "MySQL"),
+            ("'; WAITFOR DELAY '0:0:4'--",                "MSSQL"),
+            ("' AND pg_sleep(4)--",                       "PostgreSQL"),
+            ("' AND 1=BENCHMARK(5000000,MD5(1))--",       "MySQL-benchmark"),
         ]
 
         self.xss_payloads = [
@@ -510,106 +707,94 @@ class SecurityScanner:
             "<audio src=x onerror=alert(1)>",
         ]
 
-        # Open redirect payloads
         self.redirect_payloads = [
-            "https://evil.com",
-            "//evil.com",
-            "/\\evil.com",
-            "https:evil.com",
-            "%2F%2Fevil.com",
+            "https://evil.com", "//evil.com", "/\\evil.com",
+            "https:evil.com", "%2F%2Fevil.com",
         ]
 
-        # Sensitive files that should never be publicly accessible
         self.sensitive_paths = [
-            ('/.env',                  'Environment File',         Severity.CRITICAL),
-            ('/.env.local',            'Environment File',         Severity.CRITICAL),
-            ('/.env.production',       'Environment File',         Severity.CRITICAL),
-            ('/.git/HEAD',             'Git Repository',           Severity.HIGH),
-            ('/.git/config',           'Git Config',               Severity.HIGH),
-            ('/config.php',            'PHP Config File',          Severity.HIGH),
-            ('/wp-config.php',         'WordPress Config',         Severity.CRITICAL),
-            ('/wp-config.php.bak',     'WordPress Config Backup',  Severity.CRITICAL),
-            ('/phpinfo.php',           'PHP Info Page',            Severity.MEDIUM),
-            ('/info.php',              'PHP Info Page',            Severity.MEDIUM),
-            ('/test.php',              'Test PHP File',            Severity.LOW),
-            ('/admin',                 'Admin Panel',              Severity.MEDIUM),
-            ('/admin/',                'Admin Panel',              Severity.MEDIUM),
-            ('/administrator',         'Admin Panel',              Severity.MEDIUM),
-            ('/phpmyadmin',            'phpMyAdmin',               Severity.HIGH),
-            ('/phpmyadmin/',           'phpMyAdmin',               Severity.HIGH),
-            ('/pma',                   'phpMyAdmin (pma)',         Severity.HIGH),
-            ('/wp-admin',              'WordPress Admin',          Severity.MEDIUM),
-            ('/wp-login.php',          'WordPress Login',          Severity.LOW),
-            ('/server-status',         'Apache Server Status',     Severity.MEDIUM),
-            ('/server-info',           'Apache Server Info',       Severity.MEDIUM),
-            ('/nginx_status',          'Nginx Status Page',        Severity.MEDIUM),
-            ('/actuator',              'Spring Boot Actuator',     Severity.HIGH),
-            ('/actuator/env',          'Spring Actuator Env',      Severity.CRITICAL),
-            ('/actuator/health',       'Spring Actuator Health',   Severity.LOW),
-            ('/api/swagger-ui',        'Swagger UI',               Severity.LOW),
-            ('/swagger-ui.html',       'Swagger UI',               Severity.LOW),
-            ('/swagger.json',          'Swagger API Spec',         Severity.LOW),
-            ('/api-docs',              'API Docs',                 Severity.LOW),
-            ('/graphql',               'GraphQL Endpoint',         Severity.MEDIUM),
-            ('/console',               'Web Console',              Severity.HIGH),
-            ('/solr',                  'Solr Admin UI',            Severity.HIGH),
-            ('/jmx-console',           'JBoss JMX Console',        Severity.CRITICAL),
-            ('/web-console',           'JBoss Web Console',        Severity.HIGH),
-            ('/debug',                 'Debug Endpoint',           Severity.MEDIUM),
-            ('/_debug_toolbar',        'Django Debug Toolbar',     Severity.MEDIUM),
-            ('/trace',                 'Trace Endpoint',           Severity.LOW),
-            ('/backup',                'Backup Directory',         Severity.HIGH),
-            ('/backup.zip',            'Backup Archive',           Severity.CRITICAL),
-            ('/backup.tar.gz',         'Backup Archive',           Severity.CRITICAL),
-            ('/dump.sql',              'Database Dump',            Severity.CRITICAL),
-            ('/db.sql',                'Database Dump',            Severity.CRITICAL),
-            ('/database.sql',          'Database Dump',            Severity.CRITICAL),
-            ('/robots.txt',            'Robots.txt (info only)',    Severity.INFO),
-            ('/sitemap.xml',           'Sitemap (info only)',       Severity.INFO),
-            ('/crossdomain.xml',       'Flash Crossdomain Policy', Severity.LOW),
-            ('/.htaccess',             '.htaccess File',           Severity.MEDIUM),
-            ('/web.config',            'IIS Web Config',           Severity.HIGH),
-            ('/package.json',          'Node Package Manifest',    Severity.LOW),
-            ('/composer.json',         'PHP Composer Manifest',    Severity.LOW),
-            ('/Dockerfile',            'Dockerfile',               Severity.LOW),
-            ('/docker-compose.yml',    'Docker Compose File',      Severity.MEDIUM),
+            ('/.env',               'Environment File',         Severity.CRITICAL),
+            ('/.env.local',         'Environment File',         Severity.CRITICAL),
+            ('/.env.production',    'Environment File',         Severity.CRITICAL),
+            ('/.git/HEAD',          'Git Repository',           Severity.HIGH),
+            ('/.git/config',        'Git Config',               Severity.HIGH),
+            ('/config.php',         'PHP Config File',          Severity.HIGH),
+            ('/wp-config.php',      'WordPress Config',         Severity.CRITICAL),
+            ('/wp-config.php.bak',  'WordPress Config Backup',  Severity.CRITICAL),
+            ('/phpinfo.php',        'PHP Info Page',            Severity.MEDIUM),
+            ('/info.php',           'PHP Info Page',            Severity.MEDIUM),
+            ('/test.php',           'Test PHP File',            Severity.LOW),
+            ('/admin',              'Admin Panel',              Severity.MEDIUM),
+            ('/admin/',             'Admin Panel',              Severity.MEDIUM),
+            ('/administrator',      'Admin Panel',              Severity.MEDIUM),
+            ('/phpmyadmin',         'phpMyAdmin',               Severity.HIGH),
+            ('/phpmyadmin/',        'phpMyAdmin',               Severity.HIGH),
+            ('/pma',                'phpMyAdmin (pma)',          Severity.HIGH),
+            ('/wp-admin',           'WordPress Admin',          Severity.MEDIUM),
+            ('/wp-login.php',       'WordPress Login',          Severity.LOW),
+            ('/server-status',      'Apache Server Status',     Severity.MEDIUM),
+            ('/server-info',        'Apache Server Info',       Severity.MEDIUM),
+            ('/nginx_status',       'Nginx Status Page',        Severity.MEDIUM),
+            ('/actuator',           'Spring Boot Actuator',     Severity.HIGH),
+            ('/actuator/env',       'Spring Actuator Env',      Severity.CRITICAL),
+            ('/actuator/health',    'Spring Actuator Health',   Severity.LOW),
+            ('/api/swagger-ui',     'Swagger UI',               Severity.LOW),
+            ('/swagger-ui.html',    'Swagger UI',               Severity.LOW),
+            ('/swagger.json',       'Swagger API Spec',         Severity.LOW),
+            ('/api-docs',           'API Docs',                 Severity.LOW),
+            ('/graphql',            'GraphQL Endpoint',         Severity.MEDIUM),
+            ('/console',            'Web Console',              Severity.HIGH),
+            ('/solr',               'Solr Admin UI',            Severity.HIGH),
+            ('/jmx-console',        'JBoss JMX Console',        Severity.CRITICAL),
+            ('/web-console',        'JBoss Web Console',        Severity.HIGH),
+            ('/debug',              'Debug Endpoint',           Severity.MEDIUM),
+            ('/_debug_toolbar',     'Django Debug Toolbar',     Severity.MEDIUM),
+            ('/trace',              'Trace Endpoint',           Severity.LOW),
+            ('/backup',             'Backup Directory',         Severity.HIGH),
+            ('/backup.zip',         'Backup Archive',           Severity.CRITICAL),
+            ('/backup.tar.gz',      'Backup Archive',           Severity.CRITICAL),
+            ('/dump.sql',           'Database Dump',            Severity.CRITICAL),
+            ('/db.sql',             'Database Dump',            Severity.CRITICAL),
+            ('/database.sql',       'Database Dump',            Severity.CRITICAL),
+            ('/robots.txt',         'Robots.txt (info only)',    Severity.INFO),
+            ('/sitemap.xml',        'Sitemap (info only)',       Severity.INFO),
+            ('/crossdomain.xml',    'Flash Crossdomain Policy', Severity.LOW),
+            ('/.htaccess',          '.htaccess File',           Severity.MEDIUM),
+            ('/web.config',         'IIS Web Config',           Severity.HIGH),
+            ('/package.json',       'Node Package Manifest',    Severity.LOW),
+            ('/composer.json',      'PHP Composer Manifest',    Severity.LOW),
+            ('/Dockerfile',         'Dockerfile',               Severity.LOW),
+            ('/docker-compose.yml', 'Docker Compose File',      Severity.MEDIUM),
         ]
 
         self.security_headers = {
             'Strict-Transport-Security': {
-                'required':    True,
-                'description': 'HSTS - Forces HTTPS connections',
-                'severity':    Severity.HIGH
+                'required': True, 'description': 'HSTS - Forces HTTPS connections',
+                'severity': Severity.HIGH
             },
             'Content-Security-Policy': {
-                'required':    True,
-                'description': 'CSP - Prevents XSS and data injection',
-                'severity':    Severity.CRITICAL
+                'required': True, 'description': 'CSP - Prevents XSS and data injection',
+                'severity': Severity.CRITICAL
             },
             'X-Frame-Options': {
-                'required':    True,
-                'description': 'Clickjacking protection',
-                'severity':    Severity.MEDIUM
+                'required': True, 'description': 'Clickjacking protection',
+                'severity': Severity.MEDIUM
             },
             'X-Content-Type-Options': {
-                'required':    True,
-                'description': 'MIME sniffing protection',
-                'severity':    Severity.MEDIUM
+                'required': True, 'description': 'MIME sniffing protection',
+                'severity': Severity.MEDIUM
             },
             'Referrer-Policy': {
-                'required':    False,
-                'description': 'Controls referrer information',
-                'severity':    Severity.LOW
+                'required': False, 'description': 'Controls referrer information',
+                'severity': Severity.LOW
             },
             'Permissions-Policy': {
-                'required':    False,
-                'description': 'Browser feature restrictions',
-                'severity':    Severity.LOW
+                'required': False, 'description': 'Browser feature restrictions',
+                'severity': Severity.LOW
             },
             'X-XSS-Protection': {
-                'required':    False,
-                'description': 'Legacy XSS filter (deprecated but useful)',
-                'severity':    Severity.LOW
+                'required': False, 'description': 'Legacy XSS filter (deprecated but useful)',
+                'severity': Severity.LOW
             }
         }
 
@@ -626,7 +811,6 @@ class SecurityScanner:
     # ── Helpers ───────────────────────────────────────────────────────────
 
     def _safe_get(self, url: str, **kwargs) -> Optional[requests.Response]:
-        """GET with sensible defaults and swallowed exceptions."""
         kwargs.setdefault('timeout', self.timeout)
         kwargs.setdefault('verify', False)
         kwargs.setdefault('allow_redirects', True)
@@ -636,18 +820,114 @@ class SecurityScanner:
             logger.debug(f"GET {url} failed: {e}")
             return None
 
+    def _build_evidence(self, title: str, request_url: str, method: str,
+                        request_headers: Optional[dict], response: Optional[requests.Response],
+                        extra_fields: Optional[List[Tuple[str, str]]] = None,
+                        body_highlight: Optional[str] = None,
+                        body_preview_chars: int = 400,
+                        plain_english_summary: Optional[str] = None) -> str:
+        """
+        Central evidence builder — produces a structured, forensic-quality block.
+
+        Sections:
+          WHAT WE DID         — scanner action in plain language
+          REQUEST             — full HTTP request sent (method, URL, all headers)
+          RESPONSE            — full status line + all response headers received
+          RESPONSE BODY       — excerpt with finding highlighted (>>> ... <<<)
+          FINDING DETAILS     — finding-specific key/value fields
+          PLAIN-LANGUAGE      — one-paragraph summary for non-technical readers
+
+        Both technical and non-technical readers can extract value from this layout.
+        """
+        sep  = "=" * 60
+        sep2 = "-" * 40
+
+        # Derive body metadata if response exists
+        body_type    = ""
+        page_title   = ""
+        content_type = ""
+        if response is not None:
+            content_type = response.headers.get('Content-Type', '')
+            body_type    = _classify_response_body(response.text, content_type)
+            if 'html' in content_type.lower():
+                page_title = _extract_title(response.text)
+
+        lines = [sep, f"EVIDENCE: {title}", sep, ""]
+
+        # ── WHAT WE DID ──────────────────────────────────────────────────
+        lines += [
+            "WHAT WE DID",
+            sep2,
+            f"  We sent a {method} request to the URL shown below and inspected the",
+            f"  response for signs of the vulnerability described in this finding.",
+            f"  URL Tested  : {request_url}",
+            f"  Method      : {method}",
+            f"  Timestamp   : {now_eat_iso()}",
+            "",
+        ]
+
+        # ── REQUEST ──────────────────────────────────────────────────────
+        lines += ["REQUEST", sep2,
+                  f"  Method  : {method}",
+                  f"  URL     : {request_url}"]
+        if request_headers:
+            lines.append("  Headers Sent:")
+            for k, v in request_headers.items():
+                lines.append(f"    {k}: {v}")
+        lines.append("")
+
+        # ── RESPONSE ─────────────────────────────────────────────────────
+        lines += ["RESPONSE", sep2]
+        if response is not None:
+            lines.append(f"  Status  : {response.status_code} {response.reason}")
+            if content_type:
+                lines.append(f"  Content-Type   : {content_type}")
+            if page_title:
+                lines.append(f"  Page Title     : {page_title}")
+            lines.append(f"  Body Type      : {body_type}")
+            lines.append(f"  Body Size      : {len(response.content):,} bytes")
+            lines.append("  All Response Headers:")
+            for k, v in response.headers.items():
+                lines.append(f"    {k}: {v}")
+            lines.append("")
+
+            # ── RESPONSE BODY ─────────────────────────────────────────
+            lines += ["RESPONSE BODY", sep2]
+            if body_highlight:
+                excerpt = _highlight_in_body(response.text, body_highlight)
+                lines.append("  The scanner looked for the payload in the response body.")
+                lines.append("  The finding is marked with >>> ... <<< below:")
+                lines.append(f"  {excerpt}")
+            else:
+                lines.append(f"  (First {body_preview_chars} characters of response body)")
+                lines.append(f"  {_body_preview(response.text, body_preview_chars)}")
+        else:
+            lines.append("  (No HTTP response received — connection may have failed or timed out)")
+        lines.append("")
+
+        # ── FINDING DETAILS ───────────────────────────────────────────
+        if extra_fields:
+            lines += ["FINDING DETAILS", sep2]
+            for k, v in extra_fields:
+                lines.append(f"  {k:<35}: {v if v is not None and v != '' else 'Not observed'}")
+            lines.append("")
+
+        # ── PLAIN-LANGUAGE SUMMARY ────────────────────────────────────
+        if plain_english_summary:
+            lines += ["PLAIN-LANGUAGE SUMMARY", sep2,
+                      f"  {plain_english_summary}", ""]
+
+        return "\n".join(lines)
+
     def get_server_info(self, response: requests.Response) -> Dict:
         info = {}
         headers_lower = {k.lower(): (k, v) for k, v in response.headers.items()}
         for key, label in [
-            ('server',             'Server'),
-            ('x-powered-by',       'X-Powered-By'),
-            ('x-aspnet-version',   'X-AspNet-Version'),
-            ('x-aspnetmvc-version','X-AspNetMvc-Version'),
-            ('x-runtime',          'X-Runtime'),
-            ('x-version',          'X-Version'),
-            ('x-generator',        'X-Generator'),
-            ('via',                'Via'),
+            ('server', 'Server'), ('x-powered-by', 'X-Powered-By'),
+            ('x-aspnet-version', 'X-AspNet-Version'),
+            ('x-aspnetmvc-version', 'X-AspNetMvc-Version'),
+            ('x-runtime', 'X-Runtime'), ('x-version', 'X-Version'),
+            ('x-generator', 'X-Generator'), ('via', 'Via'),
         ]:
             if key in headers_lower:
                 _, value = headers_lower[key]
@@ -655,13 +935,13 @@ class SecurityScanner:
         return info
 
     def crawl_domain(self, start_url: str, max_pages: int = 12) -> List[str]:
-        parsed = urlparse(start_url)
-        scheme = parsed.scheme
-        netloc = parsed.netloc
-        base   = f"{scheme}://{netloc}"
-        seen: Set[str]  = set()
-        to_visit        = [start_url]
-        discovered      = []
+        parsed   = urlparse(start_url)
+        scheme   = parsed.scheme
+        netloc   = parsed.netloc
+        base     = f"{scheme}://{netloc}"
+        seen: Set[str] = set()
+        to_visit = [start_url]
+        discovered = []
 
         while to_visit and len(discovered) < max_pages:
             url = to_visit.pop(0)
@@ -671,7 +951,7 @@ class SecurityScanner:
             if url not in discovered:
                 discovered.append(url)
             try:
-                r = self._safe_get(url)
+                r    = self._safe_get(url)
                 if r is None:
                     continue
                 text = r.text or ''
@@ -727,6 +1007,134 @@ class SecurityScanner:
         ))
         return True, clean_url
 
+    def _ssl_evidence(self, title: str, hostname: str, port: int,
+                      cert: Optional[dict], cipher: Optional[tuple],
+                      protocol: Optional[str],
+                      extra_fields: Optional[List[Tuple[str, str]]] = None,
+                      error: Optional[str] = None,
+                      plain_english_summary: Optional[str] = None) -> str:
+        """
+        Forensic-quality SSL/TLS evidence block.
+        Includes full socket handshake details, complete certificate fields,
+        SAN list, cipher suite breakdown, finding-specific extras,
+        and a plain-language summary.
+        """
+        sep  = "=" * 60
+        sep2 = "-" * 40
+        lines = [sep, f"EVIDENCE: {title}", sep, ""]
+
+        # ── WHAT WE DID ──────────────────────────────────────────────────
+        lines += [
+            "WHAT WE DID",
+            sep2,
+            f"  We opened a raw TLS socket connection to {hostname}:{port} and",
+            f"  inspected the cryptographic handshake, server certificate, and",
+            f"  negotiated cipher suite for security weaknesses.",
+            f"  Scan Timestamp  : {now_eat_iso()}",
+            "",
+        ]
+
+        # ── CONNECTION ───────────────────────────────────────────────────
+        lines += [
+            "CONNECTION",
+            sep2,
+            f"  Test Method     : Raw TLS socket handshake (ssl.SSLContext)",
+            f"  Target Hostname : {hostname}",
+            f"  Target Port     : {port}",
+            "",
+        ]
+
+        # ── TLS HANDSHAKE ────────────────────────────────────────────────
+        lines += ["TLS HANDSHAKE", sep2]
+        if error:
+            lines.append(f"  Handshake Result : FAILED")
+            lines.append(f"  Error            : {error}")
+            lines.append(f"  Meaning          : The browser would show a security warning for this site.")
+        else:
+            lines.append(f"  Handshake Result : SUCCESS — TLS connection established")
+        if protocol:
+            proto_note = {
+                'TLSv1.3': 'Current best standard — excellent',
+                'TLSv1.2': 'Acceptable — widely supported',
+                'TLSv1.1': 'DEPRECATED — should be disabled',
+                'TLSv1':   'DEPRECATED — vulnerable to BEAST attack',
+                'SSLv3':   'BROKEN — vulnerable to POODLE attack',
+                'SSLv2':   'BROKEN — critically insecure',
+            }.get(protocol, 'Unknown protocol version')
+            lines.append(f"  Negotiated Protocol : {protocol} ({proto_note})")
+        if cipher:
+            cipher_note = "strong" if any(x in cipher[0].upper() for x in ['GCM', 'CHACHA', 'POLY']) else "potentially weak — review"
+            lines.append(f"  Cipher Suite        : {cipher[0]} ({cipher_note})")
+            lines.append(f"  Cipher Protocol     : {cipher[1] if len(cipher) > 1 else 'unknown'}")
+            lines.append(f"  Key Bits            : {cipher[2] if len(cipher) > 2 else 'unknown'}")
+        lines.append("")
+
+        # ── CERTIFICATE ──────────────────────────────────────────────────
+        if cert:
+            lines += ["CERTIFICATE", sep2]
+            subject = cert.get('subject', ())
+            subject_str = ", ".join(
+                f"{k}={v}" for fields in subject for k, v in (fields if isinstance(fields[0], tuple) else [fields])
+            ) if subject else "unknown"
+            lines.append(f"  Subject          : {subject_str}")
+
+            issuer = cert.get('issuer', ())
+            issuer_str = ", ".join(
+                f"{k}={v}" for fields in issuer for k, v in (fields if isinstance(fields[0], tuple) else [fields])
+            ) if issuer else "unknown"
+            lines.append(f"  Issuer           : {issuer_str}")
+
+            not_before = cert.get('notBefore', 'unknown')
+            not_after  = cert.get('notAfter',  'unknown')
+            lines.append(f"  Serial Number    : {cert.get('serialNumber', 'unknown')}")
+            lines.append(f"  Valid From       : {not_before}")
+            lines.append(f"  Valid Until      : {not_after}")
+
+            # Validity window in days
+            try:
+                expiry = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %Z')
+                days_left = (expiry - now_eat_naive()).days
+                if days_left < 0:
+                    lines.append(f"  Validity Status  : EXPIRED {abs(days_left)} days ago")
+                elif days_left < 30:
+                    lines.append(f"  Validity Status  : Expiring in {days_left} days — renew now")
+                else:
+                    lines.append(f"  Validity Status  : Valid for {days_left} more days")
+            except Exception:
+                pass
+
+            san_list = cert.get('subjectAltName', [])
+            if san_list:
+                lines.append(f"  Subject Alt Names ({len(san_list)} domains covered):")
+                for san_type, san_val in san_list[:10]:
+                    lines.append(f"    {san_type}: {san_val}")
+                if len(san_list) > 10:
+                    lines.append(f"    ... and {len(san_list) - 10} more")
+            else:
+                lines.append("  Subject Alt Names: None")
+
+            ocsp = cert.get('OCSP', [])
+            if ocsp:
+                lines.append(f"  OCSP URLs        : {', '.join(ocsp)}")
+            ca_issuers = cert.get('caIssuers', [])
+            if ca_issuers:
+                lines.append(f"  CA Issuers       : {', '.join(ca_issuers)}")
+            lines.append("")
+
+        # ── FINDING DETAILS ───────────────────────────────────────────
+        if extra_fields:
+            lines += ["FINDING DETAILS", sep2]
+            for k, v in extra_fields:
+                lines.append(f"  {k:<35}: {v if v is not None and v != '' else 'Not observed'}")
+            lines.append("")
+
+        # ── PLAIN-LANGUAGE SUMMARY ────────────────────────────────────
+        if plain_english_summary:
+            lines += ["PLAIN-LANGUAGE SUMMARY", sep2,
+                      f"  {plain_english_summary}", ""]
+
+        return "\n".join(lines)
+
     # ── SSL/TLS ───────────────────────────────────────────────────────────
 
     def check_ssl_tls(self, url: str) -> Dict:
@@ -743,7 +1151,26 @@ class SecurityScanner:
                 name="Insecure HTTP",
                 severity=Severity.HIGH,
                 description="Site does not use HTTPS encryption",
-                evidence="URL scheme is HTTP",
+                evidence=self._ssl_evidence(
+                    title="Insecure HTTP — No Transport Encryption",
+                    hostname=parsed.hostname or url,
+                    port=parsed.port or 80,
+                    cert=None, cipher=None, protocol=None,
+                    extra_fields=[
+                        ("Request URL",       url),
+                        ("Observed Scheme",   parsed.scheme.upper()),
+                        ("Expected Scheme",   "HTTPS"),
+                        ("Observed Result",   "Site served over HTTP — all traffic is unencrypted plaintext"),
+                        ("HSTS Present",      "No — no HTTPS to enforce"),
+                        ("Upgrade Path",      "Obtain a TLS cert (Let's Encrypt is free) and redirect HTTP to HTTPS"),
+                    ],
+                    plain_english_summary=(
+                        "Your website is using plain HTTP, which means everything sent between "
+                        "a visitor and your server — including passwords and session cookies — "
+                        "can be read by anyone on the same network (e.g. coffee shop Wi-Fi). "
+                        "Switching to HTTPS with a free Let's Encrypt certificate fixes this completely."
+                    )
+                ),
                 remediation="Enable HTTPS and redirect all HTTP traffic to HTTPS. Most hosting providers offer free Let's Encrypt certificates.",
                 what_we_tested="We checked whether the site is served over HTTPS.",
                 indicates="Use of HTTP means all data between the visitor and your server travels in plaintext.",
@@ -777,7 +1204,6 @@ class SecurityScanner:
                         'cipher':           cipher[0] if cipher else 'unknown'
                     }
 
-                    # Expiry check
                     not_after = cert.get('notAfter')
                     if not_after:
                         expiry_date       = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %Z')
@@ -787,7 +1213,24 @@ class SecurityScanner:
                                 name="Expired SSL Certificate",
                                 severity=Severity.CRITICAL,
                                 description=f"Certificate expired {abs(days_until_expiry)} days ago",
-                                evidence=f"Expiry date: {not_after}",
+                                evidence=self._ssl_evidence(
+                                    title="Expired SSL/TLS Certificate",
+                                    hostname=hostname or '', port=port,
+                                    cert=cert, cipher=cipher, protocol=protocol,
+                                    extra_fields=[
+                                        ("Days Since Expiry",  str(abs(days_until_expiry))),
+                                        ("Expiry Date",        not_after),
+                                        ("Current Date",       now_eat_iso()[:10]),
+                                        ("Observed Result",    f"Certificate EXPIRED {abs(days_until_expiry)} days ago — browsers block this site"),
+                                        ("Browser Behaviour",  "NET::ERR_CERT_DATE_INVALID shown to all visitors"),
+                                    ],
+                                    plain_english_summary=(
+                                        f"Your security certificate expired {abs(days_until_expiry)} days ago. "
+                                        "Visitors now see a browser warning saying 'Your connection is not private' "
+                                        "and most will leave immediately. Renew the certificate today — "
+                                        "certbot (Let's Encrypt) does this for free and can auto-renew."
+                                    )
+                                ),
                                 remediation="Renew your SSL certificate immediately. Use certbot (Let's Encrypt) for a free certificate.",
                                 what_we_tested="We checked the SSL/TLS certificate expiry date.",
                                 indicates="An expired certificate breaks HTTPS and shows security warnings to all visitors.",
@@ -798,51 +1241,97 @@ class SecurityScanner:
                                 name="SSL Certificate Expiring Soon",
                                 severity=Severity.MEDIUM,
                                 description=f"Certificate expires in {days_until_expiry} days",
-                                evidence=f"Expiry date: {not_after}",
+                                evidence=self._ssl_evidence(
+                                    title="SSL/TLS Certificate Expiring Soon",
+                                    hostname=hostname or '', port=port,
+                                    cert=cert, cipher=cipher, protocol=protocol,
+                                    extra_fields=[
+                                        ("Days Remaining",   str(days_until_expiry)),
+                                        ("Expiry Date",      not_after),
+                                        ("Current Date",     now_eat_iso()[:10]),
+                                        ("Observed Result",  f"Certificate expires in {days_until_expiry} days"),
+                                        ("Auto-Renewal Cmd", "certbot renew --deploy-hook 'systemctl reload nginx'"),
+                                    ],
+                                    plain_english_summary=(
+                                        f"Your certificate has {days_until_expiry} days left before it expires. "
+                                        "Once it expires your site will show security warnings to all visitors. "
+                                        "Renew now and set up automatic renewal so this never happens again."
+                                    )
+                                ),
                                 remediation="Renew the certificate now. Set up auto-renewal with certbot to avoid this in future.",
                                 what_we_tested="We checked the SSL/TLS certificate expiry date.",
                                 indicates="Certificate will soon expire, losing HTTPS protection.",
                                 how_exploited="Expired certs cause browser warnings; users may abandon the site or be vulnerable to MITM."
                             ))
 
-                    # Weak protocol
                     if protocol in ['SSLv2', 'SSLv3', 'TLSv1', 'TLSv1.1']:
                         result['vulnerabilities'].append(Vulnerability(
                             name=f"Weak TLS Protocol ({protocol})",
                             severity=Severity.HIGH,
                             description=f"Server uses outdated protocol {protocol}",
-                            evidence=f"Negotiated protocol: {protocol}",
+                            evidence=self._ssl_evidence(
+                                title=f"Weak TLS Protocol Accepted — {protocol}",
+                                hostname=hostname or '', port=port,
+                                cert=cert, cipher=cipher, protocol=protocol,
+                                extra_fields=[
+                                    ("Negotiated Protocol", protocol),
+                                    ("Expected Protocols",  "TLSv1.2 or TLSv1.3 only"),
+                                    ("Known Attacks",       "BEAST (TLS 1.0), POODLE (SSL 3.0), DROWN (SSL 2.0)"),
+                                    ("CVEs",                "CVE-2014-3566 (POODLE), CVE-2011-3389 (BEAST)"),
+                                    ("Observed Result",     f"Server completed a full {protocol} handshake — deprecated protocol accepted"),
+                                    ("Fix (Nginx)",         "ssl_protocols TLSv1.2 TLSv1.3;"),
+                                    ("Fix (Apache)",        "SSLProtocol -all +TLSv1.2 +TLSv1.3"),
+                                ],
+                                plain_english_summary=(
+                                    f"Your server still accepts {protocol}, an old and insecure encryption standard. "
+                                    "This is like using a lock that's known to be broken. Attackers with network access "
+                                    "can potentially decrypt traffic. Disabling old protocols in your server config "
+                                    "takes less than 5 minutes and fixes this completely."
+                                )
+                            ),
                             remediation="Disable TLS 1.0 and 1.1 in your server config. Allow only TLS 1.2 and 1.3.",
                             what_we_tested="We checked which TLS protocol version the server negotiates.",
                             indicates=f"{protocol} is considered broken and vulnerable to known attacks.",
                             how_exploited="BEAST and POODLE attacks can decrypt traffic encrypted with older protocols."
                         ))
 
-                    # Weak cipher check
                     if cipher:
-                        cipher_name = cipher[0].upper()
+                        cipher_name  = cipher[0].upper()
                         weak_ciphers = ['RC4', 'DES', '3DES', 'NULL', 'EXPORT', 'MD5', 'ANON']
                         if any(w in cipher_name for w in weak_ciphers):
+                            matched_weak = next((w for w in weak_ciphers if w in cipher_name), 'unknown')
                             result['vulnerabilities'].append(Vulnerability(
                                 name=f"Weak Cipher Suite ({cipher[0]})",
                                 severity=Severity.HIGH,
                                 description=f"Server is using a weak or broken cipher: {cipher[0]}",
-                                evidence=f"Negotiated cipher: {cipher[0]}",
+                                evidence=self._ssl_evidence(
+                                    title=f"Weak Cipher Suite Negotiated — {cipher[0]}",
+                                    hostname=hostname or '', port=port,
+                                    cert=cert, cipher=cipher, protocol=protocol,
+                                    extra_fields=[
+                                        ("Negotiated Cipher",    cipher[0]),
+                                        ("Key Bits",             str(cipher[2]) if len(cipher) > 2 else 'unknown'),
+                                        ("Weak Pattern Matched", matched_weak),
+                                        ("Why It's Weak",        f"{matched_weak} is considered cryptographically broken"),
+                                        ("Recommended Ciphers",  "TLS_AES_256_GCM_SHA384, TLS_CHACHA20_POLY1305_SHA256, ECDHE-RSA-AES256-GCM-SHA384"),
+                                        ("Observed Result",      f"Server negotiated {cipher[0]} — considered weak"),
+                                        ("Fix (Nginx)",          "ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:...;"),
+                                        ("Fix (Apache)",         "SSLCipherSuite HIGH:!aNULL:!MD5:!3DES:!RC4"),
+                                    ],
+                                    plain_english_summary=(
+                                        f"The encryption algorithm your server uses ({cipher[0]}) has known weaknesses. "
+                                        "An attacker who records your encrypted traffic could potentially decrypt it later. "
+                                        "Updating your server's cipher list to modern standards (AES-GCM or ChaCha20) "
+                                        "is a configuration change that takes minutes to apply."
+                                    )
+                                ),
                                 remediation="Update your TLS configuration to use only strong cipher suites (AES-GCM, ChaCha20).",
                                 what_we_tested="We inspected the cipher suite negotiated by the server.",
                                 indicates="Weak ciphers can be cracked, exposing encrypted traffic.",
                                 how_exploited="An attacker who records encrypted traffic can decrypt it offline using known attacks against the weak cipher."
                             ))
 
-                    # HSTS preload check (from the cert negotiation response)
-                    # Actual HSTS check is done in header analysis; grade here
-                    if protocol == 'TLSv1.3':
-                        result['grade'] = 'A+'
-                    elif protocol == 'TLSv1.2':
-                        result['grade'] = 'A'
-                    else:
-                        result['grade'] = 'C'
-
+                    result['grade']  = 'A+' if protocol == 'TLSv1.3' else 'A' if protocol == 'TLSv1.2' else 'C'
                     result['status'] = 'secure'
 
         except ssl.SSLCertVerificationError as e:
@@ -851,11 +1340,29 @@ class SecurityScanner:
                 name="Untrusted or Self-Signed SSL Certificate",
                 severity=Severity.HIGH,
                 description="Certificate cannot be verified by a trusted authority",
-                evidence=str(e),
+                evidence=self._ssl_evidence(
+                    title="Untrusted / Self-Signed SSL Certificate",
+                    hostname=hostname or '', port=port,
+                    cert=None, cipher=None, protocol=None,
+                    error=str(e),
+                    extra_fields=[
+                        ("Validation Error",   str(e)),
+                        ("Trust Chain",        "Could not be chained to any trusted certificate authority"),
+                        ("Browser Behaviour",  "NET::ERR_CERT_AUTHORITY_INVALID / 'Your connection is not private'"),
+                        ("Observed Result",    "Certificate rejected by system trust store — cannot be verified"),
+                        ("Fix",                "Replace with a certificate from Let's Encrypt (free) or a trusted CA"),
+                    ],
+                    plain_english_summary=(
+                        "Your site's security certificate was not issued by a recognised authority, "
+                        "so browsers refuse to trust it. Every visitor sees a 'Your connection is not private' "
+                        "warning and must click through a scary warning page to continue. "
+                        "Replace it with a free Let's Encrypt certificate to fix this immediately."
+                    )
+                ),
                 remediation="Replace the self-signed certificate with one from a trusted CA (e.g. Let's Encrypt — it's free).",
                 what_we_tested="We tried to verify the server certificate against trusted certificate authorities.",
-                indicates="Visitors see 'Your connection is not private' warnings; browsers cannot confirm they're talking to the real server.",
-                how_exploited="Users who click through the warning are vulnerable to MITM; attackers can present their own certificate."
+                indicates="Visitors see 'Your connection is not private' warnings.",
+                how_exploited="Users who click through the warning are vulnerable to MITM attacks."
             ))
         except ssl.SSLError as e:
             result['status'] = 'error'
@@ -863,11 +1370,27 @@ class SecurityScanner:
                 name="SSL Certificate Error",
                 severity=Severity.HIGH,
                 description="SSL certificate validation failed",
-                evidence=str(e),
+                evidence=self._ssl_evidence(
+                    title="SSL/TLS Handshake Failed",
+                    hostname=hostname or '', port=port,
+                    cert=None, cipher=None, protocol=None,
+                    error=str(e),
+                    extra_fields=[
+                        ("SSL Error",         str(e)),
+                        ("Observed Result",   "TLS handshake did not complete — HTTPS is broken"),
+                        ("Common Causes",     "Mismatched hostname, broken cert chain, unsupported protocol"),
+                        ("Fix",               "Verify certificate CN/SAN matches hostname; ensure full chain installed"),
+                    ],
+                    plain_english_summary=(
+                        "The HTTPS connection could not be established due to a certificate error. "
+                        "This typically means the certificate is for a different domain name, "
+                        "the certificate chain is incomplete, or the certificate itself is malformed."
+                    )
+                ),
                 remediation="Fix SSL certificate configuration (valid cert, correct chain, matching hostname).",
                 what_we_tested="We attempted to establish an HTTPS connection and validate the server certificate.",
                 indicates="Broken HTTPS; visitors cannot connect securely.",
-                how_exploited="Browsers may block the site entirely or show warnings that users dismiss, exposing them to interception."
+                how_exploited="Browsers may block the site entirely or show warnings that users dismiss."
             ))
         except Exception as e:
             result['status'] = 'error'
@@ -895,7 +1418,6 @@ class SecurityScanner:
                     'value': value[:100] + '...' if len(value) > 100 else value
                 })
 
-                # Misconfiguration checks
                 if header == 'X-Frame-Options':
                     if value.upper() not in ['DENY', 'SAMEORIGIN']:
                         result['misconfigured'].append({
@@ -920,31 +1442,28 @@ class SecurityScanner:
                             'issue':   '; '.join(issues),
                             'current': value[:80] + '...' if len(value) > 80 else value
                         })
-                        result['score'] += 1  # Partial credit
+                        result['score'] += 1
                     else:
                         result['score'] += 3
 
                 elif header == 'Strict-Transport-Security':
-                    # Check max-age is meaningful (≥ 1 year = 31536000)
                     max_age_match = re.search(r'max-age\s*=\s*(\d+)', value, re.I)
                     if max_age_match:
                         max_age = int(max_age_match.group(1))
                         if max_age < 31536000:
                             result['misconfigured'].append({
                                 'header':  header,
-                                'issue':   f'max-age={max_age} is less than 1 year (31536000). Recommend at least 1 year.',
+                                'issue':   f'max-age={max_age} is less than 1 year (31536000).',
                                 'current': value
                             })
-                            result['score'] += 2  # Partial credit
+                            result['score'] += 2
                         else:
                             result['score'] += 3
                     else:
                         result['misconfigured'].append({
-                            'header':  header,
-                            'issue':   'Missing max-age directive',
+                            'header': header, 'issue': 'Missing max-age directive',
                             'current': value
                         })
-
                 else:
                     result['score'] += 3 if config['required'] else 1
             else:
@@ -955,29 +1474,90 @@ class SecurityScanner:
                         'severity':    config['severity'].value
                     })
 
-        result['percentage'] = round((result['score'] / result['max_score']) * 100, 1) if result['max_score'] > 0 else 0
+        result['percentage'] = round(
+            (result['score'] / result['max_score']) * 100, 1
+        ) if result['max_score'] > 0 else 0
         return result
 
     # ── CORS Misconfiguration ─────────────────────────────────────────────
 
     def check_cors(self, url: str) -> List[Vulnerability]:
-        """Detect overly permissive CORS policies."""
         vulnerabilities = []
+        evil_origin  = "https://evil-attacker.com"
+        sent_headers = {'Origin': evil_origin, 'User-Agent': self.session.headers['User-Agent']}
+
+        # Also test preflight OPTIONS to capture full CORS policy
+        preflight_result = "Not tested"
         try:
-            # Test 1: Does the server reflect an arbitrary Origin?
-            evil_origin = "https://evil-attacker.com"
-            resp = self.session.get(url, timeout=self.timeout, verify=False, headers={
-                'Origin': evil_origin
-            })
+            preflight = self.session.options(
+                url, timeout=self.timeout, verify=False,
+                headers={
+                    'Origin': evil_origin,
+                    'Access-Control-Request-Method': 'GET',
+                    'Access-Control-Request-Headers': 'Authorization',
+                }
+            )
+            pf_acao = preflight.headers.get('Access-Control-Allow-Origin', '(not set)')
+            pf_acam = preflight.headers.get('Access-Control-Allow-Methods', '(not set)')
+            pf_acah = preflight.headers.get('Access-Control-Allow-Headers', '(not set)')
+            pf_acac = preflight.headers.get('Access-Control-Allow-Credentials', '(not set)')
+            pf_acma = preflight.headers.get('Access-Control-Max-Age', '(not set)')
+            preflight_result = (
+                f"HTTP {preflight.status_code} — "
+                f"Allow-Origin: {pf_acao} | "
+                f"Allow-Methods: {pf_acam} | "
+                f"Allow-Credentials: {pf_acac}"
+            )
+            preflight_detail = (
+                f"    Status              : {preflight.status_code} {preflight.reason}\n"
+                f"    Allow-Origin        : {pf_acao}\n"
+                f"    Allow-Methods       : {pf_acam}\n"
+                f"    Allow-Headers       : {pf_acah}\n"
+                f"    Allow-Credentials   : {pf_acac}\n"
+                f"    Max-Age             : {pf_acma}"
+            )
+        except Exception:
+            preflight_detail = "    (OPTIONS preflight request failed or not supported)"
+
+        try:
+            resp = self.session.get(url, timeout=self.timeout, verify=False,
+                                    headers={'Origin': evil_origin})
             acao = resp.headers.get('Access-Control-Allow-Origin', '')
             acac = resp.headers.get('Access-Control-Allow-Credentials', '')
+            acam = resp.headers.get('Access-Control-Allow-Methods', '')
+            acah = resp.headers.get('Access-Control-Allow-Headers', '')
 
             if acao == '*':
                 vulnerabilities.append(Vulnerability(
                     name="CORS Wildcard Origin",
                     severity=Severity.MEDIUM,
                     description="Server allows any website to make cross-origin requests (Access-Control-Allow-Origin: *)",
-                    evidence="Access-Control-Allow-Origin: *",
+                    evidence=self._build_evidence(
+                        title="CORS Wildcard Policy",
+                        request_url=url, method="GET",
+                        request_headers=sent_headers,
+                        response=resp,
+                        extra_fields=[
+                            ("Test: Injected Origin Header",           evil_origin),
+                            ("Result: Access-Control-Allow-Origin",    acao),
+                            ("Result: Access-Control-Allow-Credentials", acac or "Not present"),
+                            ("Result: Access-Control-Allow-Methods",   acam or "Not present"),
+                            ("Result: Access-Control-Allow-Headers",   acah or "Not present"),
+                            ("Preflight OPTIONS Result",               preflight_result),
+                            ("Preflight Detail",                       "\n" + preflight_detail),
+                            ("Observed Result",
+                             "Wildcard ACAO returned — any website can read this server's responses"),
+                            ("What This Means",
+                             "A malicious website at evil.com CAN read responses from this server on behalf of logged-in users"),
+                        ],
+                        plain_english_summary=(
+                            "We pretended to be a malicious website and asked your server for data. "
+                            "Your server said 'yes, anyone can access me' (Access-Control-Allow-Origin: *). "
+                            "This means any website a visitor opens could silently fetch data from your "
+                            "server using that visitor's login session. Fix: replace '*' with your "
+                            "exact trusted domain name."
+                        )
+                    ),
                     remediation="Restrict CORS to specific trusted origins. Replace '*' with your exact frontend domain.",
                     cvss_score=5.3,
                     what_we_tested="We sent a cross-origin request with a fake Origin header and inspected the CORS response.",
@@ -986,13 +1566,36 @@ class SecurityScanner:
                 ))
 
             elif acao == evil_origin:
-                # Server is reflecting the attacker origin
                 if acac.lower() == 'true':
                     vulnerabilities.append(Vulnerability(
                         name="CORS Misconfiguration — Origin Reflection with Credentials",
                         severity=Severity.CRITICAL,
                         description="Server reflects any Origin and allows credentials, enabling cross-origin authenticated attacks",
-                        evidence=f"Access-Control-Allow-Origin: {evil_origin}, Access-Control-Allow-Credentials: true",
+                        evidence=self._build_evidence(
+                            title="CORS Origin Reflection + Credentials",
+                            request_url=url, method="GET",
+                            request_headers=sent_headers,
+                            response=resp,
+                            extra_fields=[
+                                ("Test: Injected Origin Header",           evil_origin),
+                                ("Result: Access-Control-Allow-Origin",    acao),
+                                ("Result: Access-Control-Allow-Credentials", acac),
+                                ("Result: Access-Control-Allow-Methods",   acam or "Not present"),
+                                ("Preflight OPTIONS Result",               preflight_result),
+                                ("Preflight Detail",                       "\n" + preflight_detail),
+                                ("Observed Result",
+                                 "CRITICAL: Server reflected untrusted origin AND allowed credentials"),
+                                ("What This Means",
+                                 "Attacker site can make authenticated API calls AS the victim, reading private data or performing actions"),
+                            ],
+                            plain_english_summary=(
+                                "This is a critical finding. We sent a request pretending to be from evil-attacker.com "
+                                "and your server responded saying 'yes, evil-attacker.com can make requests — "
+                                "and it can send cookies too.' This means a malicious website can silently perform "
+                                "actions on your site as any logged-in user — reading their private data, changing "
+                                "their settings, or making purchases on their behalf."
+                            )
+                        ),
                         remediation="Never reflect the Origin header blindly. Maintain a strict whitelist of allowed origins.",
                         cvss_score=9.3,
                         what_we_tested="We sent a request with a fake Origin header and checked if the server reflected it alongside Allow-Credentials: true.",
@@ -1004,7 +1607,30 @@ class SecurityScanner:
                         name="CORS Misconfiguration — Origin Reflection",
                         severity=Severity.MEDIUM,
                         description="Server reflects arbitrary Origin headers in CORS responses",
-                        evidence=f"Access-Control-Allow-Origin: {evil_origin}",
+                        evidence=self._build_evidence(
+                            title="CORS Origin Reflection",
+                            request_url=url, method="GET",
+                            request_headers=sent_headers,
+                            response=resp,
+                            extra_fields=[
+                                ("Test: Injected Origin Header",           evil_origin),
+                                ("Result: Access-Control-Allow-Origin",    acao),
+                                ("Result: Access-Control-Allow-Credentials", acac or "Not present — unauthenticated cross-origin only"),
+                                ("Result: Access-Control-Allow-Methods",   acam or "Not present"),
+                                ("Preflight OPTIONS Result",               preflight_result),
+                                ("Preflight Detail",                       "\n" + preflight_detail),
+                                ("Observed Result",
+                                 "Server reflected untrusted origin — unauthenticated cross-origin access possible"),
+                                ("What This Means",
+                                 "Any website can read unauthenticated responses from this server. Credentials (cookies) are not sent."),
+                            ],
+                            plain_english_summary=(
+                                "Your server is echoing back whatever 'Origin' header it receives. "
+                                "We sent a fake origin (evil-attacker.com) and the server confirmed access for it. "
+                                "While cookies are not sent in this case, unauthenticated API data "
+                                "can still be read by any website. Fix: use a strict allowlist of trusted domains."
+                            )
+                        ),
                         remediation="Maintain a strict whitelist of allowed origins instead of reflecting the request Origin.",
                         cvss_score=6.1,
                         what_we_tested="We sent a request with a fake Origin header and checked if the server reflected it.",
@@ -1018,40 +1644,79 @@ class SecurityScanner:
     # ── Open Redirect ─────────────────────────────────────────────────────
 
     def check_open_redirect(self, url: str) -> List[Vulnerability]:
-        """Test common redirect parameters for open redirect vulnerabilities."""
         vulnerabilities = []
-        parsed = urlparse(url)
-
+        parsed          = urlparse(url)
         redirect_params = ['redirect', 'redirect_to', 'url', 'next', 'return',
                            'returnUrl', 'return_url', 'goto', 'destination', 'redir']
 
         for param in redirect_params:
-            for payload in self.redirect_payloads[:2]:  # Limit to keep scan fast
+            for payload in self.redirect_payloads[:2]:
                 test_query = urlencode({param: payload})
                 test_url   = urlunparse((
-                    parsed.scheme, parsed.netloc, parsed.path,
-                    '', test_query, ''
+                    parsed.scheme, parsed.netloc, parsed.path, '', test_query, ''
                 ))
+                sent_headers = dict(self.session.headers)
                 try:
-                    resp = self.session.get(
-                        test_url, timeout=self.timeout, verify=False,
-                        allow_redirects=False
-                    )
+                    resp = self.session.get(test_url, timeout=self.timeout,
+                                            verify=False, allow_redirects=False)
                     if resp.status_code in (301, 302, 303, 307, 308):
                         location = resp.headers.get('Location', '')
                         if 'evil' in location or location.startswith('//') or 'evil-attacker' in location:
+                            # Try to follow the redirect chain for additional context
+                            redirect_chain = [f"Step 1: {resp.status_code} -> {location}"]
+                            try:
+                                chain_resp = self.session.get(
+                                    test_url, timeout=self.timeout, verify=False,
+                                    allow_redirects=True, max_redirects=3
+                                )
+                                if chain_resp.history and len(chain_resp.history) > 1:
+                                    for i, hr in enumerate(chain_resp.history[1:], 2):
+                                        redirect_chain.append(
+                                            f"Step {i}: {hr.status_code} -> {hr.headers.get('Location','?')}"
+                                        )
+                                redirect_chain.append(f"Final URL: {chain_resp.url}")
+                            except Exception:
+                                pass
+
+                            chain_str = "\n    ".join(redirect_chain)
+
                             vulnerabilities.append(Vulnerability(
                                 name="Open Redirect",
                                 severity=Severity.MEDIUM,
                                 description=f"Parameter '{param}' can redirect users to external malicious sites",
-                                evidence=f"Request to ?{param}={payload} redirected to: {location}",
+                                evidence=self._build_evidence(
+                                    title="Open Redirect Validation",
+                                    request_url=test_url, method="GET",
+                                    request_headers=sent_headers,
+                                    response=resp,
+                                    extra_fields=[
+                                        ("Parameter Tested",        param),
+                                        ("Injected Payload",        payload),
+                                        ("Response Status",         f"{resp.status_code} {resp.reason}"),
+                                        ("Location Header",         location or "Not present"),
+                                        ("Destination Controlled",  "YES — destination is an attacker-controlled external URL"),
+                                        ("Redirect Chain",          "\n    " + chain_str),
+                                        ("All Redirect Headers",    resp.headers.get('Location', 'none')),
+                                        ("Observed Result",
+                                         f"Application issued HTTP {resp.status_code} redirect to external URL we supplied"),
+                                        ("What This Means",
+                                         f"An attacker crafts: {parsed.scheme}://{parsed.netloc}{parsed.path}?{param}=https://phishing.com — victim trusts your domain and gets sent to attacker"),
+                                    ],
+                                    plain_english_summary=(
+                                        f"Your site redirects users to whatever URL is placed in the '{param}' parameter "
+                                        "without checking whether it's safe. An attacker can create a link that looks like "
+                                        f"it goes to your site ({parsed.netloc}) but immediately sends the visitor to a "
+                                        "fake login page. Because the link starts with your trusted domain, users are "
+                                        "much more likely to click it and enter their credentials."
+                                    )
+                                ),
                                 remediation="Validate redirect destinations against a whitelist of allowed URLs. Never redirect to user-supplied URLs directly.",
                                 cvss_score=6.1,
                                 what_we_tested=f"We tested the '{param}' parameter with an external URL as the redirect target.",
                                 indicates="Open redirect allows an attacker to use your domain as a launchpad for phishing.",
                                 how_exploited="Attacker crafts a link like yoursite.com/login?redirect=evil.com — victim trusts your domain, lands on attacker's site."
                             ))
-                            return vulnerabilities  # One finding is enough
+                            return vulnerabilities
                 except Exception:
                     continue
         return vulnerabilities
@@ -1059,13 +1724,9 @@ class SecurityScanner:
     # ── Sensitive File Exposure ───────────────────────────────────────────
 
     def check_sensitive_files(self, base_url: str) -> List[Vulnerability]:
-        """
-        Probe a curated list of sensitive paths.
-        Uses a thread pool for speed. Returns deduplicated findings.
-        """
         vulnerabilities = []
-        parsed   = urlparse(base_url)
-        base     = f"{parsed.scheme}://{parsed.netloc}"
+        parsed          = urlparse(base_url)
+        base            = f"{parsed.scheme}://{parsed.netloc}"
         seen_paths: Set[str] = set()
 
         def probe(path_info: Tuple) -> Optional[Vulnerability]:
@@ -1075,45 +1736,167 @@ class SecurityScanner:
             seen_paths.add(path)
             url = base + path
             try:
-                resp = self.session.get(
-                    url, timeout=5, verify=False,
-                    allow_redirects=False
-                )
-                # 200 = definitely exposed; 401/403 = exists but protected (still worth reporting for some)
-                if resp.status_code == 200:
-                    # Extra confirmation: check content isn't just an HTML 404 page
-                    content_type = resp.headers.get('Content-Type', '')
-                    content_len  = len(resp.content)
+                resp         = self.session.get(url, timeout=5, verify=False, allow_redirects=False)
+                content_type = resp.headers.get('Content-Type', '')
+                content_len  = len(resp.content)
 
-                    # Skip if it looks like a generic HTML page (likely a CMS 404)
+                if resp.status_code == 200:
                     if 'text/html' in content_type and content_len > 50000:
                         return None
                     if severity == Severity.INFO:
-                        return None  # robots.txt etc — just skip, too noisy
+                        return None
 
-                    snippet = resp.text[:120].replace('\n', ' ').strip()
+                    body_type    = _classify_response_body(resp.text, content_type)
+                    body_excerpt = _body_preview(resp.text, 600)
+
+                    # Credential pattern detection
+                    secret_findings = []
+                    secret_patterns = [
+                        (r'(?i)(password|passwd|db_pass)\s*[=:]\s*\S+',   'Database Password'),
+                        (r'(?i)(secret|secret_key)\s*[=:]\s*["\']?\S+',  'Secret Key'),
+                        (r'(?i)(api[_-]?key)\s*[=:]\s*["\']?\S+',        'API Key'),
+                        (r'(?i)(token)\s*[=:]\s*["\']?\S+',              'Auth Token'),
+                        (r'AKIA[0-9A-Z]{16}',                             'AWS Access Key ID'),
+                        (r'-----BEGIN.*PRIVATE KEY-----',                 'Private Key'),
+                        (r'ghp_[A-Za-z0-9]{36}',                         'GitHub Token'),
+                        (r'(?i)DB_HOST\s*[=:]\s*\S+',                    'Database Host'),
+                        (r'(?i)DATABASE_URL\s*[=:]\s*\S+',               'Database URL'),
+                    ]
+                    for sp_pattern, sp_label in secret_patterns:
+                        m = re.search(sp_pattern, resp.text)
+                        if m:
+                            secret_findings.append(f"{sp_label}: {m.group(0)[:80]}")
+
+                    # Build a rich, structured evidence block
+                    sep  = "=" * 60
+                    sep2 = "-" * 40
+                    ev_lines = [
+                        sep,
+                        f"EVIDENCE: Exposed Sensitive File — {label}",
+                        sep,
+                        "",
+                        "WHAT WE DID",
+                        sep2,
+                        f"  We requested the path '{path}' directly from your server.",
+                        f"  This file should not be publicly accessible — we confirmed it is.",
+                        f"  URL Tested  : {url}",
+                        f"  Timestamp   : {now_eat_iso()}",
+                        "",
+                        "REQUEST",
+                        sep2,
+                        f"  Method  : GET",
+                        f"  URL     : {url}",
+                        f"  Headers : Standard browser-like headers (User-Agent, Accept)",
+                        "",
+                        "RESPONSE",
+                        sep2,
+                        f"  Status         : {resp.status_code} {resp.reason}",
+                        f"  Content-Type   : {content_type or '(not set)'}",
+                        f"  Content-Length : {content_len:,} bytes",
+                        f"  Body Type      : {body_type}",
+                        f"  Server         : {resp.headers.get('Server', '(not disclosed)')}",
+                        "",
+                        "ALL RESPONSE HEADERS",
+                        sep2,
+                    ]
+                    for k, v in resp.headers.items():
+                        ev_lines.append(f"  {k}: {v}")
+
+                    ev_lines += [
+                        "",
+                        "RESPONSE BODY (first 600 characters)",
+                        sep2,
+                        f"  {body_excerpt}",
+                        "",
+                    ]
+
+                    if secret_findings:
+                        ev_lines += [
+                            "CREDENTIALS / SECRETS DETECTED IN BODY",
+                            sep2,
+                            "  *** WARNING: Live credentials appear to be present in this file ***",
+                        ]
+                        for sf in secret_findings:
+                            ev_lines.append(f"  >>> {sf}")
+                        ev_lines += [
+                            "",
+                            "  ACTION REQUIRED: Rotate all credentials listed above immediately.",
+                            "  Treat them as fully compromised — they have been publicly accessible.",
+                            "",
+                        ]
+
+                    ev_lines += [
+                        "FINDING DETAILS",
+                        sep2,
+                        f"  File / Path          : {path}",
+                        f"  File Type            : {label}",
+                        f"  Credentials Found    : {'YES — see above' if secret_findings else 'None detected by pattern matching (manual review recommended)'}",
+                        f"  Access Control       : None — file is fully public with no authentication",
+                        "",
+                        "PLAIN-LANGUAGE SUMMARY",
+                        sep2,
+                    ]
+
+                    if secret_findings:
+                        ev_lines.append(
+                            f"  Your file '{path}' is publicly accessible and appears to contain "
+                            f"live credentials (passwords, API keys, or secrets). Anyone who visits "
+                            f"that URL — including automated scanners — can read these credentials "
+                            f"and use them to access your database or third-party services. "
+                            f"Delete or block the file immediately, then rotate every credential it contains."
+                        )
+                    else:
+                        ev_lines.append(
+                            f"  Your file '{path}' is publicly accessible on the internet. "
+                            f"Files like this ({label}) are not meant to be served publicly — "
+                            f"they can reveal your server technology, configuration, or source code "
+                            f"to attackers who scan for them. Block access via your web server config."
+                        )
+                    ev_lines.append("")
+
                     return Vulnerability(
                         name=f"Exposed {label}",
                         severity=severity,
                         description=f"The file or path '{path}' is publicly accessible and should not be",
-                        evidence=f"HTTP 200 from {url} — preview: {snippet}...",
+                        evidence="\n".join(ev_lines),
                         remediation=f"Block access to '{path}' via your server/firewall config, or delete the file if it shouldn't exist.",
                         what_we_tested=f"We requested the path '{path}' to check if it is publicly accessible.",
                         indicates=f"Exposed {label} can leak credentials, source code, configuration, or sensitive data.",
                         how_exploited=f"An attacker downloads the file and extracts database passwords, API keys, or source code."
                     )
+
                 elif resp.status_code in (401, 403) and severity in (Severity.CRITICAL, Severity.HIGH):
-                    # Protected but exists — worth noting for high-risk paths
                     return Vulnerability(
                         name=f"{label} Exists (Access Restricted)",
                         severity=Severity.LOW,
                         description=f"'{path}' exists on the server but requires authentication",
-                        evidence=f"HTTP {resp.status_code} from {url}",
+                        evidence=(
+                            f"{'='*60}\n"
+                            f"EVIDENCE: Protected Path Exists — {label}\n"
+                            f"{'='*60}\n\n"
+                            f"WHAT WE DID\n{'-'*40}\n"
+                            f"  We requested '{path}' and received an authentication challenge.\n"
+                            f"  The path exists, but access is currently protected.\n\n"
+                            f"REQUEST\n{'-'*40}\n"
+                            f"  Method : GET\n"
+                            f"  URL    : {url}\n\n"
+                            f"RESPONSE\n{'-'*40}\n"
+                            f"  Status           : {resp.status_code} {resp.reason}\n"
+                            f"  WWW-Authenticate : {resp.headers.get('WWW-Authenticate', 'not present')}\n\n"
+                            f"FINDING DETAILS\n{'-'*40}\n"
+                            f"  Observed Result  : Path exists but access is restricted\n"
+                            f"  Risk             : Low — currently protected, but confirms technology presence\n\n"
+                            f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                            f"  The path '{path}' exists on your server and is locked, which is better than\n"
+                            f"  being open. However, it confirms this technology is present, and if the lock\n"
+                            f"  is ever bypassed or brute-forced, the contents would be exposed.\n"
+                        ),
                         remediation=f"Verify this path is intentional. Ensure authentication is robust and consider moving it.",
                         what_we_tested=f"We requested '{path}' to check for its existence.",
-                        indicates="The path exists, confirming the technology in use. Authentication prevents direct access.",
+                        indicates="The path exists, confirming the technology in use.",
                         how_exploited="If authentication is bypassed or brute-forced, the contents are exposed."
                     )
+
             except requests.RequestException:
                 pass
             except Exception as e:
@@ -1132,41 +1915,97 @@ class SecurityScanner:
     # ── SQL Injection ─────────────────────────────────────────────────────
 
     def test_sql_injection(self, url: str) -> List[Vulnerability]:
-        """Error-based + time-based blind SQLi detection."""
         vulnerabilities = []
         parsed      = urlparse(url)
         base_params = parse_qs(parsed.query)
         test_params = base_params.copy() if base_params else {'id': ['1']}
+        found       = False
 
-        found = False
+        # First establish a baseline response for comparison
+        baseline_url = url
+        baseline_body = ""
+        baseline_status = None
+        try:
+            baseline_resp = self.session.get(baseline_url, timeout=self.timeout, verify=False)
+            baseline_body   = baseline_resp.text
+            baseline_status = baseline_resp.status_code
+        except Exception:
+            pass
 
-        # Error-based
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = {}
             for param_name in test_params:
                 for payload in self.sql_payloads[:5]:
                     p_copy = test_params.copy()
                     p_copy[param_name] = [payload]
-                    test_url = urlunparse((
+                    test_url_built = urlunparse((
                         parsed.scheme, parsed.netloc, parsed.path,
                         parsed.params, urlencode(p_copy, doseq=True), parsed.fragment
                     ))
-                    f = executor.submit(self._test_sql_payload, test_url, payload, param_name)
-                    futures[f] = (payload, param_name)
+                    f = executor.submit(self._test_sql_payload_full, test_url_built, payload, param_name)
+                    futures[f] = (payload, param_name, test_url_built)
 
             for future in concurrent.futures.as_completed(futures):
                 if found:
                     break
-                payload, param_name = futures[future]
+                payload, param_name, tested_url = futures[future]
                 try:
-                    is_vulnerable, evidence = future.result()
-                    if is_vulnerable:
+                    is_vulnerable, matched_pattern, response = future.result()
+                    if is_vulnerable and response is not None:
                         found = True
+                        sent_headers = dict(self.session.headers)
+
+                        # Check if baseline and payload response differ meaningfully
+                        body_diff_note = "Baseline comparison not available"
+                        if baseline_body:
+                            if matched_pattern and re.search(matched_pattern, response.text, re.I):
+                                body_diff_note = "Error string NOT present in baseline — confirms injection caused the error"
+                            else:
+                                body_diff_note = "See body excerpt above for the matched error string"
+
+                        # Extract just the matching error snippet for clarity
+                        error_snippet = ""
+                        if matched_pattern:
+                            m = re.search(matched_pattern, response.text, re.I)
+                            if m:
+                                start = max(0, m.start() - 80)
+                                end   = min(len(response.text), m.end() + 80)
+                                error_snippet = f"...{response.text[start:end].strip()}..."
+
                         vulnerabilities.append(Vulnerability(
                             name="SQL Injection (Error-Based)",
                             severity=Severity.CRITICAL,
                             description=f"Parameter '{param_name}' is vulnerable to SQL injection — database errors returned",
-                            evidence=f"Payload: {payload[:30]}… | Indicator: {evidence[:60]}",
+                            evidence=self._build_evidence(
+                                title="SQL Injection — Error-Based",
+                                request_url=tested_url, method="GET",
+                                request_headers=sent_headers,
+                                response=response,
+                                extra_fields=[
+                                    ("Parameter Tested",              param_name),
+                                    ("Injected Payload",              payload),
+                                    ("Error Pattern Matched",         matched_pattern),
+                                    ("Error Snippet from Body",       error_snippet or "see body above"),
+                                    ("Response Status",               f"{response.status_code} {response.reason}"),
+                                    ("Baseline URL",                  baseline_url),
+                                    ("Baseline Status",               str(baseline_status) if baseline_status else "not captured"),
+                                    ("Baseline vs Payload Comparison", body_diff_note),
+                                    ("Database Type Indicated",       _infer_db_from_pattern(matched_pattern)),
+                                    ("Observed Result",
+                                     "Database error string found in response body — SQL injection confirmed"),
+                                    ("What This Means",
+                                     f"The '{param_name}' parameter is not sanitised — the injected quote character broke the SQL query and the database error was returned to the browser"),
+                                ],
+                                body_highlight=error_snippet[3:23] if error_snippet and len(error_snippet) > 6 else None,
+                                plain_english_summary=(
+                                    f"We sent a deliberately broken SQL character (') to the '{param_name}' "
+                                    "parameter and the server responded with a database error message. "
+                                    "This confirms the application is passing user input directly into "
+                                    "database queries without sanitising it first. An attacker can use "
+                                    "this to read every record in your database — usernames, passwords, "
+                                    "emails, payment data — with freely available tools."
+                                )
+                            ),
                             remediation="Use parameterized queries or prepared statements. Never concatenate user input into SQL strings.",
                             cvss_score=9.8,
                             what_we_tested=f"We injected SQL syntax into '{param_name}' and looked for database error messages.",
@@ -1176,27 +2015,69 @@ class SecurityScanner:
                 except Exception as e:
                     logger.error(f"SQL test error: {e}")
 
-        # Time-based blind (only if no error-based found — avoids double-reporting)
+        # Time-based blind
         if not found:
-            for param_name in list(test_params.keys())[:2]:  # Limit to 2 params
+            for param_name in list(test_params.keys())[:2]:
                 for payload, db_type in self.blind_sql_payloads:
                     p_copy = test_params.copy()
                     p_copy[param_name] = [payload]
-                    test_url = urlunparse((
+                    test_url_blind = urlunparse((
                         parsed.scheme, parsed.netloc, parsed.path,
                         parsed.params, urlencode(p_copy, doseq=True), parsed.fragment
                     ))
-                    is_blind, delay = self._test_blind_sql(test_url)
+                    safe_params = test_params.copy()
+                    safe_params[param_name] = ['1']
+                    baseline_url_blind = urlunparse((
+                        parsed.scheme, parsed.netloc, parsed.path,
+                        parsed.params, urlencode(safe_params, doseq=True), parsed.fragment
+                    ))
+                    is_blind, delay, baseline_delay = self._test_blind_sql_full(test_url_blind, baseline_url_blind)
                     if is_blind:
                         found = True
                         vulnerabilities.append(Vulnerability(
                             name=f"SQL Injection (Time-Based Blind — {db_type})",
                             severity=Severity.CRITICAL,
                             description=f"Parameter '{param_name}' causes a {delay:.1f}s server delay with a sleep payload, indicating blind SQL injection",
-                            evidence=f"Payload: {payload} | Response delay: {delay:.1f}s (baseline <1s)",
+                            evidence=(
+                                f"{'='*60}\n"
+                                f"EVIDENCE: SQL Injection — Time-Based Blind ({db_type})\n"
+                                f"{'='*60}\n\n"
+                                f"WHAT WE DID\n{'-'*40}\n"
+                                f"  We sent two requests to the same parameter: one with a safe value,\n"
+                                f"  and one with a payload that tells the database to pause for 4 seconds.\n"
+                                f"  If the server pauses only when we send the sleep payload, the database\n"
+                                f"  is executing our injected command — confirming SQL injection.\n\n"
+                                f"REQUEST A — Baseline (safe value)\n{'-'*40}\n"
+                                f"  Method          : GET\n"
+                                f"  URL             : {baseline_url_blind}\n"
+                                f"  Parameter Value : {param_name} = 1 (safe, normal input)\n\n"
+                                f"REQUEST B — Payload (sleep injection)\n{'-'*40}\n"
+                                f"  Method          : GET\n"
+                                f"  URL             : {test_url_blind}\n"
+                                f"  Parameter Value : {param_name} = {payload}\n\n"
+                                f"TIMING COMPARISON\n{'-'*40}\n"
+                                f"  Baseline Response Time  : {baseline_delay:.2f}s  (normal speed)\n"
+                                f"  Payload Response Time   : {delay:.2f}s  (delayed by sleep command)\n"
+                                f"  Observed Delay Delta    : {delay - baseline_delay:.2f}s above baseline\n"
+                                f"  Detection Threshold     : 3.5s delay above baseline\n"
+                                f"  Conclusion              : THRESHOLD EXCEEDED — sleep function executed in the database\n\n"
+                                f"FINDING DETAILS\n{'-'*40}\n"
+                                f"  Database Type Indicated : {db_type}\n"
+                                f"  Sleep Function Used     : {payload}\n"
+                                f"  Parameter Tested        : {param_name}\n"
+                                f"  Error Visible           : No — this is 'blind' injection (no error shown, but still exploitable)\n"
+                                f"  Observed Result         : Response delayed by {delay:.1f}s — injected sleep executed in DB\n\n"
+                                f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                                f"  This is SQL injection without visible error messages — called 'blind' injection.\n"
+                                f"  When we told the database to sleep for 4 seconds, the server waited exactly that long.\n"
+                                f"  A normal request took {baseline_delay:.2f}s. The attack request took {delay:.2f}s.\n"
+                                f"  This proves the database is running our commands. Even without seeing any error,\n"
+                                f"  automated tools (like sqlmap) can extract your entire database one bit at a time\n"
+                                f"  by asking yes/no questions through timing differences.\n"
+                            ),
                             remediation="Use parameterized queries. This is a blind injection — no visible error, but fully exploitable.",
                             cvss_score=9.8,
-                            what_we_tested=f"We injected time-delay SQL payloads into '{param_name}' and measured response time.",
+                            what_we_tested=f"We injected time-delay SQL payloads into '{param_name}' and measured response time vs baseline.",
                             indicates="The application executes user input as SQL even with no visible error output.",
                             how_exploited="Tools like sqlmap can extract the entire database character by character using timing differences."
                         ))
@@ -1206,59 +2087,66 @@ class SecurityScanner:
 
         return vulnerabilities
 
-    def _test_sql_payload(self, url: str, payload: str, param: str) -> Tuple[bool, str]:
+    def _test_sql_payload_full(self, url: str, payload: str, param: str
+                                ) -> Tuple[bool, str, Optional[requests.Response]]:
+        """Returns (is_vulnerable, matched_pattern, response_object)."""
+        sql_errors = [
+            r"SQL syntax.*MySQL", r"Warning.*mysql_.*", r"MySqlClient\.",
+            r"PostgreSQL.*ERROR", r"Warning.*pg_.*", r"Npgsql\.",
+            r"Driver.*SQL.*Server", r"OLE DB.*SQL.*Server",
+            r"Warning.*mssql_.*", r"Exception.*Oracle", r"Oracle error",
+            r"Oracle.*Driver", r"Warning.*oci_.*", r"SQLite\.Exception",
+            r"System\.Data\.SQLite\.SQLiteException", r"Warning.*sqlite_.*",
+            r"\[SQLite_ERROR\]", r"Microsoft Access.*Driver",
+            r"JET Database Engine", r"ODBC.*Driver",
+            r"Microsoft OLE DB Provider for ODBC Drivers"
+        ]
         try:
-            response = self.session.get(url, timeout=self.timeout, allow_redirects=False, verify=False)
-            sql_errors = [
-                r"SQL syntax.*MySQL", r"Warning.*mysql_.*", r"MySqlClient\.",
-                r"PostgreSQL.*ERROR", r"Warning.*pg_.*", r"Npgsql\.",
-                r"Driver.*SQL.*Server", r"OLE DB.*SQL.*Server",
-                r"Warning.*mssql_.*", r"Exception.*Oracle", r"Oracle error",
-                r"Oracle.*Driver", r"Warning.*oci_.*", r"SQLite\.Exception",
-                r"System\.Data\.SQLite\.SQLiteException", r"Warning.*sqlite_.*",
-                r"\[SQLite_ERROR\]", r"Microsoft Access.*Driver",
-                r"JET Database Engine", r"ODBC.*Driver",
-                r"Microsoft OLE DB Provider for ODBC Drivers"
-            ]
+            response = self.session.get(url, timeout=self.timeout,
+                                         allow_redirects=False, verify=False)
             content = response.text
             for pattern in sql_errors:
                 if re.search(pattern, content, re.IGNORECASE):
-                    return True, f"SQL error pattern: {pattern[:30]}"
-            return False, ""
+                    return True, pattern, response
+            return False, "", response
         except requests.RequestException:
-            return False, ""
+            return False, "", None
 
-    def _test_blind_sql(self, url: str, threshold: float = 3.5) -> Tuple[bool, float]:
-        """
-        Returns (True, delay) if response time suggests a sleep payload executed.
-        Tests the same URL twice to rule out slow baseline.
-        """
+    def _test_sql_payload(self, url: str, payload: str, param: str) -> Tuple[bool, str]:
+        is_vuln, pattern, _ = self._test_sql_payload_full(url, payload, param)
+        return is_vuln, pattern
+
+    def _test_blind_sql_full(self, url: str, baseline_url: str,
+                              threshold: float = 3.5) -> Tuple[bool, float, float]:
+        """Returns (is_blind, payload_delay, baseline_delay)."""
         try:
-            # Baseline
-            t0    = time.time()
-            self.session.get(url.replace(url.split('=')[-1], '1'), timeout=8, verify=False)
+            t0       = time.time()
+            self.session.get(baseline_url, timeout=8, verify=False)
             baseline = time.time() - t0
 
-            # Payload
             t0    = time.time()
             self.session.get(url, timeout=12, verify=False)
             delay = time.time() - t0
 
             if delay > threshold and delay > baseline + 2.5:
-                return True, delay
+                return True, delay, baseline
+            return False, delay, baseline
         except requests.Timeout:
-            # A timeout itself can indicate the sleep worked
-            return True, threshold + 1
+            return True, threshold + 1, 0.0
         except Exception:
-            pass
-        return False, 0.0
+            return False, 0.0, 0.0
+
+    def _test_blind_sql(self, url: str, threshold: float = 3.5) -> Tuple[bool, float]:
+        is_blind, delay, _ = self._test_blind_sql_full(url, url, threshold)
+        return is_blind, delay
 
     # ── XSS ──────────────────────────────────────────────────────────────
 
     def test_xss(self, url: str) -> List[Vulnerability]:
         vulnerabilities = []
-        parsed      = urlparse(url)
-        test_params = {'xss_test': ['test']}
+        parsed       = urlparse(url)
+        test_params  = {'xss_test': ['test']}
+        sent_headers = dict(self.session.headers)
 
         for payload in self.xss_payloads[:6]:
             test_params['xss_test'] = [payload]
@@ -1271,21 +2159,67 @@ class SecurityScanner:
                 content  = response.text
 
                 if payload in content:
-                    # Check if the page has a CSP that would block it anyway
-                    csp = response.headers.get('Content-Security-Policy', '')
+                    csp       = response.headers.get('Content-Security-Policy', '')
                     mitigated = bool(csp and 'unsafe-inline' not in csp)
+                    context   = self._analyze_xss_context(content, payload)
+                    severity  = Severity.MEDIUM if mitigated else Severity.HIGH
 
-                    context = self._analyze_xss_context(content, payload)
-                    severity = Severity.MEDIUM if mitigated else Severity.HIGH
+                    # Check encoding: was payload HTML-encoded in any form?
+                    html_encoded_payload = payload.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+                    partial_encoded      = html_encoded_payload in content
+                    raw_reflected        = payload in content  # already confirmed True
+                    encoding_status      = (
+                        "Payload reflected RAW — no HTML encoding applied. Script will execute."
+                        if raw_reflected and not partial_encoded
+                        else "Payload reflected raw AND encoded forms found — encoding is inconsistent."
+                    )
+
+                    # Get surrounding HTML context for the injection point
+                    injection_context_snippet = ""
+                    idx = content.find(payload)
+                    if idx > -1:
+                        ctx_start = max(0, idx - 120)
+                        ctx_end   = min(len(content), idx + len(payload) + 120)
+                        injection_context_snippet = content[ctx_start:ctx_end].replace('\n', ' ').strip()
 
                     vulnerabilities.append(Vulnerability(
                         name=f"Reflected XSS ({context['type']}){' — CSP may mitigate' if mitigated else ''}",
                         severity=severity,
                         description=f"XSS payload reflected in {context['location']}. {'A CSP header is present which may block execution.' if mitigated else 'No CSP is blocking execution.'}",
-                        evidence=f"Payload: {payload[:40]}… | Context: {context['details']}",
+                        evidence=self._build_evidence(
+                            title=f"Reflected Cross-Site Scripting (XSS) — {context['type']}",
+                            request_url=test_url, method="GET",
+                            request_headers=sent_headers,
+                            response=response,
+                            extra_fields=[
+                                ("Parameter Tested",            "xss_test (synthetic test parameter)"),
+                                ("Injected Payload",            payload),
+                                ("Payload Found in Response",   "YES — verbatim, unencoded"),
+                                ("Encoding Applied",            encoding_status),
+                                ("Injection Context Type",      context['type']),
+                                ("Context Location",            context['location']),
+                                ("Context Detail",              context['details']),
+                                ("Surrounding HTML at Injection", f"...{injection_context_snippet}..." if injection_context_snippet else "see body above"),
+                                ("CSP Header Present",          f"YES — {csp[:80]}" if csp else "NO — no Content-Security-Policy header"),
+                                ("CSP Blocks Execution",        "Possibly (no unsafe-inline)" if mitigated else "NO — payload will execute in browser"),
+                                ("Observed Result",             "Payload reflected verbatim in response — XSS confirmed"),
+                                ("What This Means",             "Script tags sent as input are echoed back into the page HTML without encoding"),
+                            ],
+                            body_highlight=payload,
+                            plain_english_summary=(
+                                f"We sent a script tag as input and your server returned it unchanged in the page. "
+                                "When a real user visits a link containing this payload, their browser will execute "
+                                "the script — giving an attacker the ability to steal their login session, log "
+                                "their keystrokes, or redirect them to a malicious site. "
+                                + ("A Content-Security-Policy header is present which may reduce the impact, "
+                                   "but the vulnerability itself is still present and should be fixed."
+                                   if mitigated else
+                                   "There is no Content-Security-Policy header, so the script will execute without restriction.")
+                            )
+                        ),
                         remediation="HTML-encode all user input before rendering it. Add a strong Content-Security-Policy header.",
                         cvss_score=6.1 if mitigated else 8.8,
-                        what_we_tested=f"We injected script payloads into query parameters and checked if they were reflected unencoded in the HTML.",
+                        what_we_tested="We injected script payloads into query parameters and checked if they were reflected unencoded in the HTML.",
                         indicates="User-supplied input is rendered without encoding — a classic reflected XSS vulnerability.",
                         how_exploited="Attacker sends victim a link with the payload in the URL. When the victim loads it, the script runs in their browser, stealing cookies or performing actions as them."
                     ))
@@ -1293,30 +2227,75 @@ class SecurityScanner:
             except requests.RequestException:
                 continue
 
-        # DOM XSS sink detection
+        # DOM XSS sink detection — with actual source context snippets
         try:
-            response = self.session.get(url, timeout=self.timeout, verify=False)
+            response  = self.session.get(url, timeout=self.timeout, verify=False)
             dom_sinks = {
-                'document.write':       'document.write() with user data can write arbitrary HTML',
-                'innerHTML':            'innerHTML assignment can inject HTML and scripts',
-                'outerHTML':            'outerHTML assignment can inject HTML and scripts',
-                'eval(':                'eval() executing user input enables code injection',
-                'setTimeout(':          'setTimeout with string argument evaluates as code',
-                'setInterval(':         'setInterval with string argument evaluates as code',
-                'location.href':        'Setting location.href from user input enables redirect injection',
+                'document.write':  'Can write arbitrary HTML — commonly used to inject scripts',
+                'innerHTML':       'Assigns HTML directly — a classic XSS injection point',
+                'outerHTML':       'Replaces element HTML — same risk as innerHTML',
+                'eval(':           'Executes string as code — extremely dangerous with user data',
+                'setTimeout(':     'Evaluates string arguments as code',
+                'setInterval(':    'Evaluates string arguments as code',
+                'location.href':   'Setting from user input can redirect to javascript: URLs',
             }
-            content = response.text
-            found_sinks = [
-                (sink, desc) for sink, desc in dom_sinks.items()
-                if sink in content
-            ]
+            content     = response.text
+            found_sinks = []
+            for sink, desc in dom_sinks.items():
+                if sink in content:
+                    # Extract a snippet of the source around the sink
+                    idx = content.find(sink)
+                    start = max(0, idx - 60)
+                    end   = min(len(content), idx + len(sink) + 100)
+                    snippet = content[start:end].replace('\n', ' ').strip()
+                    found_sinks.append((sink, desc, snippet))
+
             if found_sinks:
-                sink_names = ', '.join(s for s, _ in found_sinks[:3])
+                sink_names    = ', '.join(s for s, _, _ in found_sinks[:3])
+                sink_detail_lines = []
+                for sink, desc, snippet in found_sinks[:5]:
+                    sink_detail_lines.append(f"  Sink     : {sink}")
+                    sink_detail_lines.append(f"  Risk     : {desc}")
+                    sink_detail_lines.append(f"  In Source: ...{snippet}...")
+                    sink_detail_lines.append("")
+                sink_details = "\n".join(sink_detail_lines)
+
                 vulnerabilities.append(Vulnerability(
                     name="Potential DOM XSS Sink Detected",
                     severity=Severity.MEDIUM,
                     description=f"Page uses JavaScript patterns that can lead to DOM XSS: {sink_names}",
-                    evidence=f"Dangerous sinks found in page source: {sink_names}",
+                    evidence=(
+                        f"{'='*60}\n"
+                        f"EVIDENCE: DOM Cross-Site Scripting (XSS) Sink Detection\n"
+                        f"{'='*60}\n\n"
+                        f"WHAT WE DID\n{'-'*40}\n"
+                        f"  We loaded the page and scanned its JavaScript source code for\n"
+                        f"  patterns (called 'sinks') that are dangerous when they receive\n"
+                        f"  user-controlled data. A sink is a JavaScript function that can\n"
+                        f"  execute code or modify the page if given malicious input.\n\n"
+                        f"REQUEST\n{'-'*40}\n"
+                        f"  Method  : GET\n"
+                        f"  URL     : {url}\n\n"
+                        f"RESPONSE\n{'-'*40}\n"
+                        f"  Status       : {response.status_code} {response.reason}\n"
+                        f"  Content-Type : {response.headers.get('Content-Type', 'not set')}\n"
+                        f"  Page Title   : {_extract_title(response.text)}\n\n"
+                        f"SINKS DETECTED — WITH SOURCE CONTEXT\n{'-'*40}\n"
+                        f"{sink_details}\n"
+                        f"  Total dangerous sinks found: {len(found_sinks)}\n\n"
+                        f"FINDING DETAILS\n{'-'*40}\n"
+                        f"  Sinks Found        : {', '.join(s for s,_,_ in found_sinks)}\n"
+                        f"  Observed Result    : Dangerous JavaScript patterns present in page source\n"
+                        f"  Exploitability     : Depends on whether any sink receives user-controlled data\n"
+                        f"                       (URL parameters, hash fragment, postMessage, localStorage)\n\n"
+                        f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                        f"  We found {len(found_sinks)} JavaScript function(s) in your page that can be dangerous:\n"
+                        f"  {sink_names}.\n"
+                        f"  These are not necessarily exploitable by themselves — they only become\n"
+                        f"  a vulnerability if they ever receive data that an attacker can control\n"
+                        f"  (like a URL parameter or page hash). A developer should review each\n"
+                        f"  occurrence and verify it does not use untrusted data.\n"
+                    ),
                     remediation="Avoid using dangerous sinks with user-controlled data. Use textContent instead of innerHTML. Sanitize inputs with DOMPurify if HTML is required.",
                     what_we_tested="We scanned the page JavaScript for dangerous DOM manipulation patterns.",
                     indicates="If any of these sinks receive user-controlled data (URL params, hash, postMessage), XSS is possible.",
@@ -1333,11 +2312,14 @@ class SecurityScanner:
             return {'type': 'Unknown', 'location': 'Unknown', 'details': 'Not found'}
         before = content[max(0, idx - 50):idx]
         if '<script' in before.lower():
-            return {'type': 'Script Context',    'location': 'JavaScript block',  'details': 'Inside <script> tag'}
+            return {'type': 'Script Context',    'location': 'JavaScript block',
+                    'details': 'Inside <script> tag — direct code execution without needing to break out of HTML context'}
         elif '="' in before or "='" in before:
-            return {'type': 'Attribute Context', 'location': 'HTML attribute',    'details': 'Inside HTML attribute value'}
+            return {'type': 'Attribute Context', 'location': 'HTML attribute value',
+                    'details': 'Inside HTML attribute — event handler injection (e.g. onerror=, onload=) is possible'}
         else:
-            return {'type': 'HTML Context',      'location': 'HTML body',         'details': 'Reflected in page body'}
+            return {'type': 'HTML Context',      'location': 'HTML body',
+                    'details': 'Reflected directly in page body — script tag injection works without escaping'}
 
     # ── Information Disclosure ────────────────────────────────────────────
 
@@ -1345,6 +2327,7 @@ class SecurityScanner:
         vulnerabilities = []
         headers = response.headers
         content = response.text
+        all_headers_str = "\n".join(f"    {k}: {v}" for k, v in response.headers.items())
 
         server_header = headers.get('Server', '')
         if server_header and any(char.isdigit() for char in server_header):
@@ -1352,7 +2335,29 @@ class SecurityScanner:
                 name="Server Version Disclosure",
                 severity=Severity.LOW,
                 description="Server header reveals exact version information",
-                evidence=f"Server: {server_header}",
+                evidence=(
+                    f"{'='*60}\n"
+                    f"EVIDENCE: Server Version Disclosure\n"
+                    f"{'='*60}\n\n"
+                    f"WHAT WE DID\n{'-'*40}\n"
+                    f"  We made a standard HTTP request and examined the Server header\n"
+                    f"  in the response for software name and version number disclosure.\n\n"
+                    f"REQUEST\n{'-'*40}\n"
+                    f"  Method  : GET\n"
+                    f"  URL     : {url}\n\n"
+                    f"RESPONSE\n{'-'*40}\n"
+                    f"  Status       : {response.status_code} {response.reason}\n"
+                    f"  All Headers:\n{all_headers_str}\n\n"
+                    f"FINDING DETAILS\n{'-'*40}\n"
+                    f"  Server Header Value : {server_header}\n"
+                    f"  Version Disclosed   : YES — contains version number\n"
+                    f"  Observed Result     : Exact server software version visible in every HTTP response\n\n"
+                    f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                    f"  Every page your server sends includes a 'Server' header that announces\n"
+                    f"  exactly what software is running and its version number ({server_header}).\n"
+                    f"  Attackers use this to look up known security vulnerabilities for that\n"
+                    f"  exact version. Hiding the version takes one line of config.\n"
+                ),
                 remediation="Configure your server to omit version details. In Apache: ServerTokens Prod. In Nginx: server_tokens off.",
                 what_we_tested="We inspected the Server response header for version numbers.",
                 indicates="Exact version info helps attackers look up known CVEs for that specific version.",
@@ -1365,55 +2370,150 @@ class SecurityScanner:
                 name="Technology Stack Disclosure",
                 severity=Severity.LOW,
                 description="X-Powered-By header reveals backend technology and version",
-                evidence=f"X-Powered-By: {powered_by}",
+                evidence=(
+                    f"{'='*60}\n"
+                    f"EVIDENCE: Technology Stack Disclosure\n"
+                    f"{'='*60}\n\n"
+                    f"WHAT WE DID\n{'-'*40}\n"
+                    f"  We examined the X-Powered-By response header, which many frameworks\n"
+                    f"  set automatically to identify the backend technology.\n\n"
+                    f"REQUEST\n{'-'*40}\n"
+                    f"  Method  : GET\n"
+                    f"  URL     : {url}\n\n"
+                    f"RESPONSE\n{'-'*40}\n"
+                    f"  Status       : {response.status_code} {response.reason}\n"
+                    f"  All Headers:\n{all_headers_str}\n\n"
+                    f"FINDING DETAILS\n{'-'*40}\n"
+                    f"  X-Powered-By Value  : {powered_by}\n"
+                    f"  Technology Revealed : {powered_by}\n"
+                    f"  Observed Result     : Backend framework/version disclosed in every response\n\n"
+                    f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                    f"  Your server is advertising that it runs '{powered_by}' in every\n"
+                    f"  HTTP response. This helps attackers narrow down which exploits to try.\n"
+                    f"  Removing this header is a one-line configuration change.\n"
+                ),
                 remediation="Remove X-Powered-By header. In Express.js: app.disable('x-powered-by'). In PHP: expose_php = Off.",
                 what_we_tested="We inspected the X-Powered-By response header.",
                 indicates="Technology disclosure helps attackers target framework-specific vulnerabilities.",
                 how_exploited="Attacker targets known exploits for the disclosed framework version."
             ))
 
-        # Secrets in response body
         sensitive_patterns = [
-            (r'AKIA[0-9A-Z]{16}',                                    'AWS Access Key ID',    Severity.CRITICAL),
-            (r'aws_secret_access_key\s*[=:]\s*["\']?[A-Za-z0-9/+=]{40}', 'AWS Secret Key',  Severity.CRITICAL),
-            (r'sk_live_[0-9a-zA-Z]{24,}',                            'Stripe Live Secret',   Severity.CRITICAL),
-            (r'pk_live_[0-9a-zA-Z]{24,}',                            'Stripe Publishable Key', Severity.MEDIUM),
-            (r'-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----',         'Private Key',          Severity.CRITICAL),
-            (r'password\s*[=:]\s*["\'][^"\']{6,}',                   'Hardcoded Password',   Severity.HIGH),
-            (r'api[_-]?key\s*[=:]\s*["\'][^"\']{8,}',               'API Key',              Severity.HIGH),
-            (r'secret[_-]?key\s*[=:]\s*["\'][^"\']{8,}',            'Secret Key',           Severity.HIGH),
-            (r'DB_PASSWORD\s*=\s*\S+',                               'Database Password',    Severity.CRITICAL),
-            (r'DATABASE_URL\s*=\s*\S+',                              'Database URL',         Severity.HIGH),
-            (r'ghp_[A-Za-z0-9]{36}',                                 'GitHub Personal Token', Severity.CRITICAL),
+            (r'AKIA[0-9A-Z]{16}',                                         'AWS Access Key ID',      Severity.CRITICAL),
+            (r'aws_secret_access_key\s*[=:]\s*["\']?[A-Za-z0-9/+=]{40}', 'AWS Secret Key',         Severity.CRITICAL),
+            (r'sk_live_[0-9a-zA-Z]{24,}',                                 'Stripe Live Secret',     Severity.CRITICAL),
+            (r'pk_live_[0-9a-zA-Z]{24,}',                                 'Stripe Publishable Key', Severity.MEDIUM),
+            (r'-----BEGIN (RSA |EC |DSA )?PRIVATE KEY-----',              'Private Key',            Severity.CRITICAL),
+            (r'password\s*[=:]\s*["\'][^"\']{6,}',                        'Hardcoded Password',     Severity.HIGH),
+            (r'api[_-]?key\s*[=:]\s*["\'][^"\']{8,}',                    'API Key',                Severity.HIGH),
+            (r'secret[_-]?key\s*[=:]\s*["\'][^"\']{8,}',                 'Secret Key',             Severity.HIGH),
+            (r'DB_PASSWORD\s*=\s*\S+',                                    'Database Password',      Severity.CRITICAL),
+            (r'DATABASE_URL\s*=\s*\S+',                                   'Database URL',           Severity.HIGH),
+            (r'ghp_[A-Za-z0-9]{36}',                                      'GitHub Personal Token',  Severity.CRITICAL),
         ]
 
         for pattern, name, severity in sensitive_patterns:
-            if re.search(pattern, content, re.IGNORECASE):
+            m = re.search(pattern, content, re.IGNORECASE)
+            if m:
+                matched_text  = m.group(0)[:80]
+                body_context  = _highlight_in_body(content, m.group(0)[:20], context_chars=120)
                 vulnerabilities.append(Vulnerability(
                     name=f"Exposed {name} in Response",
                     severity=severity,
                     description=f"The page response contains what appears to be a {name}",
-                    evidence=f"Pattern matched: {pattern[:40]}…",
+                    evidence=(
+                        f"{'='*60}\n"
+                        f"EVIDENCE: Credential/Secret Exposure — {name}\n"
+                        f"{'='*60}\n\n"
+                        f"WHAT WE DID\n{'-'*40}\n"
+                        f"  We scanned the HTTP response body for patterns matching known\n"
+                        f"  credential formats ({name}). This pattern was found.\n\n"
+                        f"REQUEST\n{'-'*40}\n"
+                        f"  Method  : GET\n"
+                        f"  URL     : {url}\n\n"
+                        f"RESPONSE\n{'-'*40}\n"
+                        f"  Status       : {response.status_code} {response.reason}\n"
+                        f"  Content-Type : {response.headers.get('Content-Type', 'not set')}\n"
+                        f"  Body Length  : {len(content):,} characters\n\n"
+                        f"CREDENTIAL FOUND IN BODY\n{'-'*40}\n"
+                        f"  Secret Type          : {name}\n"
+                        f"  Matched Text         : {matched_text}\n"
+                        f"  Position in Body     : character {m.start():,} of {len(content):,}\n"
+                        f"  Pattern Used         : {pattern[:60]}\n"
+                        f"  Context in Body:\n"
+                        f"    {body_context}\n\n"
+                        f"FINDING DETAILS\n{'-'*40}\n"
+                        f"  Credential Active    : Assumed YES — rotate immediately to be safe\n"
+                        f"  Exposure Duration    : Unknown — assume it has been indexed/scraped\n"
+                        f"  Observed Result      : Live credential/secret visible in page response body\n\n"
+                        f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                        f"  A {name} appears to be embedded in a page your server is serving publicly.\n"
+                        f"  Anyone who visits this URL — including automated bots and search engine crawlers —\n"
+                        f"  can read this credential and use it to access your {name.split()[0]} account,\n"
+                        f"  database, or payment system. Revoke the credential immediately and remove\n"
+                        f"  it from the source code or response. Never put secrets in client-facing files.\n"
+                    ),
                     remediation="Remove all secrets from client-facing code and responses. Use server-side environment variables. Rotate the exposed credential immediately.",
                     what_we_tested=f"We scanned the response body for patterns matching {name} formats.",
                     indicates="A live secret is exposed in the page source — this is an active credential leak.",
                     how_exploited="Attacker reads the page source, copies the credential, and uses it to access your cloud account, database, or payment system."
                 ))
 
-        # Mixed content (HTTPS page loading HTTP resources)
         if urlparse(url).scheme == 'https':
-            http_resources = re.findall(r'src=["\']http://[^"\']+["\']', content, re.I)
-            http_resources += re.findall(r'href=["\']http://[^"\']+\.(?:css|js)["\']', content, re.I)
-            if http_resources:
+            http_scripts  = re.findall(r'src=["\']http://[^"\']+\.js["\']',  content, re.I)
+            http_styles   = re.findall(r'href=["\']http://[^"\']+\.css["\']', content, re.I)
+            http_images   = re.findall(r'src=["\']http://[^"\']+\.(?:png|jpg|jpeg|gif|webp|svg)["\']', content, re.I)
+            http_other    = re.findall(r'src=["\']http://[^"\']+["\']',       content, re.I)
+            all_mixed     = list(set(http_scripts + http_styles + http_other))
+
+            if all_mixed:
+                resource_breakdown = []
+                if http_scripts: resource_breakdown.append(f"JavaScript files: {len(http_scripts)} (highest risk — can execute code)")
+                if http_styles:  resource_breakdown.append(f"CSS stylesheets : {len(http_styles)}")
+                if http_images:  resource_breakdown.append(f"Images          : {len(http_images)}")
+                other_count = len(all_mixed) - len(http_scripts) - len(http_styles) - len(http_images)
+                if other_count > 0:
+                    resource_breakdown.append(f"Other resources : {other_count}")
+
                 vulnerabilities.append(Vulnerability(
                     name="Mixed Content (HTTP Resources on HTTPS Page)",
                     severity=Severity.MEDIUM,
-                    description=f"HTTPS page loads {len(http_resources)} resource(s) over plain HTTP",
-                    evidence=f"Examples: {', '.join(http_resources[:2])}",
+                    description=f"HTTPS page loads {len(all_mixed)} resource(s) over plain HTTP",
+                    evidence=(
+                        f"{'='*60}\n"
+                        f"EVIDENCE: Mixed Content — HTTP Resources on HTTPS Page\n"
+                        f"{'='*60}\n\n"
+                        f"WHAT WE DID\n{'-'*40}\n"
+                        f"  We loaded the HTTPS page and scanned its HTML source for any resources\n"
+                        f"  (scripts, stylesheets, images) loaded over unencrypted HTTP.\n\n"
+                        f"REQUEST\n{'-'*40}\n"
+                        f"  Method  : GET\n"
+                        f"  URL     : {url}\n\n"
+                        f"RESPONSE\n{'-'*40}\n"
+                        f"  Status  : {response.status_code} {response.reason}\n"
+                        f"  Page loads these HTTP resources:\n\n"
+                        f"RESOURCE BREAKDOWN\n{'-'*40}\n" +
+                        "\n".join(f"  {rb}" for rb in resource_breakdown) +
+                        f"\n  Total mixed resources: {len(all_mixed)}\n\n"
+                        f"MIXED RESOURCE EXAMPLES (first 5)\n{'-'*40}\n" +
+                        "\n".join(f"  {i+1}. {r}" for i, r in enumerate(all_mixed[:5])) +
+                        f"\n\n"
+                        f"FINDING DETAILS\n{'-'*40}\n"
+                        f"  Mixed JS Files  : {len(http_scripts)} — MOST CRITICAL (scripts can be hijacked to run code)\n"
+                        f"  Mixed CSS Files : {len(http_styles)}\n"
+                        f"  Mixed Images    : {len(http_images)}\n"
+                        f"  Observed Result : HTTPS page fetches resources over unencrypted HTTP connections\n\n"
+                        f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                        f"  Your site uses HTTPS (good), but it is loading {len(all_mixed)} resource(s) using\n"
+                        f"  the unencrypted HTTP protocol. This breaks the security of your HTTPS connection\n"
+                        f"  because an attacker on the same network can modify those HTTP resources in transit.\n"
+                        f"  If any are JavaScript files, the attacker can inject arbitrary code into your page.\n"
+                        f"  Fix: change all resource URLs to HTTPS or use protocol-relative URLs (//...).\n"
+                    ),
                     remediation="Change all resource URLs to HTTPS or use protocol-relative URLs (//example.com/script.js).",
                     what_we_tested="We scanned the page HTML for HTTP resource references on an HTTPS page.",
                     indicates="Mixed content means parts of the page are unencrypted, undermining HTTPS protection.",
-                    how_exploited="An attacker can modify the HTTP resource in transit (e.g. inject malicious JavaScript) even though the main page is HTTPS."
+                    how_exploited="An attacker can modify the HTTP resource in transit to inject malicious JavaScript even though the main page is HTTPS."
                 ))
 
         return vulnerabilities
@@ -1422,63 +2522,126 @@ class SecurityScanner:
 
     def check_security_misconfigurations(self, response: requests.Response, url: str) -> List[Vulnerability]:
         vulnerabilities = []
-
-        # Cookie analysis
         set_cookie = response.headers.get('Set-Cookie', '')
+
         if set_cookie:
+            # Parse multiple Set-Cookie headers if present
+            all_cookies = response.raw.headers.getlist('Set-Cookie') if hasattr(response.raw, 'headers') and hasattr(response.raw.headers, 'getlist') else [set_cookie]
+            cookie_display = "\n".join(f"    {i+1}. {c}" for i, c in enumerate(all_cookies[:5]))
+            cookie_count   = len(all_cookies)
+
             if 'Secure' not in set_cookie and urlparse(url).scheme == 'https':
                 vulnerabilities.append(Vulnerability(
                     name="Cookie Missing Secure Flag",
                     severity=Severity.MEDIUM,
                     description="Session cookie can be transmitted over unencrypted HTTP connections",
-                    evidence="Set-Cookie header lacks the Secure attribute",
+                    evidence=self._build_evidence(
+                        title="Cookie Missing Secure Flag",
+                        request_url=url, method="GET",
+                        request_headers=dict(self.session.headers),
+                        response=response,
+                        extra_fields=[
+                            ("Cookies Set by Server",     f"{cookie_count} cookie(s)\n{cookie_display}"),
+                            ("Missing Attribute",         "Secure"),
+                            ("Current Cookie Header",     set_cookie[:200]),
+                            ("Expected Correct Value",    "Set-Cookie: name=value; Secure; HttpOnly; SameSite=Strict"),
+                            ("Why Secure Is Required",    "Without Secure, the browser can send the cookie over plain HTTP"),
+                            ("Observed Result",           "Secure attribute absent — cookie transmittable over unencrypted HTTP"),
+                        ],
+                        plain_english_summary=(
+                            "A session cookie is being set without the 'Secure' flag. This means if a user "
+                            "visits your site over HTTP (even by accident, or if an attacker downgrades the "
+                            "connection), their session cookie will be sent unencrypted. An attacker on the "
+                            "same network can intercept it and log in as that user. Adding '; Secure' to the "
+                            "cookie definition fixes this."
+                        )
+                    ),
                     remediation="Add 'Secure' to all cookie definitions: Set-Cookie: name=value; Secure; HttpOnly; SameSite=Strict",
                     what_we_tested="We checked Set-Cookie response headers for the Secure attribute.",
                     indicates="The cookie can leak over HTTP, exposing session tokens.",
-                    how_exploited="On any HTTP connection (e.g. after a redirect), the browser sends the cookie unencrypted — attacker reads it and hijacks the session."
+                    how_exploited="On any HTTP connection the browser sends the cookie unencrypted — attacker reads it and hijacks the session."
                 ))
+
             if 'HttpOnly' not in set_cookie:
                 vulnerabilities.append(Vulnerability(
                     name="Cookie Missing HttpOnly Flag",
                     severity=Severity.MEDIUM,
                     description="Session cookie is readable by JavaScript — exploitable via XSS",
-                    evidence="Set-Cookie header lacks the HttpOnly attribute",
+                    evidence=self._build_evidence(
+                        title="Cookie Missing HttpOnly Flag",
+                        request_url=url, method="GET",
+                        request_headers=dict(self.session.headers),
+                        response=response,
+                        extra_fields=[
+                            ("Cookies Set by Server",      f"{cookie_count} cookie(s)\n{cookie_display}"),
+                            ("Missing Attribute",          "HttpOnly"),
+                            ("Current Cookie Header",      set_cookie[:200]),
+                            ("Expected Correct Value",     "Set-Cookie: name=value; Secure; HttpOnly"),
+                            ("What HttpOnly Prevents",     "JavaScript on the page cannot read the cookie via document.cookie"),
+                            ("XSS Theft Demo",             "document.cookie returns all non-HttpOnly cookies — attacker sends them to their server"),
+                            ("Observed Result",            "HttpOnly absent — JavaScript can read this cookie via document.cookie"),
+                        ],
+                        plain_english_summary=(
+                            "This cookie is missing the 'HttpOnly' flag, which means any JavaScript "
+                            "running on your page can read it. If your site has any XSS vulnerability "
+                            "(or if a third-party script is compromised), an attacker can steal this "
+                            "cookie with a single line of JavaScript: document.cookie. This gives them "
+                            "full control of the affected user's session."
+                        )
+                    ),
                     remediation="Add 'HttpOnly' to all sensitive cookies: Set-Cookie: name=value; Secure; HttpOnly",
                     what_we_tested="We checked Set-Cookie headers for the HttpOnly attribute.",
                     indicates="Any XSS vulnerability on the site can directly steal session cookies.",
                     how_exploited="XSS payload calls document.cookie and sends the value to the attacker's server — instant session hijack."
                 ))
+
             if 'SameSite' not in set_cookie:
                 vulnerabilities.append(Vulnerability(
                     name="Cookie Missing SameSite Attribute",
                     severity=Severity.LOW,
                     description="Cookie will be sent on cross-site requests, enabling CSRF attacks",
-                    evidence="Set-Cookie header lacks the SameSite attribute",
-                    remediation="Add 'SameSite=Strict' or 'SameSite=Lax' to cookies: Set-Cookie: name=value; SameSite=Strict",
+                    evidence=self._build_evidence(
+                        title="Cookie Missing SameSite Attribute",
+                        request_url=url, method="GET",
+                        request_headers=dict(self.session.headers),
+                        response=response,
+                        extra_fields=[
+                            ("Cookies Set by Server",     f"{cookie_count} cookie(s)\n{cookie_display}"),
+                            ("Missing Attribute",         "SameSite"),
+                            ("Current Cookie Header",     set_cookie[:200]),
+                            ("Expected Correct Value",    "SameSite=Strict or SameSite=Lax"),
+                            ("SameSite=Strict Means",     "Cookie only sent on requests originating from your own site"),
+                            ("SameSite=Lax Means",        "Cookie sent on top-level navigations but not on background requests"),
+                            ("Without SameSite",          "Cookie sent on all cross-site requests including form POSTs from other sites"),
+                            ("Observed Result",           "SameSite absent — cookie sent on all cross-site requests"),
+                        ],
+                        plain_english_summary=(
+                            "This cookie is missing the 'SameSite' attribute. Without it, if a user is "
+                            "logged into your site and visits a malicious website, that malicious site can "
+                            "make requests to your server that automatically include the user's session cookie. "
+                            "This is the basis of Cross-Site Request Forgery (CSRF) attacks — the attacker "
+                            "can submit forms or make API calls as the victim without them knowing."
+                        )
+                    ),
+                    remediation="Add 'SameSite=Strict' or 'SameSite=Lax' to cookies.",
                     what_we_tested="We checked Set-Cookie headers for the SameSite attribute.",
                     indicates="Cross-Site Request Forgery (CSRF) is possible if no other CSRF protection exists.",
-                    how_exploited="Attacker's site makes a POST request to your site — the browser sends the cookie automatically, performing actions as the logged-in user."
+                    how_exploited="Attacker's site makes a POST request to your site — the browser sends the cookie automatically."
                 ))
 
         return vulnerabilities
 
-    # ── Vulnerability Deduplication ───────────────────────────────────────
+    # ── Deduplication ─────────────────────────────────────────────────────
 
     @staticmethod
     def deduplicate(vulnerabilities: List[Vulnerability]) -> List[Vulnerability]:
-        """
-        Remove duplicate findings.
-        Exact key matches are dropped; header findings that differ only by page
-        path are grouped into one (keeping the most severe occurrence).
-        """
         seen: Dict[str, Vulnerability] = {}
         for vuln in vulnerabilities:
             key = vuln.dedup_key()
             if key not in seen:
                 seen[key] = vuln
             else:
-                # Keep higher severity if we see it again
-                existing = seen[key]
+                existing  = seen[key]
                 sev_order = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM,
                              Severity.LOW, Severity.INFO, Severity.SECURE]
                 if sev_order.index(vuln.severity) < sev_order.index(existing.severity):
@@ -1489,26 +2652,53 @@ class SecurityScanner:
 
     def perform_scan(self, url: str, enable_port_scan: bool = True,
                      port_scan_type: str = "connect",
-                     custom_ports: Optional[List[int]] = None) -> ScanResult:
+                     custom_ports: Optional[List[int]] = None,
+                     scan_token: Optional[str] = None) -> ScanResult:
 
-        GLOBAL_TIMEOUT = 180  # seconds — full scan must complete within 3 minutes
+        GLOBAL_TIMEOUT = 180
         start_time     = time.time()
         timestamp      = now_eat_iso()
 
+        set_scan_progress(scan_token, "Preparing scan", 5, "running")
         is_valid, validation_result = self.validate_url(url)
         if not is_valid:
+            set_scan_progress(scan_token, "Validation failed", 100, "failed", validation_result)
             return ScanResult(
                 target=url, timestamp=timestamp, scan_duration=0,
                 ssl_info={}, headers={}, vulnerabilities=[],
                 port_scan={}, summary={}, error=validation_result
             )
 
-        clean_url          = validation_result
+        clean_url           = validation_result
         all_vulnerabilities: List[Vulnerability] = []
-        port_scan_results  = {}
+        port_scan_results   = {}
+
+        module_progress = {
+            "ssl": 20, "server": 26, "headers": 32, "cors": 38, "redirect": 44,
+            "files": 50, "sqli": 58, "xss": 66, "info": 72, "config": 78,
+            "crawl": 84, "ports": 92
+        }
+        module_label = {
+            "ssl":      "Checking SSL/TLS",
+            "server":   "Inspecting server headers",
+            "headers":  "Validating security headers",
+            "cors":     "Testing CORS policy",
+            "redirect": "Testing open redirects",
+            "files":    "Checking sensitive file exposure",
+            "sqli":     "Testing SQL injection paths",
+            "xss":      "Testing cross-site scripting paths",
+            "info":     "Analyzing information disclosure",
+            "config":   "Reviewing security misconfiguration",
+            "crawl":    "Discovering domain pages",
+            "ports":    "Scanning open ports and services",
+        }
 
         def run_module(name: str, fn, *args, **kwargs):
-            """Run a scan module with error isolation."""
+            set_scan_progress(
+                scan_token,
+                module_label.get(name, f"Running {name} checks"),
+                module_progress.get(name, 15), "running"
+            )
             if time.time() - start_time > GLOBAL_TIMEOUT:
                 logger.warning(f"Skipping {name} — global timeout reached")
                 return None
@@ -1519,12 +2709,11 @@ class SecurityScanner:
                 return None
 
         try:
-            # Initial HTTP fetch
             logger.info(f"Starting scan of {clean_url}")
+            set_scan_progress(scan_token, "Connecting to target", 12, "running")
             try:
                 response  = self.session.get(
-                    clean_url, timeout=self.timeout,
-                    allow_redirects=True, verify=False
+                    clean_url, timeout=self.timeout, allow_redirects=True, verify=False
                 )
                 final_url = response.url
             except requests.RequestException as e:
@@ -1536,23 +2725,101 @@ class SecurityScanner:
                     error=f"Failed to connect to target: {str(e)}"
                 )
 
-            # ── Run all modules ───────────────────────────────────────────
+            ssl_info       = run_module("ssl",      self.check_ssl_tls, clean_url)         or {'vulnerabilities': [], 'https': False, 'grade': 'F', 'protocols': [], 'status': 'error'}
+            server_info    = run_module("server",   self.get_server_info, response)        or {}
+            headers_info   = run_module("headers",  self.check_security_headers, response) or {'present': [], 'missing': [], 'misconfigured': [], 'score': 0, 'max_score': 1, 'percentage': 0}
+            cors_vulns     = run_module("cors",     self.check_cors, final_url)            or []
+            redirect_vulns = run_module("redirect", self.check_open_redirect, final_url)   or []
+            file_vulns     = run_module("files",    self.check_sensitive_files, clean_url) or []
+            sql_vulns      = run_module("sqli",     self.test_sql_injection, final_url)    or []
+            xss_vulns      = run_module("xss",      self.test_xss, final_url)             or []
+            info_vulns     = run_module("info",     self.check_information_disclosure, response, final_url) or []
+            cfg_vulns      = run_module("config",   self.check_security_misconfigurations, response, final_url) or []
 
-            ssl_info       = run_module("ssl",     self.check_ssl_tls, clean_url)         or {'vulnerabilities': [], 'https': False, 'grade': 'F', 'protocols': [], 'status': 'error'}
-            server_info    = run_module("server",  self.get_server_info, response)        or {}
-            headers_info   = run_module("headers", self.check_security_headers, response) or {'present': [], 'missing': [], 'misconfigured': [], 'score': 0, 'max_score': 1, 'percentage': 0}
-            cors_vulns     = run_module("cors",    self.check_cors, final_url)            or []
-            redirect_vulns = run_module("redirect",self.check_open_redirect, final_url)   or []
-            file_vulns     = run_module("files",   self.check_sensitive_files, clean_url) or []
-            sql_vulns      = run_module("sqli",    self.test_sql_injection, final_url)    or []
-            xss_vulns      = run_module("xss",     self.test_xss, final_url)             or []
-            info_vulns     = run_module("info",    self.check_information_disclosure, response, final_url) or []
-            cfg_vulns      = run_module("config",  self.check_security_misconfigurations, response, final_url) or []
-
-            # SSL vulns
             all_vulnerabilities.extend(ssl_info.get('vulnerabilities', []))
 
-            # Header report lookup
+            def _header_evidence_text(target_url: str, header_name: str,
+                                       resp: requests.Response,
+                                       headers_info_local: Dict) -> str:
+                status_code  = getattr(resp, "status_code", "unknown")
+                present      = [str(p.get('name', '')) for p in headers_info_local.get('present', []) if p.get('name')]
+                present_str  = ", ".join(present[:8]) if present else "None found"
+                missing_names = [str(m.get('name', '')) for m in headers_info_local.get('missing', []) if m.get('name')]
+                missing_str   = ", ".join(missing_names[:8]) if missing_names else "None"
+                expected      = self.header_recommended.get(header_name, "See OWASP Secure Headers Project")
+                all_resp_headers = "\n".join(f"    {k}: {v}" for k, v in resp.headers.items())
+
+                header_explanations = {
+                    'Strict-Transport-Security': (
+                        "Tells browsers to always use HTTPS for this domain — prevents protocol downgrade attacks.",
+                        "A user visits http://yoursite.com — without HSTS the browser may use HTTP, "
+                        "exposing the session cookie. With HSTS, the browser upgrades to HTTPS automatically."
+                    ),
+                    'Content-Security-Policy': (
+                        "Tells the browser which scripts, styles, and resources are allowed to load — blocks injected scripts.",
+                        "If an attacker injects a script via XSS, without CSP the browser will execute it. "
+                        "With CSP, the browser refuses to run scripts not explicitly permitted."
+                    ),
+                    'X-Frame-Options': (
+                        "Prevents your page from being embedded in an iframe on another site — blocks clickjacking.",
+                        "An attacker puts your login page in an invisible iframe on their site. "
+                        "Without X-Frame-Options, users can be tricked into clicking buttons they cannot see."
+                    ),
+                    'X-Content-Type-Options': (
+                        "Prevents browsers from guessing the file type — stops MIME-sniffing attacks.",
+                        "If a user uploads a JavaScript file named 'image.jpg', a browser without nosniff "
+                        "may execute it as a script. With nosniff, it treats it as an image."
+                    ),
+                    'Referrer-Policy': (
+                        "Controls how much URL information is sent to third parties in the Referer header.",
+                        "Without this, query parameters (including session tokens) in your URLs may leak "
+                        "to every third-party resource loaded on your pages."
+                    ),
+                    'Permissions-Policy': (
+                        "Restricts which browser features (camera, mic, location) scripts can access.",
+                        "An injected script could request camera or microphone access. "
+                        "With Permissions-Policy set to deny these, the browser blocks the request."
+                    ),
+                    'X-XSS-Protection': (
+                        "Enables the built-in XSS filter in older browsers (IE, older Chrome).",
+                        "Low impact on modern browsers which use CSP instead, but adds a layer for legacy users."
+                    ),
+                }
+                what_it_does, attack_scenario = header_explanations.get(
+                    header_name,
+                    (f"Security header that protects against specific browser-based attacks.", "Consult OWASP Secure Headers Project for details.")
+                )
+
+                return (
+                    f"{'='*60}\n"
+                    f"EVIDENCE: Missing Security Header — {header_name}\n"
+                    f"{'='*60}\n\n"
+                    f"WHAT WE DID\n{'-'*40}\n"
+                    f"  We made a GET request and checked whether the response included\n"
+                    f"  the '{header_name}' security header.\n\n"
+                    f"REQUEST\n{'-'*40}\n"
+                    f"  Method     : GET\n"
+                    f"  URL        : {target_url}\n\n"
+                    f"RESPONSE\n{'-'*40}\n"
+                    f"  Status     : {status_code}\n"
+                    f"  All Response Headers:\n{all_resp_headers}\n\n"
+                    f"FINDING DETAILS\n{'-'*40}\n"
+                    f"  Header Checked             : {header_name}\n"
+                    f"  Header Present             : NO\n"
+                    f"  Recommended Value          : {header_name}: {expected}\n"
+                    f"  What This Header Does      : {what_it_does}\n"
+                    f"  Attack It Prevents         : {attack_scenario}\n"
+                    f"  Other Present Headers      : {present_str}\n"
+                    f"  Other Missing Headers      : {missing_str}\n"
+                    f"  Observed Result            : Header absent from server response\n\n"
+                    f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                    f"  Your server is not sending the '{header_name}' header.\n"
+                    f"  What this header does: {what_it_does}\n"
+                    f"  Without it: {attack_scenario}\n"
+                    f"  Fix: Add this line to your web server config:\n"
+                    f"    {header_name}: {expected}\n"
+                )
+
             header_report = {
                 'Strict-Transport-Security': (
                     "We checked the HTTP response for the Strict-Transport-Security (HSTS) header.",
@@ -1576,12 +2843,12 @@ class SecurityScanner:
                 ),
                 'Referrer-Policy': (
                     "We checked for the Referrer-Policy header.",
-                    "Without this header, the full URL of your pages is leaked to every third-party resource (analytics, fonts, ads).",
+                    "Without this header, the full URL of your pages is leaked to every third-party resource.",
                     "Third-party services receive URLs that may contain session tokens or sensitive query parameters."
                 ),
                 'Permissions-Policy': (
                     "We checked for the Permissions-Policy header.",
-                    "Without this, any script on the page (including third-party) can request camera, microphone, or geolocation access.",
+                    "Without this, any script on the page can request camera, microphone, or geolocation access.",
                     "An injected script silently requests access to the device camera or microphone."
                 ),
                 'X-XSS-Protection': (
@@ -1600,24 +2867,23 @@ class SecurityScanner:
                     f"Missing {missing['name']} weakens browser security.",
                     "Consult OWASP Secure Headers Project for details."
                 ))
-                rec = self.header_recommended.get(missing['name'], '')
+                rec         = self.header_recommended.get(missing['name'], '')
                 remediation = (f"Add this to your server config: {missing['name']}: {rec}" if rec
                                else f"Implement the {missing['name']} header.")
                 all_vulnerabilities.append(Vulnerability(
                     name=f"Missing {missing['name']}",
                     severity=severity,
                     description=missing['description'],
-                    evidence=f"{missing['name']} was not found in the HTTP response.",
+                    evidence=_header_evidence_text(final_url, missing['name'], response, headers_info),
                     remediation=remediation,
                     what_we_tested=tested,
                     indicates=indicates,
                     how_exploited=exploited
                 ))
 
-            # ── Crawler: per-page header check ────────────────────────────
             discovered_urls = run_module("crawl", self.crawl_domain, clean_url, 12) or [clean_url]
-            pages_checked: List[str] = [clean_url]
-            per_url_issues: Dict[str, int] = {}
+            pages_checked: List[str]          = [clean_url]
+            per_url_issues: Dict[str, int]    = {}
 
             for page_url in discovered_urls:
                 if time.time() - start_time > GLOBAL_TIMEOUT:
@@ -1632,23 +2898,57 @@ class SecurityScanner:
                     page_headers = self.check_security_headers(page_resp)
                     page_path    = urlparse(page_url).path or '/'
                     issue_count  = 0
+
                     for missing in page_headers.get('missing', []):
                         severity = (Severity.CRITICAL if missing['severity'] == 'critical' else
                                     Severity.HIGH     if missing['severity'] == 'high'     else
                                     Severity.MEDIUM   if missing['severity'] == 'medium'   else Severity.LOW)
                         tested, indicates, exploited = header_report.get(missing['name'], (
                             f"We checked {page_path} for the {missing['name']} header.",
-                            f"Missing {missing['name']}.",
-                            "Implement the header on all pages."
+                            f"Missing {missing['name']}.", "Implement the header on all pages."
                         ))
-                        rec = self.header_recommended.get(missing['name'], '')
+                        rec         = self.header_recommended.get(missing['name'], '')
                         remediation = (f"Add to all pages including {page_path}: {missing['name']}: {rec}" if rec
                                        else f"Implement {missing['name']} on all pages including {page_path}.")
+                        all_resp_headers_page = "\n".join(
+                            f"    {k}: {v}" for k, v in page_resp.headers.items()
+                        )
+                        _, attack_scenario = {
+                            'Strict-Transport-Security': ("HSTS", "Protocol downgrade attack possible on this page."),
+                            'Content-Security-Policy':   ("CSP",  "XSS on this page will execute without browser restriction."),
+                            'X-Frame-Options':           ("XFO",  "This page can be framed for clickjacking attacks."),
+                            'X-Content-Type-Options':    ("XCTO", "MIME sniffing attacks possible on this page."),
+                        }.get(missing['name'], ("", "Implement the header on all pages."))
+
+                        page_evidence = (
+                            f"{'='*60}\n"
+                            f"EVIDENCE: Missing Security Header — {missing['name']} (page: {page_path})\n"
+                            f"{'='*60}\n\n"
+                            f"WHAT WE DID\n{'-'*40}\n"
+                            f"  We crawled to this page ({page_path}) and checked for the\n"
+                            f"  '{missing['name']}' security header. It was absent.\n\n"
+                            f"REQUEST\n{'-'*40}\n"
+                            f"  Method  : GET\n"
+                            f"  URL     : {page_url}\n\n"
+                            f"RESPONSE\n{'-'*40}\n"
+                            f"  Status  : {page_resp.status_code} {page_resp.reason}\n"
+                            f"  All Response Headers:\n{all_resp_headers_page}\n\n"
+                            f"FINDING DETAILS\n{'-'*40}\n"
+                            f"  Header Checked     : {missing['name']}\n"
+                            f"  Page Path          : {page_path}\n"
+                            f"  Expected Value     : {missing['name']}: {rec if rec else 'see OWASP'}\n"
+                            f"  Observed Result    : Header absent from this page path\n"
+                            f"  Security Impact    : {attack_scenario}\n\n"
+                            f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
+                            f"  This specific page ({page_path}) is missing the '{missing['name']}' header.\n"
+                            f"  Security headers should be applied at the web server level so every\n"
+                            f"  page and endpoint is protected automatically, not just the homepage.\n"
+                        )
                         all_vulnerabilities.append(Vulnerability(
                             name=f"Missing {missing['name']} (page: {page_path})",
                             severity=severity,
                             description=missing['description'] + f" [Page: {page_path}]",
-                            evidence=f"{missing['name']} absent on {page_path}",
+                            evidence=page_evidence,
                             remediation=remediation,
                             what_we_tested=tested,
                             indicates=indicates,
@@ -1659,7 +2959,6 @@ class SecurityScanner:
                 except Exception:
                     continue
 
-            # Add all module results
             all_vulnerabilities.extend(cors_vulns)
             all_vulnerabilities.extend(redirect_vulns)
             all_vulnerabilities.extend(file_vulns)
@@ -1668,9 +2967,7 @@ class SecurityScanner:
             all_vulnerabilities.extend(info_vulns)
             all_vulnerabilities.extend(cfg_vulns)
 
-            # ── Port scan ─────────────────────────────────────────────────
             if enable_port_scan:
-                logger.info("Starting port scan…")
                 parsed   = urlparse(clean_url)
                 hostname = parsed.hostname
                 port_scan_results = run_module(
@@ -1680,25 +2977,21 @@ class SecurityScanner:
                 if 'vulnerabilities' in port_scan_results:
                     all_vulnerabilities.extend(port_scan_results['vulnerabilities'])
 
-            # ── Deduplicate ───────────────────────────────────────────────
             all_vulnerabilities = self.deduplicate(all_vulnerabilities)
-# ── Scoring ───────────────────────────────────────────────────
+            set_scan_progress(scan_token, "Finalizing score and report summary", 97, "running")
+
             severity_counts = {s.value: 0 for s in Severity}
             for vuln in all_vulnerabilities:
                 severity_counts[vuln.severity.value] += 1
 
-            # Raw weighted sum
-            raw_score = (
+            raw_score   = (
                 severity_counts['critical'] * 10 +
                 severity_counts['high']     * 5  +
                 severity_counts['medium']   * 2  +
                 severity_counts['low']      * 1
             )
-
-           
             SCORE_CEILING = 106
             risk_score = min(round((raw_score / SCORE_CEILING) * 100), 100)
-
             risk_level = ('Critical' if risk_score >= 60 else
                           'High'     if risk_score >= 30 else
                           'Medium'   if risk_score >= 12 else
@@ -1706,7 +2999,6 @@ class SecurityScanner:
 
             scan_duration = round(time.time() - start_time, 2)
 
-            # ── Friendly summary ──────────────────────────────────────────
             messages = {
                 'Secure':   "Your site looks secure based on the checks we ran. No obvious issues found.",
                 'Low':      "We found a few low-risk issues. Worth fixing, but no immediate emergency.",
@@ -1740,9 +3032,7 @@ class SecurityScanner:
                         top_types.add("missing browser security headers")
 
             if top_types:
-                friendly_parts.append(
-                    "Priority issues: " + ", ".join(sorted(top_types)) + "."
-                )
+                friendly_parts.append("Priority issues: " + ", ".join(sorted(top_types)) + ".")
 
             priority_actions: List[str] = []
             if severity_counts['critical'] or severity_counts['high']:
@@ -1756,10 +3046,7 @@ class SecurityScanner:
             if not priority_actions:
                 priority_actions.append("Keep dependencies updated and re-scan regularly.")
 
-            friendly_summary = {
-                'message':          " ".join(friendly_parts),
-                'priority_actions': priority_actions
-            }
+            friendly_summary = {'message': " ".join(friendly_parts), 'priority_actions': priority_actions}
 
             crawler_result = {
                 'discovered_urls': discovered_urls,
@@ -1767,10 +3054,8 @@ class SecurityScanner:
                 'per_url_issues':  per_url_issues,
             }
 
-            return ScanResult(
-                target=clean_url,
-                timestamp=timestamp,
-                scan_duration=scan_duration,
+            final_result = ScanResult(
+                target=clean_url, timestamp=timestamp, scan_duration=scan_duration,
                 ssl_info={
                     'https':             ssl_info['https'],
                     'grade':             ssl_info.get('grade', 'F'),
@@ -1806,9 +3091,12 @@ class SecurityScanner:
                 server_info=server_info,
                 crawler=crawler_result
             )
+            set_scan_progress(scan_token, "Scan completed", 100, "completed")
+            return final_result
 
         except Exception as e:
             logger.error(f"Scan error: {e}", exc_info=True)
+            set_scan_progress(scan_token, "Scan failed", 100, "failed", str(e))
             return ScanResult(
                 target=clean_url, timestamp=timestamp,
                 scan_duration=round(time.time() - start_time, 2),
@@ -1816,6 +3104,25 @@ class SecurityScanner:
                 port_scan={}, summary={}, error=f"Scan failed: {str(e)}",
                 server_info=None, crawler=None
             )
+
+
+# ─────────────────────────────────────────────
+# MODULE-LEVEL HELPERS (used inside scanner methods)
+# ─────────────────────────────────────────────
+
+def _infer_db_from_pattern(pattern: str) -> str:
+    """Infer the database type from the matched SQL error pattern."""
+    if not pattern:
+        return "Unknown"
+    pl = pattern.lower()
+    if 'mysql' in pl:   return "MySQL / MariaDB"
+    if 'pg_' in pl or 'postgresql' in pl or 'npgsql' in pl: return "PostgreSQL"
+    if 'mssql' in pl or 'sql server' in pl or 'ole db' in pl or 'waitfor' in pl: return "Microsoft SQL Server"
+    if 'oracle' in pl or 'oci_' in pl: return "Oracle Database"
+    if 'sqlite' in pl:  return "SQLite"
+    if 'access' in pl or 'jet' in pl: return "Microsoft Access / JET"
+    if 'odbc' in pl:    return "Unknown (via ODBC)"
+    return "Unknown"
 
 
 # ─────────────────────────────────────────────
@@ -1852,6 +3159,7 @@ def scan():
         enable_port_scan = data.get('enable_port_scan', True)
         port_scan_type   = data.get('port_scan_type', 'connect')
         custom_ports     = data.get('custom_ports')
+        scan_token       = data.get('scan_token')
 
         if port_scan_type not in ['connect', 'syn']:
             port_scan_type = 'connect'
@@ -1860,7 +3168,8 @@ def scan():
             target,
             enable_port_scan=enable_port_scan,
             port_scan_type=port_scan_type,
-            custom_ports=custom_ports
+            custom_ports=custom_ports,
+            scan_token=scan_token
         )
 
         response_data = {
@@ -1874,26 +3183,44 @@ def scan():
             'crawler':       result.crawler or {},
             'vulnerabilities': [
                 {
-                    'name':          v.name,
-                    'severity':      v.severity.value,
-                    'description':   v.description,
-                    'evidence':      v.evidence,
-                    'remediation':   v.remediation,
-                    'cvss_score':    v.cvss_score,
-                    'what_we_tested': getattr(v, 'what_we_tested', None),
-                    'indicates':     getattr(v, 'indicates', None),
-                    'how_exploited': getattr(v, 'how_exploited', None)
+                    'name':           expand_security_terms(v.name),
+                    'severity':       v.severity.value,
+                    'description':    expand_security_terms(v.description),
+                    'evidence':       expand_security_terms(v.evidence),
+                    'remediation':    expand_security_terms(v.remediation),
+                    'cvss_score':     v.cvss_score,
+                    'what_we_tested': expand_security_terms(getattr(v, 'what_we_tested', None)),
+                    'indicates':      expand_security_terms(getattr(v, 'indicates', None)),
+                    'how_exploited':  expand_security_terms(getattr(v, 'how_exploited', None))
                 } for v in result.vulnerabilities
             ],
             'summary': result.summary,
             'error':   result.error
         }
-
         return jsonify(response_data)
 
     except Exception as e:
         logger.error(f"Endpoint error: {e}", exc_info=True)
         return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+
+
+@app.route("/scan-progress", methods=["GET", "OPTIONS"])
+@limiter.limit("120 per minute")
+def scan_progress():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+    token = (request.args.get("token") or "").strip()
+    if not token:
+        return jsonify({"error": "token is required"}), 400
+    with SCAN_PROGRESS_LOCK:
+        progress = SCAN_PROGRESS.get(token)
+    if not progress:
+        return jsonify({
+            "scan_token": token, "stage": "Waiting for scan",
+            "progress": 0, "status": "unknown", "detail": "",
+            "updated_at": now_eat_iso(),
+        }), 200
+    return jsonify(progress), 200
 
 
 @app.route("/port-scan", methods=["POST", "OPTIONS"])
@@ -1908,18 +3235,16 @@ def port_scan_only():
         target = data.get('target')
         if not target:
             return jsonify({'error': 'Target host is required'}), 400
-
         if '://' in target:
             target = urlparse(target).hostname
 
-        ports       = data.get('ports')
-        scan_type   = data.get('scan_type', 'connect')
+        ports        = data.get('ports')
+        scan_type    = data.get('scan_type', 'connect')
         port_scanner = PortScanner(
             timeout=data.get('timeout', 2.0),
             max_workers=data.get('max_workers', 50)
         )
         result = port_scanner.scan_host(target, ports=ports, scan_type=scan_type)
-
         return jsonify({
             'target':        result['target'],
             'ip_address':    result.get('ip_address'),
@@ -1928,14 +3253,10 @@ def port_scan_only():
             'ports_scanned': result['ports_scanned'],
             'open_ports':    result['open_ports'],
             'vulnerabilities': [
-                {
-                    'name':     v.name,
-                    'severity': v.severity.value,
-                    'description': v.description
-                } for v in result.get('vulnerabilities', [])
+                {'name': v.name, 'severity': v.severity.value, 'description': v.description}
+                for v in result.get('vulnerabilities', [])
             ]
         })
-
     except Exception as e:
         logger.error(f"Port scan error: {e}", exc_info=True)
         return jsonify({'error': 'Port scan failed', 'details': str(e)}), 500
@@ -1946,21 +3267,39 @@ def health_check():
     return jsonify({
         'status':    'healthy',
         'timestamp': now_eat_iso(),
-        'version':   '2.2.0',
+        'version':   '2.4.0',
         'features':  [
             'ssl_scan', 'header_analysis', 'sqli_test', 'xss_test',
             'port_scan', 'cors_check', 'open_redirect', 'sensitive_files',
-            'blind_sqli', 'mixed_content', 'secret_detection', 'deduplication'
+            'blind_sqli', 'mixed_content', 'secret_detection', 'deduplication',
+            'full_request_evidence', 'full_response_headers', 'body_highlight',
+            'plain_english_summaries', 'cors_preflight_test', 'dom_xss_source_context',
+            'sql_baseline_comparison', 'mixed_content_breakdown', 'body_type_classification'
         ]
     })
 
 
 if __name__ == "__main__":
-    print("=" * 55)
-    print("ScanQuotient Security Scanner Backend v2.2")
-    print("=" * 55)
-    print("NEW: CORS check, open redirect, 40+ sensitive file probes,")
-    print("     blind SQLi, mixed content, secret detection, deduplication")
+    print("=" * 60)
+    print("ScanQuotient Security Scanner Backend v2.4")
+    print("=" * 60)
+    print("Evidence upgrades in this version:")
+    print("  + WHAT WE DID section on every finding (plain language)")
+    print("  + PLAIN-LANGUAGE SUMMARY section on every finding")
+    print("  + Body type classification (JSON / HTML / error page / etc.)")
+    print("  + Page title extraction in HTTP evidence")
+    print("  + CORS: preflight OPTIONS test included with results")
+    print("  + SQL injection: baseline URL + DB type inference")
+    print("  + XSS: encoding check + injection context snippet")
+    print("  + DOM XSS: actual source snippet around each sink")
+    print("  + Open redirect: full redirect chain shown")
+    print("  + Sensitive files: credential pattern list + structured body")
+    print("  + Security headers: what-it-does + attack scenario per header")
+    print("  + Server/X-Powered-By: full headers shown, not just the value")
+    print("  + Mixed content: JS/CSS/image breakdown by type")
+    print("  + Cookies: all Set-Cookie headers listed, not just first")
+    print("  + Port scan: plain-language reachability explanation")
+    print("  + SSL: validity days remaining, protocol quality labels")
     print("Server: http://0.0.0.0:5000")
-    print("=" * 55)
+    print("=" * 60)
     app.run(host='0.0.0.0', port=5000, debug=True, threaded=True, use_reloader=False)

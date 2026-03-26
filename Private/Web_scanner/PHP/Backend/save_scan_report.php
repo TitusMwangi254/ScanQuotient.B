@@ -158,6 +158,7 @@ try {
             scan_json  LONGTEXT       NOT NULL,
             report_text LONGTEXT      NULL,
             pdf_path   VARCHAR(512)   NULL,
+            doc_path   VARCHAR(512)   NULL,
             html_path  VARCHAR(512)   NULL,
             csv_path   VARCHAR(512)   NULL,
             created_at TIMESTAMP      DEFAULT CURRENT_TIMESTAMP,
@@ -169,6 +170,10 @@ try {
         $pdo->exec("ALTER TABLE scan_results MODIFY COLUMN user_id VARCHAR(64) NOT NULL");
     } catch (Exception $e) { /* already correct shape */
     }
+    try {
+        $pdo->exec("ALTER TABLE scan_results ADD COLUMN doc_path VARCHAR(512) NULL AFTER pdf_path");
+    } catch (Exception $e) { /* column already exists */
+    }
 
     $report_text = generate_report_via_openai($scan_data);
 
@@ -179,10 +184,14 @@ try {
     $csvPath = $storageDir . DIRECTORY_SEPARATOR . $baseName . '.csv';
     $htmlPath = $storageDir . DIRECTORY_SEPARATOR . $baseName . '.html';
     $pdfPath = $storageDir . DIRECTORY_SEPARATOR . $baseName . '.pdf';
+    $docPath = $storageDir . DIRECTORY_SEPARATOR . $baseName . '.doc';
 
     // Always write CSV and HTML
     file_put_contents($csvPath, build_csv_report($scan_data));
-    file_put_contents($htmlPath, build_html_report($scan_data, $report_text));
+    $htmlReport = build_html_report($scan_data, $report_text);
+    file_put_contents($htmlPath, $htmlReport);
+    // Word-compatible artifact (HTML payload with .doc extension)
+    file_put_contents($docPath, $htmlReport);
 
     // ── PDF generation ───────────────────────────────────────────────────────
     // Attempt server-side PDF via Dompdf.
@@ -217,9 +226,9 @@ try {
     if ($createdAtOverride) {
         $stmt = $pdo->prepare("
             INSERT INTO scan_results
-                (user_id, target_url, scan_json, report_text, pdf_path, html_path, csv_path, created_at)
+                (user_id, target_url, scan_json, report_text, pdf_path, doc_path, html_path, csv_path, created_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $user_id,
@@ -227,14 +236,15 @@ try {
             json_encode($scan_data),
             $report_text,
             $pdfPathRelative, // null if not generated
+            'Storage/Scan_results/' . $baseName . '.doc',
             'Storage/Scan_results/' . $baseName . '.html',
             'Storage/Scan_results/' . $baseName . '.csv',
             $createdAtOverride,
         ]);
     } else {
         $stmt = $pdo->prepare("
-            INSERT INTO scan_results (user_id, target_url, scan_json, report_text, pdf_path, html_path, csv_path)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO scan_results (user_id, target_url, scan_json, report_text, pdf_path, doc_path, html_path, csv_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $user_id,
@@ -242,6 +252,7 @@ try {
             json_encode($scan_data),
             $report_text,
             $pdfPathRelative, // null if not generated
+            'Storage/Scan_results/' . $baseName . '.doc',
             'Storage/Scan_results/' . $baseName . '.html',
             'Storage/Scan_results/' . $baseName . '.csv',
         ]);
@@ -261,6 +272,7 @@ try {
         'download' => [
             'csv' => 'download_scan.php?id=' . $scan_id . '&type=csv',
             'html' => 'download_scan.php?id=' . $scan_id . '&type=html',
+            'doc' => 'download_scan.php?id=' . $scan_id . '&type=doc',
             'pdf' => $pdfPathRelative
                 ? 'download_scan.php?id=' . $scan_id . '&type=pdf'
                 : null,

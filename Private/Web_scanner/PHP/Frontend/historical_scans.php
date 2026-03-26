@@ -120,7 +120,7 @@ try {
     }
 
     $stmt = $pdo->prepare("
-        SELECT id, target_url, scan_json, created_at, pdf_path, html_path, csv_path, group_id
+        SELECT id, target_url, scan_json, created_at, pdf_path, doc_path, html_path, csv_path, group_id
         FROM scan_results
         WHERE {$whereSql}
         ORDER BY created_at DESC
@@ -1166,7 +1166,8 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             display: flex;
             flex-direction: column;
             gap: 12px;
-            z-index: 1000;
+            z-index: 3000;
+            pointer-events: none;
         }
 
         .toast {
@@ -1180,6 +1181,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             gap: 12px;
             min-width: 300px;
             animation: slideIn 0.3s ease;
+            pointer-events: auto;
         }
 
         @keyframes slideIn {
@@ -1635,6 +1637,10 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                             style="padding: 8px 12px; border-radius: 8px; width: 140px;">
                         <button type="button" class="action-btn" id="createGroupBtn"><i class="fas fa-plus"></i>
                             Create</button>
+                        <button type="button" class="action-btn" id="prebuildPdfsBtn" title="Generate missing PDF files for instant sharing">
+                            <i class="fas fa-file-pdf"></i> Prebuild missing PDFs
+                            <span id="prebuildPdfsBadge" style="display:none; margin-left:8px; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:rgba(59,130,246,0.14); border:1px solid rgba(59,130,246,0.28); color:#1d4ed8;">0</span>
+                        </button>
                     </div>
                     <?php if ($filterGroupId): ?>
                         <div
@@ -1721,6 +1727,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                                                         title="More actions" data-scan-id="<?php echo (int) $row['id']; ?>"
                                                         data-target-url="<?php echo htmlspecialchars($targetUrl, ENT_QUOTES); ?>"
                                                         data-has-pdf="<?php echo !empty($row['pdf_path']) ? '1' : '0'; ?>"
+                                                        data-has-doc="<?php echo !empty($row['doc_path']) ? '1' : '0'; ?>"
                                                         data-has-html="<?php echo !empty($row['html_path']) ? '1' : '0'; ?>"
                                                         data-has-csv="<?php echo !empty($row['csv_path']) ? '1' : '0'; ?>"
                                                         data-can-delete="<?php echo $userPackage !== 'freemium' ? '1' : '0'; ?>"
@@ -1864,6 +1871,9 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                 <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="shareModalPdf"> PDF
                     <span id="shareModalPdfHint" style="display:none; font-size:12px; color:var(--text-light);">(not
                         available)</span></label>
+                <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="shareModalDoc"> DOC
+                    <span id="shareModalDocHint" style="display:none; font-size:12px; color:var(--text-light);">(not
+                        available)</span></label>
                 <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="shareModalHtml">
                     HTML <span id="shareModalHtmlHint"
                         style="display:none; font-size:12px; color:var(--text-light);">(not available)</span></label>
@@ -1895,9 +1905,9 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                     <i class="fas fa-redo"></i> Rescan
                 </a>
 
-                <button type="button" id="actionsShareBtn" class="action-btn actions-modal-item disabled"
+                <button type="button" id="actionsShareBtn" class="action-btn actions-modal-item"
                     title="Share scan results">
-                    <i class="fas fa-share-alt"></i> Share (Coming soon)
+                    <i class="fas fa-share-alt"></i> Share
                 </button>
 
                 <a id="actionsAiOverviewLink" class="action-btn actions-modal-item" href="enterprise_ai_overview.php"
@@ -1909,13 +1919,17 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                     title="Download HTML">
                     <i class="fas fa-file-code"></i> HTML
                 </a>
+                <a id="actionsDocLink" class="action-btn actions-modal-item" href="#" target="_blank"
+                    title="Download Word document">
+                    <i class="fas fa-file-word"></i> DOC
+                </a>
                 <a id="actionsCsvLink" class="action-btn actions-modal-item" href="#" target="_blank"
                     title="Download CSV">
                     <i class="fas fa-file-csv"></i> CSV
                 </a>
-                <a id="actionsPdfLink" class="action-btn actions-modal-item coming-soon" href="#"
-                    title="PDF from history — temporarily disabled">
-                    <i class="fas fa-file-pdf"></i> PDF (Coming soon)
+                <a id="actionsPdfLink" class="action-btn actions-modal-item" href="#"
+                    title="Download PDF">
+                    <i class="fas fa-file-pdf"></i> PDF
                 </a>
 
                 <button type="button" id="actionsDeleteBtn" class="action-btn actions-modal-item delete"
@@ -2012,6 +2026,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             scanId: null,
             targetUrl: '',
             hasPdf: false,
+            hasDoc: false,
             hasHtml: false,
             hasCsv: false,
             canDelete: false,
@@ -2223,6 +2238,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                 scanId: null,
                 targetUrl: '',
                 hasPdf: false,
+                hasDoc: false,
                 hasHtml: false,
                 hasCsv: false,
                 canDelete: false,
@@ -2236,6 +2252,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                 scanId: parseInt(scanId, 10) || null,
                 targetUrl: opts.targetUrl || '',
                 hasPdf: !!opts.hasPdf,
+                hasDoc: !!opts.hasDoc,
                 hasHtml: !!opts.hasHtml,
                 hasCsv: !!opts.hasCsv,
                 canDelete: !!opts.canDelete,
@@ -2253,6 +2270,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
 
             // Downloads
             const htmlLink = document.getElementById('actionsHtmlLink');
+            const docLink = document.getElementById('actionsDocLink');
             const csvLink = document.getElementById('actionsCsvLink');
             const pdfLink = document.getElementById('actionsPdfLink');
             const setDisabled = (el, disabled) => {
@@ -2264,20 +2282,29 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                 htmlLink.href = downloadBaseUrl + '?id=' + actionsContext.scanId + '&type=html';
                 setDisabled(htmlLink, !actionsContext.hasHtml);
             }
+            if (docLink) {
+                docLink.href = downloadBaseUrl + '?id=' + actionsContext.scanId + '&type=doc';
+                setDisabled(docLink, !actionsContext.hasDoc);
+            }
             if (csvLink) {
                 csvLink.href = downloadBaseUrl + '?id=' + actionsContext.scanId + '&type=csv';
                 setDisabled(csvLink, !actionsContext.hasCsv);
             }
             if (pdfLink) {
-                // PDF from history temporarily disabled (re-enable download routes + client helpers later).
-                pdfLink.href = '#';
-                pdfLink.classList.add('coming-soon');
-                setDisabled(pdfLink, false);
+                pdfLink.href = ensurePdfBaseUrl + '?scan_id=' + actionsContext.scanId;
+                pdfLink.classList.remove('coming-soon');
+                setDisabled(pdfLink, !(actionsContext.hasPdf || actionsContext.hasHtml));
             }
 
             // Share
             const shareBtn = document.getElementById('actionsShareBtn');
-            if (shareBtn) shareBtn.classList.add('disabled');
+            if (shareBtn) {
+                const hasAnyArtefact = actionsContext.hasPdf || actionsContext.hasDoc || actionsContext.hasHtml || actionsContext.hasCsv;
+                shareBtn.classList.toggle('disabled', !hasAnyArtefact);
+                shareBtn.title = hasAnyArtefact
+                    ? 'Share scan results by email'
+                    : 'No report files available for this scan';
+            }
 
             // AI Overview
             const aiLink = document.getElementById('actionsAiOverviewLink');
@@ -2505,6 +2532,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                 {
                     targetUrl: btn.getAttribute('data-target-url') || '',
                     hasPdf: btn.getAttribute('data-has-pdf') === '1',
+                    hasDoc: btn.getAttribute('data-has-doc') === '1',
                     hasHtml: btn.getAttribute('data-has-html') === '1',
                     hasCsv: btn.getAttribute('data-has-csv') === '1',
                     canDelete: btn.getAttribute('data-can-delete') === '1',
@@ -2515,20 +2543,25 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
 
         // Actions modal button wiring
         document.getElementById('actionsShareBtn')?.addEventListener('click', () => {
-            showToast('Share', 'Share feature is temporarily disabled and will be enabled in a later update.', 'info');
-            return;
             if (!actionsContext || !actionsContext.scanId) return;
-            const hasAnyArtefact = actionsContext.hasPdf || actionsContext.hasHtml || actionsContext.hasCsv;
+            const hasAnyArtefact = actionsContext.hasPdf || actionsContext.hasDoc || actionsContext.hasHtml || actionsContext.hasCsv;
             if (!hasAnyArtefact) {
-                showToast('Share', 'No report files (PDF/HTML/CSV) are available for this scan.', 'error');
+                showToast('Share', 'No report files (PDF/DOC/HTML/CSV) are available for this scan.', 'error');
                 return;
             }
-            const scanId = actionsContext.scanId;
-            closeActionsModal();
-            openShareModal(scanId, {
+            const shareState = {
+                scanId: actionsContext.scanId,
                 hasPdf: actionsContext.hasPdf,
+                hasDoc: actionsContext.hasDoc,
                 hasHtml: actionsContext.hasHtml,
                 hasCsv: actionsContext.hasCsv
+            };
+            closeActionsModal();
+            openShareModal(shareState.scanId, {
+                hasPdf: shareState.hasPdf,
+                hasDoc: shareState.hasDoc,
+                hasHtml: shareState.hasHtml,
+                hasCsv: shareState.hasCsv
             });
         });
 
@@ -2544,13 +2577,118 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
         });
 
         // Close actions modal when launching any navigation/download link
-        ['actionsRescanLink', 'actionsHtmlLink', 'actionsCsvLink', 'actionsAiOverviewLink'].forEach(id => {
+        ['actionsRescanLink', 'actionsHtmlLink', 'actionsDocLink', 'actionsCsvLink', 'actionsAiOverviewLink'].forEach(id => {
             document.getElementById(id)?.addEventListener('click', () => closeActionsModal());
         });
 
-        document.getElementById('actionsPdfLink')?.addEventListener('click', function (e) {
-            e.preventDefault();
-            showToast('PDF', 'PDF download from history is temporarily disabled. We will restore it in a later update.', 'info');
+        let shareModalState = { hasPdf: false, hasDoc: false, hasHtml: false, hasCsv: false };
+
+        async function renderPdfFromHtmlReport(htmlUrl) {
+            const res = await fetch(htmlUrl, { credentials: 'same-origin' });
+            if (!res.ok) throw new Error('Could not fetch HTML report');
+            const htmlText = await res.text();
+
+            const host = document.createElement('div');
+            host.style.position = 'fixed';
+            host.style.left = '-100000px';
+            host.style.top = '0';
+            host.style.width = '1200px';
+            host.style.background = '#ffffff';
+            host.style.zIndex = '-1';
+            host.innerHTML = htmlText;
+            document.body.appendChild(host);
+
+            try {
+                const canvas = await html2canvas(host, {
+                    scale: 1,
+                    useCORS: true,
+                    backgroundColor: '#ffffff',
+                    windowWidth: 1200
+                });
+                const { jsPDF } = window.jspdf;
+                const pdf = new jsPDF('p', 'mm', 'a4');
+                const pageW = pdf.internal.pageSize.getWidth();
+                const pageH = pdf.internal.pageSize.getHeight();
+                const imgW = pageW;
+                const imgH = (canvas.height * imgW) / canvas.width;
+                const imgData = canvas.toDataURL('image/jpeg', 0.72);
+
+                let yLeft = imgH;
+                let yPos = 0;
+                pdf.addImage(imgData, 'PNG', 0, yPos, imgW, imgH);
+                yLeft -= pageH;
+                while (yLeft > 0) {
+                    yPos = yLeft - imgH;
+                    pdf.addPage();
+                    pdf.addImage(imgData, 'PNG', 0, yPos, imgW, imgH);
+                    yLeft -= pageH;
+                }
+                return pdf;
+            } finally {
+                host.remove();
+            }
+        }
+
+        async function buildPdfFromHtmlReport(htmlUrl, scanId) {
+            const pdf = await renderPdfFromHtmlReport(htmlUrl);
+            pdf.save('scan-report-' + String(scanId || 'history') + '.pdf');
+        }
+
+        async function ensureHistoryPdfUploaded(scanId) {
+            const htmlLink = document.getElementById('actionsHtmlLink');
+            const htmlUrl = (htmlLink && !htmlLink.classList.contains('disabled') && htmlLink.href)
+                ? htmlLink.href
+                : (downloadBaseUrl + '?id=' + scanId + '&type=html');
+            if (!htmlUrl) throw new Error('HTML report is unavailable, cannot generate PDF');
+            const pdf = await renderPdfFromHtmlReport(htmlUrl);
+            const pdfBase64DataUri = pdf.output('datauristring');
+            const upRes = await fetch('../Backend/upload_pdf.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    scan_id: scanId,
+                    pdf_base64: pdfBase64DataUri
+                })
+            });
+            let upPayload = null;
+            try { upPayload = await upRes.json(); } catch (e) {
+                const rawText = await upRes.text().catch(() => '');
+                throw new Error(rawText || 'Could not upload generated PDF');
+            }
+            if (!upRes.ok || !upPayload || !upPayload.ok) {
+                throw new Error((upPayload && upPayload.error) ? upPayload.error : 'Could not upload generated PDF');
+            }
+            return true;
+        }
+
+        document.getElementById('actionsPdfLink')?.addEventListener('click', async (e) => {
+            const link = e.currentTarget;
+            if (link && link.classList.contains('disabled')) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+            // Graceful fallback: if stored PDF does not exist but HTML does,
+            // generate a real PDF client-side from HTML.
+            if (actionsContext && !actionsContext.hasPdf && actionsContext.hasHtml) {
+                e.preventDefault();
+                const htmlLink = document.getElementById('actionsHtmlLink');
+                if (htmlLink && !htmlLink.classList.contains('disabled') && htmlLink.href) {
+                    try {
+                        await buildPdfFromHtmlReport(htmlLink.href, actionsContext.scanId);
+                        showToast('PDF generated', 'PDF generated successfully.', 'success');
+                    } catch (err) {
+                        window.open(htmlLink.href, '_blank');
+                        showToast('PDF note', 'PDF is not ready yet. Opened report file instead.', 'info');
+                    }
+                } else {
+                    showToast('PDF unavailable', 'PDF is not available for this scan right now.', 'error');
+                }
+                closeActionsModal();
+                return;
+            }
+            closeActionsModal();
         });
 
         // Delete scan (Pro/Enterprise) - real table
@@ -2580,41 +2718,66 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
         function syncHistoryShareAll() {
             const all = document.getElementById('shareModalAll');
             const pdf = document.getElementById('shareModalPdf');
+            const doc = document.getElementById('shareModalDoc');
             const html = document.getElementById('shareModalHtml');
             const csv = document.getElementById('shareModalCsv');
-            if (!all || !pdf || !html || !csv) return;
-            all.checked = !!(pdf.checked && html.checked && csv.checked);
+            if (!all || !pdf || !doc || !html || !csv) return;
+            all.checked = !!(pdf.checked && doc.checked && html.checked && csv.checked);
         }
         document.getElementById('shareModalAll')?.addEventListener('change', (e) => {
             const v = !!e.target.checked;
             const pdf = document.getElementById('shareModalPdf');
+            const doc = document.getElementById('shareModalDoc');
             const html = document.getElementById('shareModalHtml');
             const csv = document.getElementById('shareModalCsv');
             if (pdf && !pdf.disabled) pdf.checked = v;
+            if (doc && !doc.disabled) doc.checked = v;
             if (html && !html.disabled) html.checked = v;
             if (csv && !csv.disabled) csv.checked = v;
         });
-        ['shareModalPdf', 'shareModalHtml', 'shareModalCsv'].forEach(id => {
+        ['shareModalPdf', 'shareModalDoc', 'shareModalHtml', 'shareModalCsv'].forEach(id => {
             document.getElementById(id)?.addEventListener('change', syncHistoryShareAll);
         });
 
         function openShareModal(scanId, opts) {
             opts = opts || {};
+            shareModalState = {
+                hasPdf: !!opts.hasPdf,
+                hasDoc: !!opts.hasDoc,
+                hasHtml: !!opts.hasHtml,
+                hasCsv: !!opts.hasCsv
+            };
             document.getElementById('shareModalScanId').value = scanId || '';
             const pdf = document.getElementById('shareModalPdf');
+            const doc = document.getElementById('shareModalDoc');
             const html = document.getElementById('shareModalHtml');
             const csv = document.getElementById('shareModalCsv');
             const pdfHint = document.getElementById('shareModalPdfHint');
+            const docHint = document.getElementById('shareModalDocHint');
             const htmlHint = document.getElementById('shareModalHtmlHint');
             const csvHint = document.getElementById('shareModalCsvHint');
-            if (pdf) { pdf.disabled = !(opts.hasPdf || opts.hasHtml); pdf.checked = !!(opts.hasPdf || opts.hasHtml); }
+            const canUsePdf = !!(opts.hasPdf || opts.hasHtml);
+            if (pdf) { pdf.disabled = !canUsePdf; pdf.checked = canUsePdf; }
+            if (doc) { doc.disabled = !opts.hasDoc; doc.checked = !!opts.hasDoc; }
             if (html) { html.disabled = !opts.hasHtml; html.checked = !!opts.hasHtml; }
             if (csv) { csv.disabled = !opts.hasCsv; csv.checked = !!opts.hasCsv; }
-            if (pdfHint) pdfHint.style.display = (opts.hasPdf || opts.hasHtml) ? 'none' : 'inline';
+            if (pdfHint) {
+                if (opts.hasPdf) {
+                    pdfHint.style.display = 'none';
+                    pdfHint.textContent = '(ready)';
+                } else if (opts.hasHtml) {
+                    pdfHint.style.display = 'inline';
+                    pdfHint.textContent = '(will be automatically generated)';
+                } else {
+                    pdfHint.style.display = 'inline';
+                    pdfHint.textContent = '(not available)';
+                }
+            }
+            if (docHint) docHint.style.display = opts.hasDoc ? 'none' : 'inline';
             if (htmlHint) htmlHint.style.display = opts.hasHtml ? 'none' : 'inline';
             if (csvHint) csvHint.style.display = opts.hasCsv ? 'none' : 'inline';
             const all = document.getElementById('shareModalAll');
-            if (all) all.checked = !!((pdf && pdf.checked) && (html && html.checked) && (csv && csv.checked));
+            if (all) all.checked = !!((pdf && pdf.checked) && (doc && doc.checked) && (html && html.checked) && (csv && csv.checked));
             document.getElementById('shareModalEmails').value = '';
             document.getElementById('shareModal').style.display = 'flex';
         }
@@ -2626,6 +2789,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             if (scanId) {
                 openShareModal(scanId, {
                     hasPdf: btn.getAttribute('data-has-pdf') === '1',
+                    hasDoc: btn.getAttribute('data-has-doc') === '1',
                     hasHtml: btn.getAttribute('data-has-html') === '1',
                     hasCsv: btn.getAttribute('data-has-csv') === '1'
                 });
@@ -2635,55 +2799,56 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             const scanId = parseInt(document.getElementById('shareModalScanId').value, 10);
             const artefacts = [];
             if (document.getElementById('shareModalPdf').checked) artefacts.push('pdf');
+            if (document.getElementById('shareModalDoc').checked) artefacts.push('doc');
             if (document.getElementById('shareModalHtml').checked) artefacts.push('html');
             if (document.getElementById('shareModalCsv').checked) artefacts.push('csv');
+            const emailsRaw = (document.getElementById('shareModalEmails')?.value || '').trim();
+            const recipients = emailsRaw
+                .split(/[\s,;]+/)
+                .map(v => v.trim())
+                .filter(Boolean);
 
-            // Share sheet mode: ignore emails; use native OS share features when available.
-            if (!scanId || artefacts.length === 0) {
-                showToast('Share', 'Select at least one format (PDF/HTML/CSV).', 'error');
+            if (!scanId || artefacts.length === 0 || recipients.length === 0) {
+                showToast('Share', 'Provide recipient email(s) and at least one format (PDF/DOC/HTML/CSV).', 'error');
                 return;
             }
             document.getElementById('shareModalSend').disabled = true;
             try {
-                if (!navigator.share || typeof navigator.share !== 'function') {
-                    throw new Error('Web Share is not supported in this browser.');
+                // If user selected PDF but server-side PDF is missing, generate from HTML and upload first.
+                if (
+                    artefacts.includes('pdf') &&
+                    !shareModalState.hasPdf &&
+                    shareModalState.hasHtml
+                ) {
+                    showToast('Preparing PDF', 'Generating PDF for sharing...', 'info');
+                    await ensureHistoryPdfUploaded(scanId);
+                    shareModalState.hasPdf = true;
                 }
 
-                const files = [];
-                const mimeMap = { pdf: 'application/pdf', html: 'text/html', csv: 'text/csv' };
-
-                for (const type of artefacts) {
-                    const url = (type === 'pdf')
-                        ? (ensurePdfBaseUrl + '?scan_id=' + encodeURIComponent(scanId))
-                        : (downloadBaseUrl + '?id=' + encodeURIComponent(scanId) + '&type=' + encodeURIComponent(type));
-                    const r = await fetch(url, { credentials: 'same-origin', redirect: 'follow' });
-                    if (!r.ok) continue;
-                    const blob = await r.blob();
-                    if (!blob || blob.size < 1200) continue; // skip tiny/invalid downloads
-                    files.push(new File([blob], `scan-report-${scanId}.${type}`, { type: mimeMap[type] || blob.type || 'application/octet-stream' }));
+                const res = await fetch('../Backend/share_scan.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        scan_id: scanId,
+                        artefacts: artefacts,
+                        recipients: recipients
+                    })
+                });
+                let payload = null;
+                try { payload = await res.json(); } catch (e) { }
+                if (!res.ok || !payload || !payload.ok) {
+                    const msg = (payload && payload.error) ? payload.error : ('Share failed (HTTP ' + res.status + ')');
+                    throw new Error(msg);
                 }
-
-                const shareData = {
-                    title: 'ScanQuotient scan results',
-                    text: 'ScanQuotient scan results',
-                    files
-                };
-
-                // If files can't be shared, fall back to sharing text only.
-                if (files.length > 0) {
-                    if (navigator.canShare && !navigator.canShare(shareData)) {
-                        await navigator.share({ title: shareData.title, text: shareData.text });
-                    } else {
-                        await navigator.share(shareData);
-                    }
-                } else {
-                    await navigator.share({ title: shareData.title, text: shareData.text });
-                }
-
                 closeShareModal();
-                showToast('Shared', 'Opened your device share sheet.', 'success');
+                if (payload && Array.isArray(payload.missing) && payload.missing.includes('pdf')) {
+                    showToast('Shared with fallback', payload.message || 'PDF was unavailable, sent available files.', 'info');
+                } else {
+                    showToast('Shared', payload.message || 'Scan results sent by email.', 'success');
+                }
             } catch (e) {
-                showToast('Share failed', (e && e.message) ? e.message : 'Sharing is unavailable.', 'error');
+                showToast('Share failed', (e && e.message) ? e.message : 'Email sharing is unavailable.', 'error');
             } finally {
                 document.getElementById('shareModalSend').disabled = false;
             }
@@ -2718,6 +2883,85 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
         if (createGroupBtn) {
             createGroupBtn.addEventListener('click', handleCreateGroup);
         }
+
+        async function handlePrebuildPdfs() {
+            const btn = document.getElementById('prebuildPdfsBtn');
+            if (!btn) return;
+            const groupEl = document.getElementById('groupFilter');
+            const selectedGroup = groupEl && groupEl.value ? parseInt(groupEl.value, 10) : 0;
+            btn.disabled = true;
+            showToast('Prebuild PDFs', 'Generating missing PDF reports. This may take a moment...', 'info');
+            try {
+                const res = await fetch('../Backend/prebuild_missing_pdfs.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        limit: 180,
+                        group_id: Number.isFinite(selectedGroup) ? selectedGroup : 0
+                    })
+                });
+                let payload = null;
+                try { payload = await res.json(); } catch (e) { }
+                if (!res.ok || !payload || !payload.ok) {
+                    throw new Error((payload && payload.error) ? payload.error : ('HTTP ' + res.status));
+                }
+                const msg = 'Generated ' + (payload.generated || 0) +
+                    ', already ready ' + (payload.already_ready || 0) +
+                    ', missing HTML ' + (payload.missing_html || 0) +
+                    ', failed ' + (payload.failed || 0) + '.';
+                showToast('PDF prebuild complete', msg, (payload.failed || 0) > 0 ? 'info' : 'success');
+                try { loadMissingPdfBadge(); } catch (e) { }
+                setTimeout(() => window.location.reload(), 900);
+            } catch (e) {
+                showToast('Prebuild failed', (e && e.message) ? e.message : 'Could not prebuild PDFs.', 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+        const prebuildPdfsBtn = document.getElementById('prebuildPdfsBtn');
+        if (prebuildPdfsBtn) {
+            prebuildPdfsBtn.addEventListener('click', handlePrebuildPdfs);
+        }
+
+        async function loadMissingPdfBadge() {
+            const badge = document.getElementById('prebuildPdfsBadge');
+            const btn = document.getElementById('prebuildPdfsBtn');
+            if (!badge || !btn) return;
+            const groupEl = document.getElementById('groupFilter');
+            const selectedGroup = groupEl && groupEl.value ? parseInt(groupEl.value, 10) : 0;
+            try {
+                const q = '?limit=600&group_id=' + encodeURIComponent(Number.isFinite(selectedGroup) ? selectedGroup : 0);
+                const res = await fetch('../Backend/missing_pdfs_count.php' + q, {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' }
+                });
+                const payload = await res.json();
+                if (!res.ok || !payload || !payload.ok) {
+                    badge.style.display = 'none';
+                    return;
+                }
+                const n = Number(payload.missing_pdf_count || 0);
+                badge.textContent = String(n);
+                badge.style.display = 'inline-flex';
+                badge.style.alignItems = 'center';
+                if (n > 0) {
+                    badge.style.background = 'rgba(245, 158, 11, 0.16)';
+                    badge.style.borderColor = 'rgba(245, 158, 11, 0.34)';
+                    badge.style.color = '#b45309';
+                    btn.title = 'Generate missing PDF files for instant sharing (' + n + ' estimated)';
+                } else {
+                    badge.style.background = 'rgba(16, 185, 129, 0.16)';
+                    badge.style.borderColor = 'rgba(16, 185, 129, 0.35)';
+                    badge.style.color = '#047857';
+                    btn.title = 'All visible scans already have PDFs';
+                }
+            } catch (e) {
+                badge.style.display = 'none';
+            }
+        }
+        loadMissingPdfBadge();
         document.querySelector('.history-table')?.addEventListener('change', (e) => {
             const sel = e.target.closest('.scan-group-select');
             if (!sel) return;
