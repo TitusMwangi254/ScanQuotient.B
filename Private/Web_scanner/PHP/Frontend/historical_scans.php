@@ -7,6 +7,8 @@ if (!isset($_SESSION['user_id']) && !isset($_SESSION['user_uid'])) {
     exit;
 }
 
+require_once __DIR__ . '/../Include/sq_target_canonical.php';
+
 // Use the UID-style identifier for scan ownership
 $currentUserId = $_SESSION['user_uid'] ?? $_SESSION['user_id'];
 $currentUserName = $_SESSION['user_name'] ?? (string) $currentUserId;
@@ -31,6 +33,19 @@ $scans = [];
 $historyError = null;
 $userPackage = 'freemium';
 $filterGroupId = isset($_GET['group_id']) ? (int) $_GET['group_id'] : null;
+
+$filterTargetRaw = isset($_GET['target']) ? trim((string) $_GET['target']) : '';
+$filterCanonical = null;
+$filterHostLabel = '';
+if ($filterTargetRaw !== '') {
+    $filterCanonical = sq_canonical_target($filterTargetRaw);
+    if ($filterCanonical !== null) {
+        $filterHostLabel = (string) (parse_url($filterCanonical, PHP_URL_HOST) ?: '');
+    } else {
+        $filterTargetRaw = '';
+    }
+}
+$targetQ = ($filterCanonical !== null && $filterTargetRaw !== '') ? ('&target=' . rawurlencode($filterTargetRaw)) : '';
 
 // Pagination (server-side)
 $page = isset($_GET['page']) ? max(1, (int) $_GET['page']) : 1;
@@ -96,6 +111,18 @@ try {
     if ($filterGroupId) {
         $whereSql .= " AND group_id = :gid";
         $params[':gid'] = $filterGroupId;
+    }
+    if ($filterCanonical !== null) {
+        $prefixes = sq_target_url_like_prefixes($filterCanonical);
+        if ($prefixes !== []) {
+            $ors = [];
+            foreach ($prefixes as $i => $pref) {
+                $key = ':turl' . $i;
+                $ors[] = 'target_url LIKE ' . $key;
+                $params[$key] = $pref;
+            }
+            $whereSql .= ' AND (' . implode(' OR ', $ors) . ')';
+        }
     }
 
     // Total count for pagination
@@ -1614,10 +1641,10 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                     <div
                         style="padding: 16px 24px; border-bottom: 1px solid var(--border-color); display: flex; flex-wrap: wrap; align-items: center; gap: 16px;">
                         <span style="font-size: 13px; font-weight: 600; color: var(--text-light);">Group:</span>
-                        <a href="<?php echo strtok($_SERVER['REQUEST_URI'], '?'); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1"
+                        <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo htmlspecialchars($targetQ, ENT_QUOTES); ?>"
                             class="action-btn" style="text-decoration:none;">All</a>
                         <select id="groupFilter" style="padding: 8px 12px; border-radius: 8px; min-width: 160px;"
-                            onchange="var v=this.value; var base='<?php echo strtok($_SERVER['REQUEST_URI'], '?'); ?>'; var per=document.getElementById('perPageSelect').value; if(v) window.location.href=base+'?group_id='+encodeURIComponent(v)+'&per_page='+encodeURIComponent(per)+'&page=1'; else window.location.href=base+'?per_page='+encodeURIComponent(per)+'&page=1';">
+                            onchange="var v=this.value; var base=<?php echo json_encode(strtok($_SERVER['REQUEST_URI'], '?')); ?>; var per=document.getElementById('perPageSelect').value; var tq=<?php echo json_encode($targetQ); ?>; if(v) window.location.href=base+'?group_id='+encodeURIComponent(v)+'&per_page='+encodeURIComponent(per)+'&page=1'+tq; else window.location.href=base+'?per_page='+encodeURIComponent(per)+'&page=1'+tq;">
                             <option value="">— All —</option>
                             <?php foreach ($groups as $g): ?>
                                 <option value="<?php echo (int) $g['id']; ?>" <?php echo ($filterGroupId === (int) $g['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($g['name']); ?></option>
@@ -1626,7 +1653,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                         <span
                             style="margin-left: 12px; font-size: 13px; font-weight: 600; color: var(--text-light);">Records:</span>
                         <select id="perPageSelect" style="padding: 8px 12px; border-radius: 8px; min-width: 160px;"
-                            onchange="var v=this.value; var g=document.getElementById('groupFilter').value; var base='<?php echo strtok($_SERVER['REQUEST_URI'], '?'); ?>'; if(g) window.location.href=base+'?group_id='+encodeURIComponent(g)+'&per_page='+encodeURIComponent(v)+'&page=1'; else window.location.href=base+'?per_page='+encodeURIComponent(v)+'&page=1';">
+                            onchange="var v=this.value; var g=document.getElementById('groupFilter').value; var base=<?php echo json_encode(strtok($_SERVER['REQUEST_URI'], '?')); ?>; var tq=<?php echo json_encode($targetQ); ?>; if(g) window.location.href=base+'?group_id='+encodeURIComponent(g)+'&per_page='+encodeURIComponent(v)+'&page=1'+tq; else window.location.href=base+'?per_page='+encodeURIComponent(v)+'&page=1'+tq;">
                             <?php foreach ([5, 10, 20, 50, 100, 200] as $opt): ?>
                                 <option value="<?php echo (int) $opt; ?>" <?php echo ((string) $perPageParam === (string) $opt) ? 'selected' : ''; ?>><?php echo (int) $opt; ?> per page</option>
                             <?php endforeach; ?>
@@ -1646,8 +1673,16 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                         <div
                             style="padding: 10px 24px; background: rgba(59,130,246,0.1); border-bottom: 1px solid var(--border-color); font-size: 13px; color: var(--text-main);">
                             You are viewing a filtered group. Some scans are hidden.
-                            <a href="<?php echo strtok($_SERVER['REQUEST_URI'], '?'); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1"
-                                style="margin-left:8px;">Show all scans</a>
+                            <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo htmlspecialchars($targetQ, ENT_QUOTES); ?>"
+                                style="margin-left:8px;">Clear group filter</a>
+                        </div>
+                    <?php endif; ?>
+                    <?php if ($filterCanonical !== null && $filterHostLabel !== ''): ?>
+                        <div
+                            style="padding: 10px 24px; background: rgba(16,185,129,0.1); border-bottom: 1px solid var(--border-color); font-size: 13px; color: var(--text-main);">
+                            Showing saved scans for <strong><?php echo htmlspecialchars($filterHostLabel, ENT_QUOTES, 'UTF-8'); ?></strong> only (same host as your scan timeline).
+                            <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo $filterGroupId ? htmlspecialchars('&group_id=' . (int) $filterGroupId, ENT_QUOTES, 'UTF-8') : ''; ?>"
+                                style="margin-left:8px;">Show all hosts</a>
                         </div>
                     <?php endif; ?>
                     <div class="table-container">
@@ -1747,6 +1782,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                         $baseHistoryUrl = strtok($_SERVER['REQUEST_URI'], '?');
                         $perPageQ = urlencode($perPageParam);
                         $groupQ = $filterGroupId ? ('&group_id=' . (int) $filterGroupId) : '';
+                        $pageNavExtra = $groupQ . $targetQ;
 
                         $pagesSet = [];
                         if ($totalPages <= 7) {
@@ -1769,7 +1805,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                             <div class="page-controls">
                                 <?php if ($page > 1): ?>
                                     <a class="page-btn"
-                                        href="<?php echo $baseHistoryUrl . '?page=' . ($page - 1) . '&per_page=' . $perPageQ . $groupQ; ?>"
+                                        href="<?php echo $baseHistoryUrl . '?page=' . ($page - 1) . '&per_page=' . $perPageQ . $pageNavExtra; ?>"
                                         title="Previous page">&laquo;</a>
                                 <?php else: ?>
                                     <span class="page-btn" style="cursor:not-allowed;opacity:0.5;"
@@ -1786,7 +1822,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                                         <span class="page-btn active" aria-current="page"><?php echo (int) $p; ?></span>
                                     <?php else: ?>
                                         <a class="page-btn"
-                                            href="<?php echo $baseHistoryUrl . '?page=' . (int) $p . '&per_page=' . $perPageQ . $groupQ; ?>"
+                                            href="<?php echo $baseHistoryUrl . '?page=' . (int) $p . '&per_page=' . $perPageQ . $pageNavExtra; ?>"
                                             title="Page <?php echo (int) $p; ?>"><?php echo (int) $p; ?></a>
                                     <?php endif; ?>
                                     <?php $prevPage = $p; ?>
@@ -1794,7 +1830,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
 
                                 <?php if ($page < $totalPages): ?>
                                     <a class="page-btn"
-                                        href="<?php echo $baseHistoryUrl . '?page=' . ($page + 1) . '&per_page=' . $perPageQ . $groupQ; ?>"
+                                        href="<?php echo $baseHistoryUrl . '?page=' . ($page + 1) . '&per_page=' . $perPageQ . $pageNavExtra; ?>"
                                         title="Next page">&raquo;</a>
                                 <?php else: ?>
                                     <span class="page-btn" style="cursor:not-allowed;opacity:0.5;"

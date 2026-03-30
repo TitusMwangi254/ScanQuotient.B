@@ -6,6 +6,8 @@
 session_start();
 header('Content-Type: application/json; charset=utf-8');
 
+require_once __DIR__ . '/../Include/sq_target_canonical.php';
+
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'scanquotient.a1');
 define('DB_USER', 'root');
@@ -26,28 +28,6 @@ if ($target === '') {
 
 $limit = isset($_GET['limit']) ? (int) $_GET['limit'] : 8;
 $limit = max(1, min(50, $limit));
-
-/**
- * Match scans that share the same scheme + host (path/query ignored).
- */
-function sq_canonical_target(string $url): ?string
-{
-    $url = trim($url);
-    if ($url === '') {
-        return null;
-    }
-    $p = parse_url($url);
-    if (!$p || empty($p['host'])) {
-        return null;
-    }
-    $scheme = strtolower((string) ($p['scheme'] ?? 'https'));
-    if ($scheme !== 'http' && $scheme !== 'https') {
-        $scheme = 'https';
-    }
-    $host = strtolower((string) $p['host']);
-
-    return $scheme . '://' . $host . '/';
-}
 
 /**
  * Align with Python Vulnerability::dedup_key — stable per-finding identity in stored JSON.
@@ -221,6 +201,24 @@ try {
         $level = (string) ($summary['risk_level'] ?? 'Unknown');
         $vulns = $json['vulnerabilities'] ?? [];
         $fc = is_array($vulns) ? count($vulns) : 0;
+        $risk_band = $score <= 30 ? 'good' : ($score <= 60 ? 'neutral' : 'bad');
+        $scan_duration = isset($json['scan_duration']) ? (float) $json['scan_duration'] : null;
+        $ssl = $json['ssl'] ?? [];
+        $ssl_grade = is_array($ssl) && isset($ssl['grade']) ? (string) $ssl['grade'] : '';
+        $hdr = $json['headers'] ?? [];
+        $headers_score = is_array($hdr) && isset($hdr['score']) ? (int) $hdr['score'] : null;
+        $sevbd = $summary['severity_breakdown'] ?? [];
+        if (!is_array($sevbd)) {
+            $sevbd = [];
+        }
+        $severity_breakdown = [
+            'critical' => (int) ($sevbd['critical'] ?? 0),
+            'high' => (int) ($sevbd['high'] ?? 0),
+            'medium' => (int) ($sevbd['medium'] ?? 0),
+            'low' => (int) ($sevbd['low'] ?? 0),
+            'info' => (int) ($sevbd['info'] ?? 0),
+            'secure' => (int) ($sevbd['secure'] ?? 0),
+        ];
 
         $delta = null;
         $direction = null;
@@ -247,7 +245,12 @@ try {
             'created_at' => (string) ($row['created_at'] ?? ''),
             'risk_score' => $score,
             'risk_level' => $level,
+            'risk_band' => $risk_band,
             'findings_count' => $fc,
+            'scan_duration' => $scan_duration,
+            'ssl_grade' => $ssl_grade,
+            'headers_score' => $headers_score,
+            'severity_breakdown' => $severity_breakdown,
             'delta_vs_previous' => $delta,
             'delta_direction' => $direction,
             'top_changes' => $changes,

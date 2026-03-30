@@ -2997,54 +2997,125 @@ class SecurityScanner:
                           'Medium'   if risk_score >= 12 else
                           'Low'      if risk_score >  0  else 'Secure')
 
+            contributions = {
+                'critical': severity_counts['critical'] * 10,
+                'high':     severity_counts['high'] * 5,
+                'medium':   severity_counts['medium'] * 2,
+                'low':      severity_counts['low'] * 1,
+            }
+            risk_score_detail = {
+                'raw_points': int(raw_score),
+                'raw_points_cap': SCORE_CEILING,
+                'risk_score_0_100': int(risk_score),
+                'formula_short': (
+                    'Issue points = Critical×10 + High×5 + Medium×2 + Low×1; '
+                    'score is that total scaled to 0–100 (capped).'
+                ),
+                'weights': {'critical': 10, 'high': 5, 'medium': 2, 'low': 1},
+                'contributions': contributions,
+                'excluded_from_score': ['info', 'secure'],
+                'note': (
+                    'Informational and "secure" findings are counted separately '
+                    'and are not part of this numeric score.'
+                ),
+            }
+
             scan_duration = round(time.time() - start_time, 2)
 
-            messages = {
-                'Secure':   "Your site looks secure based on the checks we ran. No obvious issues found.",
-                'Low':      "We found a few low-risk issues. Worth fixing, but no immediate emergency.",
-                'Medium':   "We found issues that could be used to attack your site. Plan to fix these soon.",
-                'High':     "We found serious security problems. These should be fixed as a high priority.",
-                'Critical': "We found critical security problems. Your site is at high risk — fix these immediately."
+            def _clip(s: str, max_len: int = 100) -> str:
+                s = (s or '').strip()
+                if len(s) <= max_len:
+                    return s
+                return s[: max_len - 1].rstrip() + '…'
+
+            openers = {
+                'Secure':   "This scan’s risk model did not surface severe-rated issues.",
+                'Low':      "A few findings are worth fixing; the overall score is still on the lower side.",
+                'Medium':   "Several findings add up — put remediation on your schedule.",
+                'High':     "The score reflects serious exposure from what we reported.",
+                'Critical': "The score sits in the top band until the most severe items are addressed.",
             }
-            friendly_parts = [messages[risk_level]]
+            friendly_parts: List[str] = [openers[risk_level]]
 
-            top_types: Set[str] = set()
-            for v in all_vulnerabilities:
-                if v.severity in (Severity.CRITICAL, Severity.HIGH):
-                    n = v.name.lower()
-                    if 'sql' in n:
-                        top_types.add("database attacks (SQL injection)")
-                    elif 'xss' in n or 'cross-site scripting' in n:
-                        top_types.add("malicious scripts in visitors' browsers (XSS)")
-                    elif 'redirect' in n:
-                        top_types.add("open redirect (phishing launchpad)")
-                    elif 'cors' in n:
-                        top_types.add("cross-origin data theft (CORS)")
-                    elif 'exposed' in n and ('env' in n or 'config' in n or 'git' in n):
-                        top_types.add("exposed credentials or config files")
-                    elif 'exposed' in n and ('redis' in n or 'mongodb' in n or 'mysql' in n):
-                        top_types.add("exposed database services")
-                    elif 'cookie' in n:
-                        top_types.add("weak cookie settings")
-                    elif 'ssl' in n or 'tls' in n or 'certificate' in n:
-                        top_types.add("HTTPS/certificate problems")
-                    elif 'header' in n:
-                        top_types.add("missing browser security headers")
+            def _ordered_severe_titles(limit: int = 4) -> List[str]:
+                out: List[str] = []
+                seen: Set[str] = set()
+                for sev in (Severity.CRITICAL, Severity.HIGH):
+                    for v in all_vulnerabilities:
+                        if v.severity != sev or v.name in seen:
+                            continue
+                        seen.add(v.name)
+                        out.append(_clip(v.name, 120))
+                        if len(out) >= limit:
+                            return out
+                return out
 
-            if top_types:
-                friendly_parts.append("Priority issues: " + ", ".join(sorted(top_types)) + ".")
+            severe_titles = _ordered_severe_titles(4)
+            if severe_titles:
+                friendly_parts.append(
+                    "Reported in this run: " + "; ".join(severe_titles) + "."
+                )
+            elif severity_counts['critical'] or severity_counts['high']:
+                friendly_parts.append(
+                    f"Counts: {severity_counts['critical']} critical, {severity_counts['high']} high — open Detailed report for titles."
+                )
+            elif all_vulnerabilities:
+                friendly_parts.append(
+                    "See the findings list for each check we ran and what we observed."
+                )
+
+            missing_header_names = [
+                str(m.get('name', '')).strip()
+                for m in headers_info.get('missing', [])
+                if isinstance(m, dict) and m.get('name')
+            ]
+            missing_header_names = list(dict.fromkeys(missing_header_names))[:6]
 
             priority_actions: List[str] = []
-            if severity_counts['critical'] or severity_counts['high']:
-                priority_actions.append("Fix all Critical and High items first — focus your developer there.")
-            if ssl_info.get('grade') in ('C', 'D', 'F'):
-                priority_actions.append("Upgrade your HTTPS/TLS configuration immediately.")
-            if headers_info.get('percentage', 0) < 70:
-                priority_actions.append("Add security headers (CSP, HSTS, X-Frame-Options) to your web server config.")
-            if any('Exposed' in v.name and ('env' in v.name.lower() or 'git' in v.name.lower()) for v in all_vulnerabilities):
-                priority_actions.append("Delete or block access to .env and .git files on your server right now.")
+
+            crit_v = [v for v in all_vulnerabilities if v.severity == Severity.CRITICAL]
+            high_v = [v for v in all_vulnerabilities if v.severity == Severity.HIGH]
+            seen_n: Set[str] = set()
+            for v in crit_v + high_v:
+                if v.name in seen_n:
+                    continue
+                seen_n.add(v.name)
+                priority_actions.append(f"Remediate: {_clip(v.name, 110)}")
+                if len(priority_actions) >= 3:
+                    break
+
+            ssl_grade = str(ssl_info.get('grade') or '').upper()
+            if ssl_grade in ('C', 'D', 'F'):
+                priority_actions.append(
+                    f"Improve TLS/HTTPS (current grade {ssl_grade}) using the SSL/TLS section and your host or CDN settings."
+                )
+
+            if headers_info.get('percentage', 0) < 70 and missing_header_names:
+                hdr_line = ", ".join(missing_header_names)
+                if len(missing_header_names) >= 6 and len(headers_info.get('missing', [])) > 6:
+                    hdr_line += ", …"
+                priority_actions.append(
+                    "Send these security headers on HTML responses: " + hdr_line + "."
+                )
+            elif headers_info.get('percentage', 0) < 70:
+                priority_actions.append(
+                    "Raise header coverage — use the Security headers section for what is missing."
+                )
+
+            exposed_cfg = [
+                v for v in all_vulnerabilities
+                if 'exposed' in v.name.lower() and ('.env' in v.name.lower() or '.git' in v.name.lower() or 'env' in v.name.lower())
+            ]
+            if exposed_cfg:
+                priority_actions.append(
+                    f"Revoke public access to sensitive paths (e.g. {_clip(exposed_cfg[0].name, 90)})."
+                )
+
             if not priority_actions:
-                priority_actions.append("Keep dependencies updated and re-scan regularly.")
+                if all_vulnerabilities:
+                    priority_actions.append("Work through the findings list top-down, then re-scan the same URL.")
+                else:
+                    priority_actions.append("Re-scan after you deploy changes to confirm nothing regressed.")
 
             friendly_summary = {'message': " ".join(friendly_parts), 'priority_actions': priority_actions}
 
@@ -3085,6 +3156,7 @@ class SecurityScanner:
                     'severity_breakdown':    severity_counts,
                     'risk_score':            risk_score,
                     'risk_level':            risk_level,
+                    'risk_score_detail':     risk_score_detail,
                     'scan_status':           'completed',
                     'user_friendly':         friendly_summary
                 },

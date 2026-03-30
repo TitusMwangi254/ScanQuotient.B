@@ -68,6 +68,42 @@ if (!empty($profile_photo)) {
                 <button id="themeToggle" class="nav-btn theme-toggle-btn">
                     <i class="fas fa-sun"></i><span>Toggle Theme</span>
                 </button>
+                <div id="sidebarReportNav" class="sidebar-report-nav" style="display:none;">
+                    <div class="sidebar-report-head">
+                        <span class="sidebar-report-head__icon" aria-hidden="true"><i class="fas fa-file-waveform"></i></span>
+                        <div class="sidebar-report-head__text">
+                            <p class="sidebar-report-head__title">Scan report</p>
+                        </div>
+                    </div>
+                    <button type="button" id="sidebarRiskAnalysisBtn" class="nav-btn sidebar-report-btn">
+                        <i class="fas fa-chart-line"></i><span>Risk score analysis</span>
+                    </button>
+                    <button type="button" id="sidebarRuntimeBtn" class="nav-btn sidebar-report-btn">
+                        <i class="fas fa-stopwatch"></i><span>Scan runtime</span>
+                    </button>
+                    <div class="sidebar-report-popover">
+                        <button type="button" id="sidebarFindingsBtn" class="nav-btn sidebar-report-btn">
+                            <i class="fas fa-layer-group"></i><span>Scan results</span>
+                        </button>
+                        <div class="sidebar-report-popover-menu" id="sidebarFindingsMenu" role="menu" aria-label="Scan results actions">
+                            <button type="button" id="sidebarDetailedReportBtn" class="sidebar-popover-item"><i class="fas fa-list-check"></i><span>Detailed report</span></button>
+                            <button type="button" id="sidebarAiSummaryBtn" class="sidebar-popover-item"><i class="fas fa-file-lines"></i><span>AI summary</span></button>
+                        </div>
+                    </div>
+                    <div class="sidebar-report-popover">
+                        <button type="button" id="sidebarDownloadsBtn" class="nav-btn sidebar-report-btn">
+                            <i class="fas fa-download"></i><span>Available downloads</span>
+                        </button>
+                        <div class="sidebar-report-popover-menu" id="sidebarDownloadsMenu" role="menu" aria-label="Download formats">
+                            <button type="button" id="sidebarDownloadCsvBtn" class="sidebar-popover-item"><i class="fas fa-file-csv"></i><span>CSV report</span></button>
+                            <button type="button" id="sidebarDownloadHtmlBtn" class="sidebar-popover-item"><i class="fas fa-file-code"></i><span>HTML report</span></button>
+                            <button type="button" id="sidebarDownloadPdfBtn" class="sidebar-popover-item"><i class="fas fa-file-pdf"></i><span>PDF report</span></button>
+                        </div>
+                    </div>
+                    <button type="button" id="sidebarAiOverviewBtn" class="nav-btn sidebar-report-btn" style="display:none;">
+                        <i class="fas fa-brain"></i><span>AI overview</span>
+                    </button>
+                </div>
             </nav>
         </aside>
 
@@ -134,7 +170,10 @@ if (!empty($profile_photo)) {
 
                         <!-- Results -->
                         <div id="results" class="results-container">
-                            <!-- Risk Summary -->
+                            <!-- Scan overview: risk, narrative, posture cards -->
+                            <section id="reportRiskSection" class="report-section report-section--overview">
+                            <h2 class="report-section-overview-title"><i class="fas fa-gauge-high" aria-hidden="true"></i> Scan overview</h2>
+                            <div class="scan-overview">
                             <div class="risk-summary" id="riskSummary">
                                 <div class="risk-score-wrapper" id="riskScoreWrapper" title="Hover for scale">
                                     <div class="risk-score-circle" id="riskScoreCircle">
@@ -175,39 +214,8 @@ if (!empty($profile_photo)) {
                                     <!-- Populated by JS -->
                                 </div>
                             </div>
-
-                            <!-- Saved runs for this host: risk deltas & finding changes -->
-                            <div id="scanRunTimelineWrap" class="scan-run-timeline-wrap" style="display:none;">
-                                <div class="scan-run-timeline-head">
-                                    <div>
-                                        <h3 class="scan-run-timeline-title"><i class="fas fa-stream"></i> Scan run
-                                            timeline</h3>
-                                        <p id="scanRunTimelineSub" class="scan-run-timeline-sub">Saved scans for this
-                                            target — compare risk score movement and what changed between runs.</p>
-                                    </div>
-                                    <div class="scan-run-timeline-actions">
-                                        <button type="button" id="scanRunTimelineRefresh"
-                                            class="scan-run-timeline-refresh" title="Refresh timeline"
-                                            aria-label="Refresh timeline">
-                                            <i class="fas fa-rotate"></i>
-                                        </button>
-                                        <a href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php"
-                                            class="scan-run-timeline-history-link">Full history <i
-                                                class="fas fa-arrow-right"></i></a>
-                                    </div>
-                                </div>
-                                <div id="scanRunTimelineBody" class="scan-run-timeline-body"></div>
-                                <div id="scanRunTimelineViewAll" class="scan-run-timeline-viewall"
-                                    style="display:none;">
-                                    <button type="button" id="scanRunTimelineViewAllBtn"
-                                        class="scan-run-timeline-viewall-btn">
-                                        <i class="fas fa-expand-alt"></i> View full timeline
-                                    </button>
-                                </div>
-                                <p id="scanRunTimelineEmpty" class="scan-run-timeline-empty" style="display:none;">No
-                                    saved scans for this host yet. After your report is stored, repeat scans will appear
-                                    here with score deltas and new or resolved findings.</p>
-                            </div>
+                            <div id="userSummary" class="user-summary-callout" style="display:none;" role="region" aria-label="Scan summary and suggested next steps"></div>
+                            <p id="riskScoreFormulaLine" class="risk-overview-hint" style="display:none;" aria-live="polite"></p>
 
                             <!-- SSL, Headers, Server & Crawler Summary -->
                             <div class="summary-grid">
@@ -257,8 +265,47 @@ if (!empty($profile_photo)) {
                                     <div id="crawlerContent" class="crawler-content">—</div>
                                 </div>
                             </div>
+                            </div>
+                            </section>
+
+                            <!-- Saved runs for this host: risk deltas & finding changes -->
+                            <section id="reportRuntimeSection" class="report-section">
+                            <div id="scanRunTimelineWrap" class="scan-run-timeline-wrap" style="display:none;">
+                                <div class="scan-run-timeline-head">
+                                    <div>
+                                        <h3 class="scan-run-timeline-title"><i class="fas fa-stream"></i> Scan run
+                                            timeline</h3>
+                                        <p id="scanRunTimelineSub" class="scan-run-timeline-sub">Saved scans for this
+                                            target — compare risk score movement and what changed between runs.</p>
+                                    </div>
+                                    <div class="scan-run-timeline-actions">
+                                        <button type="button" id="scanRunTimelineRefresh"
+                                            class="scan-run-timeline-refresh" title="Refresh timeline"
+                                            aria-label="Refresh timeline">
+                                            <i class="fas fa-rotate"></i>
+                                        </button>
+                                        <a id="scanRunTimelineHistoryLink" href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php"
+                                            class="scan-run-timeline-history-link">Full history <i
+                                                class="fas fa-arrow-right"></i></a>
+                                    </div>
+                                </div>
+                                <div id="scanRunTimelineBody" class="scan-run-timeline-body"></div>
+                                <div id="scanRunTimelineViewAll" class="scan-run-timeline-viewall"
+                                    style="display:none;">
+                                    <button type="button" id="scanRunTimelineViewAllBtn"
+                                        class="scan-run-timeline-viewall-btn">
+                                        <i class="fas fa-expand-alt"></i> View full timeline
+                                    </button>
+                                </div>
+                                <p id="scanRunTimelineEmpty" class="scan-run-timeline-empty" style="display:none;">No
+                                    saved scans for this host yet. After your report is stored, repeat scans will appear
+                                    here with score deltas and new or resolved findings.</p>
+                            </div>
+                            </section>
 
                             <!-- Tabs: Detailed Findings | Human-readable report -->
+                            <section id="reportFindingsSection" class="report-section">
+                            <div id="detailedFindingsAnchor" class="detailed-findings-scroll-target" tabindex="-1" aria-label="Detailed findings"></div>
                             <div class="results-tabs">
                                 <button type="button" class="results-tab active" data-tab="findings" id="tabFindings">
                                     <i class="fas fa-clipboard-list"></i>
@@ -266,7 +313,7 @@ if (!empty($profile_photo)) {
                                 </button>
                                 <button type="button" class="results-tab" data-tab="report" id="tabReport">
                                     <i class="fas fa-file-alt"></i>
-                                    <span>User report</span>
+                                    <span>AI summary</span>
                                 </button>
                                 <span id="targetBadge" class="target-badge">example.com</span>
                                 <div class="report-actions report-download-row">
@@ -303,6 +350,9 @@ if (!empty($profile_photo)) {
                                 <div class="findings-toolbar">
                                     <input type="text" id="findingSearchInput" class="finding-search-input"
                                         placeholder="Search findings, evidence, or remediation...">
+                                    <select id="findingDomainFilter" class="finding-filter-select">
+                                        <option value="all">All test domains</option>
+                                    </select>
                                     <select id="findingSeverityFilter" class="finding-filter-select">
                                         <option value="all">All severities</option>
                                         <option value="critical">Critical</option>
@@ -335,6 +385,7 @@ if (!empty($profile_photo)) {
                                         report&quot; to read the AI-generated summary.</p>
                                 </div>
                             </div>
+                            </section>
                         </div>
                     </div>
                 </div>
@@ -360,29 +411,58 @@ if (!empty($profile_photo)) {
         <i class="fas fa-arrow-up"></i>
     </button>
 
+    <div id="userReportOverlay" class="report-overlay" style="display:none;" aria-hidden="true">
+        <div class="report-overlay__backdrop"></div>
+        <div class="report-overlay__panel">
+            <div class="report-overlay__head">
+                <h3><i class="fas fa-file-lines"></i> AI Summary</h3>
+                <button type="button" class="report-overlay__close" data-close-overlay="userReportOverlay" aria-label="Close AI summary overlay">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="report-overlay__body" id="userReportOverlayBody"></div>
+        </div>
+    </div>
+
+    <div id="downloadsOverlay" class="report-overlay" style="display:none;" aria-hidden="true">
+        <div class="report-overlay__backdrop"></div>
+        <div class="report-overlay__panel">
+            <div class="report-overlay__head">
+                <h3><i class="fas fa-download"></i> Downloads & Actions</h3>
+                <button type="button" class="report-overlay__close" data-close-overlay="downloadsOverlay" aria-label="Close downloads overlay">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="report-overlay__body">
+                <p class="report-overlay__sub">Export reports or trigger follow-up actions for this scan.</p>
+                <div class="report-overlay__actions" id="downloadsOverlayActions"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Risk Score Modal (click the score circle) -->
     <div id="riskModal" class="modal-overlay"
         style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10002; align-items:center; justify-content:center;">
-        <div class="modal"
-            style="background:var(--bg-card); padding:22px; border-radius:16px; max-width:720px; width:92%; border:1px solid var(--border-color);">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
+        <div class="modal risk-analysis-modal risk-modal-band-good"
+            style="background:var(--bg-card); padding:22px; border-radius:16px; max-width:900px; width:92%; border:1px solid var(--border-color); max-height:min(92vh,880px); display:flex; flex-direction:column;">
+            <div class="risk-modal-top-row" style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
                 <div style="display:flex; align-items:center; gap:10px;">
-                    <div
-                        style="width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:rgba(59,130,246,0.12);color:var(--brand-color);">
+                    <div class="risk-modal-header-icon"
+                        style="width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;">
                         <i class="fas fa-chart-pie"></i>
                     </div>
                     <div>
                         <div style="font-size:16px;font-weight:800;">Risk score analysis</div>
-                        <div style="font-size:12px;color:var(--text-light);">Score, bands, and severity breakdown</div>
+                        <div id="riskModalSubtitle" class="risk-modal-subtitle" style="font-size:12px;color:var(--text-light);">Score, bands, and severity breakdown</div>
                     </div>
                 </div>
                 <button type="button" id="riskModalClose" class="icon-btn" title="Close"
                     style="width:38px;height:38px;"><i class="fas fa-times"></i></button>
             </div>
 
-            <div style="display:grid; grid-template-columns: 260px 1fr; gap:18px; align-items:start;">
-                <div class="risk-modal-left"
-                    style="padding:14px; border-radius:14px; border:1px solid var(--border-color); background:var(--bg-main);">
+            <div class="risk-modal-body-grid" style="display:grid; grid-template-columns: 260px 1fr; gap:18px; align-items:start; min-height:0; flex:1;">
+                <div class="risk-modal-left risk-modal-left-panel"
+                    style="padding:14px; border-radius:14px; border:1px solid var(--border-color);">
                     <div style="display:flex; align-items:center; justify-content:center; margin-bottom:10px;">
                         <svg width="190" height="190" viewBox="0 0 120 120" aria-label="Risk donut">
                             <circle cx="60" cy="60" r="46" stroke="rgba(100,116,139,0.25)" stroke-width="12"
@@ -397,29 +477,44 @@ if (!empty($profile_photo)) {
                         </svg>
                     </div>
                     <div style="text-align:center;">
-                        <div id="riskModalLevel" style="font-weight:800; font-size:14px;">Secure Risk</div>
-                        <div id="riskModalDesc"
-                            style="margin-top:6px; font-size:12px; color:var(--text-light); line-height:1.5;">—</div>
+                        <div id="riskModalLevel" class="risk-modal-level" style="font-weight:800; font-size:14px;">Secure Risk</div>
+                        <div id="riskModalDesc" class="risk-modal-desc"
+                            style="margin-top:6px; font-size:12px; line-height:1.5;">—</div>
                     </div>
                 </div>
 
-                <div class="risk-modal-right">
+                <div class="risk-modal-right risk-modal-right-scroll">
+                    <div class="risk-modal-card" id="riskModalSummaryCard" style="display:none;">
+                        <div style="font-size:13px; font-weight:700; margin-bottom:8px;">What this scan means</div>
+                        <p id="riskModalFriendlyMsg" style="margin:0; font-size:12px; color:var(--text-main); line-height:1.55;"></p>
+                        <ul id="riskModalFriendlySteps" class="risk-modal-steps" style="margin:8px 0 0 0; padding-left:18px; font-size:12px; line-height:1.5; color:var(--text-main);"></ul>
+                    </div>
+                    <div class="risk-modal-card">
+                        <div style="font-size:13px; font-weight:700; margin-bottom:8px;">Posture snapshot</div>
+                        <div id="riskModalPosture" style="font-size:12px; color:var(--text-light); line-height:1.55;"></div>
+                    </div>
+                    <div class="risk-modal-card">
+                        <div style="font-size:13px; font-weight:700; margin-bottom:8px;">How the score is calculated</div>
+                        <p id="riskModalFormula" style="margin:0 0 6px 0; font-size:12px; color:var(--text-main); line-height:1.5;"></p>
+                        <div id="riskModalContributions" style="font-size:11px; color:var(--text-light); line-height:1.45;"></div>
+                        <p id="riskModalScoreNote" style="margin:8px 0 0 0; font-size:11px; color:var(--text-light); font-style:italic;"></p>
+                    </div>
                     <div
                         style="padding:14px; border-radius:14px; border:1px solid var(--border-color); background:var(--bg-main); margin-bottom:12px;">
                         <div style="font-size:13px; font-weight:700; margin-bottom:10px;">Score bands</div>
-                        <div class="risk-band">
+                        <div class="risk-band" data-risk-band="good">
                             <div class="risk-band-row"><span>Good</span><span>0–30</span></div>
                             <div class="risk-band-bar">
                                 <div class="seg good"></div>
                             </div>
                         </div>
-                        <div class="risk-band">
+                        <div class="risk-band" data-risk-band="neutral">
                             <div class="risk-band-row"><span>Neutral</span><span>31–60</span></div>
                             <div class="risk-band-bar">
                                 <div class="seg neutral"></div>
                             </div>
                         </div>
-                        <div class="risk-band">
+                        <div class="risk-band" data-risk-band="bad">
                             <div class="risk-band-row"><span>Bad</span><span>61–100</span></div>
                             <div class="risk-band-bar">
                                 <div class="seg bad"></div>
@@ -532,10 +627,61 @@ if (!empty($profile_photo)) {
             openFindingReportModal(index);
         }
 
+        /** Score bands shown in UI: Good 0–30, Neutral 31–60, Bad 61–100 */
+        function riskScoreBandKey(score) {
+            const s = Number(score);
+            const n = Number.isFinite(s) ? s : 0;
+            if (n <= 30) return 'good';
+            if (n <= 60) return 'neutral';
+            return 'bad';
+        }
+
+        function scrollToDetailedFindingsSection() {
+            const domainFilter = document.getElementById('findingDomainFilter');
+            const catFilter = document.getElementById('findingCategoryFilter');
+            if (domainFilter) domainFilter.value = 'all';
+            if (catFilter) catFilter.value = 'all';
+            try {
+                if (typeof applyFindingsFilters === 'function') applyFindingsFilters();
+            } catch (e) { /* findings list may not exist yet */ }
+            document.querySelector('.results-tab[data-tab="findings"]')?.click();
+            const anchor = document.getElementById('detailedFindingsAnchor');
+            if (anchor) {
+                anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                try {
+                    anchor.focus({ preventScroll: true });
+                } catch (e) { }
+            } else {
+                document.getElementById('reportFindingsSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function getRiskScoreDetail(summary) {
+            const s = summary || {};
+            if (s.risk_score_detail && typeof s.risk_score_detail === 'object') {
+                return s.risk_score_detail;
+            }
+            const b = s.severity_breakdown || {};
+            const c = (b.critical || 0) * 10;
+            const h = (b.high || 0) * 5;
+            const m = (b.medium || 0) * 2;
+            const l = (b.low || 0) * 1;
+            const raw = c + h + m + l;
+            return {
+                raw_points: raw,
+                raw_points_cap: 106,
+                formula_short: 'Issue points = Critical×10 + High×5 + Medium×2 + Low×1. The 0–100 score scales raw points against a reference cap (106) and is capped at 100.',
+                contributions: { critical: c, high: h, medium: m, low: l },
+                excluded_from_score: ['info', 'secure'],
+                note: 'Informational and "secure" findings are listed separately and are not part of this numeric score.'
+            };
+        }
+
         function updateRiskDisplay(summary) {
             const score = summary.risk_score || 0;
             const level = summary.risk_level || 'Secure';
             lastSummaryForModal = summary || null;
+            const detail = getRiskScoreDetail(summary);
 
             // Update circle
             const circle = document.getElementById('riskScoreCircle');
@@ -556,9 +702,12 @@ if (!empty($profile_photo)) {
             if (tipScore) tipScore.textContent = score;
             if (tipLevel) tipLevel.textContent = level;
             if (tipDesc) {
-                if (score <= 30) tipDesc.textContent = 'Good: low risk posture. Focus on any remaining medium/high issues and hardening.';
-                else if (score <= 60) tipDesc.textContent = 'Neutral: moderate risk. Address missing headers, SSL issues, and medium/high findings.';
-                else tipDesc.textContent = 'Bad: high risk. Prioritize critical/high findings and security headers immediately.';
+                let band = '';
+                if (score <= 30) band = 'Good band (0–30): relatively low modeled risk from weighted findings.';
+                else if (score <= 60) band = 'Neutral band (31–60): meaningful exposure — prioritize higher severities.';
+                else band = 'High band (61–100): severe modeled risk — treat as urgent.';
+                const formula = detail.formula_short ? ' ' + detail.formula_short : '';
+                tipDesc.textContent = band + formula;
             }
             if (tipBreak) {
                 const b = summary.severity_breakdown || {};
@@ -567,13 +716,28 @@ if (!empty($profile_photo)) {
                     { k: 'high', label: 'High', cls: 'high', v: b.high || 0 },
                     { k: 'medium', label: 'Medium', cls: 'medium', v: b.medium || 0 },
                     { k: 'low', label: 'Low', cls: 'low', v: b.low || 0 },
+                    { k: 'info', label: 'Info', cls: 'info', v: b.info || 0 },
+                    { k: 'secure', label: 'Secure', cls: 'secure', v: b.secure || 0 },
+                ].filter(it => it.v > 0);
+                const show = items.length ? items : [
+                    { k: 'critical', label: 'Critical', cls: 'critical', v: 0 },
+                    { k: 'high', label: 'High', cls: 'high', v: 0 },
+                    { k: 'medium', label: 'Medium', cls: 'medium', v: 0 },
+                    { k: 'low', label: 'Low', cls: 'low', v: 0 },
                 ];
-                tipBreak.innerHTML = items.map(it => `
+                tipBreak.innerHTML = show.map(it => `
                     <div class="risk-mini-chip ${it.cls}">
                         <span class="risk-mini-dot"></span>
                         <span>${it.v} ${it.label}</span>
                     </div>
                 `).join('');
+            }
+
+            // Keep raw point math in the Risk score analysis modal only — not in the main overview.
+            const formulaLine = document.getElementById('riskScoreFormulaLine');
+            if (formulaLine) {
+                formulaLine.style.display = 'none';
+                formulaLine.textContent = '';
             }
 
             // Severity badges
@@ -585,9 +749,13 @@ if (!empty($profile_photo)) {
             if (breakdown.high > 0) badges.push(`<span class="severity-badge high"><i class="fas fa-exclamation-triangle"></i> ${breakdown.high} High</span>`);
             if (breakdown.medium > 0) badges.push(`<span class="severity-badge medium"><i class="fas fa-exclamation-circle"></i> ${breakdown.medium} Medium</span>`);
             if (breakdown.low > 0) badges.push(`<span class="severity-badge low"><i class="fas fa-info-circle"></i> ${breakdown.low} Low</span>`);
+            if (breakdown.info > 0) badges.push(`<span class="severity-badge info"><i class="fas fa-circle-info"></i> ${breakdown.info} Info</span>`);
+            if (breakdown.secure > 0) badges.push(`<span class="severity-badge secure"><i class="fas fa-shield-check"></i> ${breakdown.secure} Secure</span>`);
 
-            if (badges.length === 0) {
-                badges.push(`<span class="severity-badge" style="background: rgba(16,185,129,0.1); color: var(--success-color)"><i class="fas fa-check-circle"></i> Secure</span>`);
+            if (badges.length === 0 && !(summary.total_vulnerabilities > 0)) {
+                badges.push(`<span class="severity-badge secure"><i class="fas fa-check-circle"></i> No issues in score</span>`);
+            } else if (badges.length === 0) {
+                badges.push(`<span class="severity-badge info"><i class="fas fa-list"></i> ${summary.total_vulnerabilities || 0} finding(s)</span>`);
             }
 
             container.innerHTML = badges.join('');
@@ -608,21 +776,123 @@ if (!empty($profile_photo)) {
             }
             function open() {
                 if (!modal || !lastSummaryForModal) return;
-                const score = lastSummaryForModal.risk_score || 0;
-                const level = lastSummaryForModal.risk_level || 'Secure';
-                const breakdown = lastSummaryForModal.severity_breakdown || {};
-                const total = (breakdown.critical || 0) + (breakdown.high || 0) + (breakdown.medium || 0) + (breakdown.low || 0);
+                const summary = lastSummaryForModal;
+                const score = summary.risk_score || 0;
+                const level = summary.risk_level || 'Secure';
+                const breakdown = summary.severity_breakdown || {};
+                const detail = getRiskScoreDetail(summary);
+                const friendly = summary.user_friendly || {};
+                const msg = (friendly.message || '').trim();
+                const actions = Array.isArray(friendly.priority_actions) ? friendly.priority_actions : [];
+                const sumSev = (breakdown.critical || 0) + (breakdown.high || 0) + (breakdown.medium || 0) +
+                    (breakdown.low || 0) + (breakdown.info || 0) + (breakdown.secure || 0);
+                const total = sumSev > 0 ? sumSev : Math.max(1, summary.total_vulnerabilities || 1);
+
+                const bandKey = riskScoreBandKey(score);
+                const modalPanel = modal.querySelector('.risk-analysis-modal');
+                if (modalPanel) {
+                    modalPanel.classList.remove('risk-modal-band-good', 'risk-modal-band-neutral', 'risk-modal-band-bad');
+                    modalPanel.classList.add('risk-modal-band-' + bandKey);
+                }
+                modal.querySelectorAll('.risk-band[data-risk-band]').forEach(function (row) {
+                    row.classList.toggle('risk-band--current', row.getAttribute('data-risk-band') === bandKey);
+                });
 
                 const scoreEl = document.getElementById('riskModalScore');
                 const levelEl = document.getElementById('riskModalLevel');
                 const descEl = document.getElementById('riskModalDesc');
-                if (scoreEl) scoreEl.textContent = score;
-                if (levelEl) levelEl.textContent = level + ' Risk';
-                if (descEl) {
-                    if (score <= 30) descEl.textContent = 'Good: low risk posture. Keep hardening and fix any remaining medium/high findings.';
-                    else if (score <= 60) descEl.textContent = 'Neutral: moderate risk. Prioritize missing headers, SSL issues, and medium/high findings.';
-                    else descEl.textContent = 'Bad: high risk. Prioritize critical/high findings and security headers immediately.';
+                const subEl = document.getElementById('riskModalSubtitle');
+                if (scoreEl) {
+                    scoreEl.textContent = score;
+                    const fillCol = bandKey === 'good' ? 'var(--success-color)' : (bandKey === 'neutral' ? 'var(--warning-color)' : 'var(--danger-color)');
+                    scoreEl.setAttribute('fill', fillCol);
                 }
+                if (levelEl) levelEl.textContent = level + ' Risk';
+                if (subEl) {
+                    const bandLabel = bandKey === 'good' ? 'Good band (0–30)' : (bandKey === 'neutral' ? 'Neutral band (31–60)' : 'High band (61–100)');
+                    subEl.textContent = bandLabel + ' · severity breakdown';
+                }
+                if (descEl) {
+                    let band = '';
+                    if (score <= 30) band = 'Band: Good (0–30). ';
+                    else if (score <= 60) band = 'Band: Neutral (31–60). ';
+                    else band = 'Band: High (61–100). ';
+                    let teaser = '';
+                    if (msg) {
+                        const dot = msg.indexOf('.');
+                        teaser = (dot >= 0 ? msg.slice(0, dot + 1) : (msg.length > 140 ? msg.slice(0, 137) + '…' : msg)) + ' ';
+                    }
+                    descEl.textContent = band + (teaser || 'See details at right for interpretation and next steps.');
+                }
+
+                const sumCard = document.getElementById('riskModalSummaryCard');
+                const msgEl = document.getElementById('riskModalFriendlyMsg');
+                const stepsEl = document.getElementById('riskModalFriendlySteps');
+                if (sumCard && msgEl && stepsEl) {
+                    if (msg || actions.length) {
+                        sumCard.style.display = 'block';
+                        msgEl.textContent = msg || 'Review findings below and use suggested next steps.';
+                        stepsEl.innerHTML = '';
+                        actions.forEach(function (a) {
+                            const li = document.createElement('li');
+                            li.textContent = String(a || '');
+                            stepsEl.appendChild(li);
+                        });
+                    } else {
+                        sumCard.style.display = 'none';
+                    }
+                }
+
+                const postureEl = document.getElementById('riskModalPosture');
+                if (postureEl) {
+                    const data = typeof lastScanData !== 'undefined' && lastScanData ? lastScanData : null;
+                    const lines = [];
+                    if (data && data.target) {
+                        lines.push('<div><strong>Target</strong><br><span style="word-break:break-all;">' + escapeHtml(String(data.target)) + '</span></div>');
+                    }
+                    if (data && data.ssl) {
+                        const g = data.ssl.grade != null ? String(data.ssl.grade) : '—';
+                        const st = document.getElementById('sslStatus') ? document.getElementById('sslStatus').textContent : '';
+                        lines.push('<div style="margin-top:8px;"><strong>SSL/TLS</strong><br>Grade ' + escapeHtml(g) + (st ? ' · ' + escapeHtml(st) : '') + '</div>');
+                    }
+                    if (data && data.headers) {
+                        const pct = data.headers.score != null ? data.headers.score : 0;
+                        const pr = data.headers.present != null ? data.headers.present : 0;
+                        const mi = data.headers.missing != null ? data.headers.missing : 0;
+                        lines.push('<div style="margin-top:8px;"><strong>Security headers</strong><br>' + escapeHtml(String(pct)) + '% compliance · ' + escapeHtml(String(pr)) + ' present · ' + escapeHtml(String(mi)) + ' missing</div>');
+                    }
+                    if (data && data.crawler && Array.isArray(data.crawler.discovered_urls)) {
+                        const n = data.crawler.discovered_urls.length;
+                        const chk = data.crawler.pages_checked != null ? data.crawler.pages_checked : 0;
+                        lines.push('<div style="margin-top:8px;"><strong>Discovery</strong><br>' + escapeHtml(String(n)) + ' URL(s) discovered, ' + escapeHtml(String(chk)) + ' page(s) checked for headers.</div>');
+                    }
+                    postureEl.innerHTML = lines.length ? lines.join('') : '<span style="color:var(--text-light);">Run a scan to see posture details here.</span>';
+                }
+
+                const formulaEl = document.getElementById('riskModalFormula');
+                const contribEl = document.getElementById('riskModalContributions');
+                const noteEl = document.getElementById('riskModalScoreNote');
+                if (formulaEl) formulaEl.textContent = detail.formula_short || '';
+                if (contribEl) {
+                    const co = detail.contributions || {};
+                    const w = detail.weights || { critical: 10, high: 5, medium: 2, low: 1 };
+                    const critN = breakdown.critical || 0, highN = breakdown.high || 0, medN = breakdown.medium || 0, lowN = breakdown.low || 0;
+                    const critPts = co.critical != null ? co.critical : critN * (w.critical || 10);
+                    const highPts = co.high != null ? co.high : highN * (w.high || 5);
+                    const medPts = co.medium != null ? co.medium : medN * (w.medium || 2);
+                    const lowPts = co.low != null ? co.low : lowN * (w.low || 1);
+                    const parts = [
+                        'Critical: ' + critN + ' × ' + (w.critical || 10) + ' = ' + critPts + ' pts',
+                        'High: ' + highN + ' × ' + (w.high || 5) + ' = ' + highPts + ' pts',
+                        'Medium: ' + medN + ' × ' + (w.medium || 2) + ' = ' + medPts + ' pts',
+                        'Low: ' + lowN + ' × ' + (w.low || 1) + ' = ' + lowPts + ' pts',
+                    ];
+                    const raw = detail.raw_points != null ? detail.raw_points : '';
+                    const cap = detail.raw_points_cap != null ? detail.raw_points_cap : 106;
+                    const tail = raw !== '' ? '<div style="margin-top:6px;"><strong>Raw total:</strong> ' + raw + ' pts (reference cap ' + cap + ') → <strong>' + score + '</strong>/100 displayed.</div>' : '';
+                    contribEl.innerHTML = parts.join('<br>') + tail;
+                }
+                if (noteEl) noteEl.textContent = detail.note || '';
 
                 const donut = document.getElementById('riskDonut');
                 if (donut) {
@@ -643,6 +913,8 @@ if (!empty($profile_photo)) {
                         { label: 'High', cls: 'high', v: breakdown.high || 0 },
                         { label: 'Medium', cls: 'medium', v: breakdown.medium || 0 },
                         { label: 'Low', cls: 'low', v: breakdown.low || 0 },
+                        { label: 'Info', cls: 'info', v: breakdown.info || 0 },
+                        { label: 'Secure', cls: 'secure', v: breakdown.secure || 0 },
                     ];
                     bars.innerHTML = items.map(it => {
                         const pct = total ? Math.round((it.v / total) * 100) : 0;
@@ -675,22 +947,53 @@ if (!empty($profile_photo)) {
 
             if (!message && (!actions || actions.length === 0)) {
                 container.style.display = 'none';
+                container.innerHTML = '';
                 return;
             }
 
             container.style.display = 'block';
-            let html = '';
+            container.innerHTML = '';
             if (message) {
-                html += `<p>${message}</p>`;
+                const title = document.createElement('div');
+                title.className = 'user-summary-callout__label';
+                title.style.cssText = 'font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin-bottom:6px;';
+                title.textContent = 'What this means';
+                const p = document.createElement('p');
+                p.textContent = message;
+                container.appendChild(title);
+                container.appendChild(p);
             }
-            if (actions && actions.length > 0) {
-                html += '<ul>';
-                actions.forEach(action => {
-                    html += `<li>${action}</li>`;
+                if (actions && actions.length > 0) {
+                const ul = document.createElement('ul');
+                actions.forEach(function (action) {
+                    const li = document.createElement('li');
+                    li.textContent = String(action || '');
+                    ul.appendChild(li);
                 });
-                html += '</ul>';
+                const sub = document.createElement('div');
+                sub.style.cssText = 'font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:10px 0 6px 0;';
+                sub.textContent = 'Suggested next steps';
+                container.appendChild(sub);
+                container.appendChild(ul);
             }
-            container.innerHTML = html;
+
+            const jump = document.createElement('div');
+            jump.className = 'user-summary-callout__jump';
+            jump.setAttribute('role', 'note');
+            const jumpText = document.createElement('span');
+            jumpText.textContent = 'For full evidence, remediation steps, and filters, see ';
+            const jumpLink = document.createElement('button');
+            jumpLink.type = 'button';
+            jumpLink.className = 'user-summary-jump-link';
+            jumpLink.setAttribute('aria-label', 'Scroll to detailed findings');
+            jumpLink.textContent = 'Detailed findings';
+            jumpLink.addEventListener('click', function () {
+                scrollToDetailedFindingsSection();
+            });
+            jump.appendChild(jumpText);
+            jump.appendChild(jumpLink);
+            jump.appendChild(document.createTextNode(' below.'));
+            container.appendChild(jump);
         }
 
         const findingReportCache = {};
@@ -710,6 +1013,8 @@ if (!empty($profile_photo)) {
         let scanSyntheticStartMs = 0;
         let lastBackendProgress = { progress: 0, stage: '', status: '' };
         let sqTimelineRunsStore = [];
+        const SQ_HISTORY_PAGE = '/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php';
+        const SQ_TIMELINE_INLINE_PREVIEW = 4;
         let reportReconcileTimer = null;
         let reportReconcileTicks = 0;
         const manualRegenInFlight = new Set();
@@ -1738,21 +2043,82 @@ if (!empty($profile_photo)) {
             if (!el) return;
             el.textContent = `Showing ${shown} of ${total} finding(s)`;
         }
+        function syncReportShellVisibility() {
+            const sidebarReportNav = document.getElementById('sidebarReportNav');
+            const hasRenderedReport = !!(lastScanData && lastScanData.target);
+            if (sidebarReportNav) {
+                sidebarReportNav.style.display = hasRenderedReport ? 'grid' : 'none';
+                if (hasRenderedReport && shouldPulseSidebarReportNav) {
+                    sidebarReportNav.classList.remove('sidebar-report-nav--pulse');
+                    void sidebarReportNav.offsetWidth;
+                    sidebarReportNav.classList.add('sidebar-report-nav--pulse');
+                    shouldPulseSidebarReportNav = false;
+                }
+            }
+            syncSidebarReportActions();
+            if (!hasRenderedReport) {
+                closeReportOverlay('userReportOverlay');
+                closeReportOverlay('downloadsOverlay');
+            }
+        }
+        function syncSidebarReportActions() {
+            const sourceAiBtn = document.getElementById('aiOverviewBtn');
+            const sideAiBtn = document.getElementById('sidebarAiOverviewBtn');
+            if (!sideAiBtn) return;
+            const visible = !!(sourceAiBtn && sourceAiBtn.style.display !== 'none');
+            sideAiBtn.style.display = visible ? 'inline-flex' : 'none';
+            if (sourceAiBtn) sideAiBtn.disabled = sourceAiBtn.disabled;
+        }
+        function inferFindingDomain(v) {
+            const cat = String(v?.category || '').toLowerCase();
+            const name = String(v?.name || '').toLowerCase();
+            const desc = String(v?.description || '').toLowerCase();
+            const blob = `${cat} ${name} ${desc}`;
+            if (/port|service|open port|exposed service|network/.test(blob)) return 'Network Exposure';
+            if (/tls|ssl|certificate|https|cipher|hsts/.test(blob)) return 'Transport Security';
+            if (/header|csp|x-frame|x-content-type|permissions-policy|strict-transport-security/.test(blob)) return 'Header Hardening';
+            if (/auth|session|token|cookie|login|csrf|idor/.test(blob)) return 'Auth & Session Controls';
+            if (/sqli|sql injection|xss|xxe|rce|command|injection|path traversal|lfi|rfi/.test(blob)) return 'Input & Injection';
+            if (/secret|exposed|backup|config|discoverable|directory|path discovery|sensitive file|leak/.test(blob)) return 'Content & Exposure';
+            if (/crawl|discovery|sitemap|robots/.test(blob)) return 'Crawling & Surface Discovery';
+            return 'General Security';
+        }
+        function populateDomainFilter() {
+            const el = document.getElementById('findingDomainFilter');
+            if (!el) return;
+            const values = Array.from(new Set((scanFindingsAll || []).map(v => inferFindingDomain(v)).filter(Boolean))).sort();
+            el.innerHTML = '<option value="all">All test domains</option>' + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+        }
         function populateCategoryFilter() {
             const el = document.getElementById('findingCategoryFilter');
             if (!el) return;
             const values = Array.from(new Set((scanFindingsAll || []).map(v => (v.category || 'Security Finding').trim()).filter(Boolean))).sort();
             el.innerHTML = '<option value="all">All categories</option>' + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
         }
+        function populateSidebarResultGroupsMenu() {
+            const sideMenu = document.getElementById('sidebarFindingsMenu');
+            if (!sideMenu) return;
+            const groups = Array.from(new Set((scanFindingsAll || []).map(v => inferFindingDomain(v)).filter(Boolean))).sort();
+            const baseActions = `
+                <button type="button" id="sidebarDetailedReportBtn" class="sidebar-popover-item"><i class="fas fa-list-check"></i><span>Detailed report</span></button>
+                <button type="button" id="sidebarAiSummaryBtn" class="sidebar-popover-item"><i class="fas fa-file-lines"></i><span>AI summary</span></button>
+            `;
+            const groupItems = groups.length
+                ? groups.map((groupName) => `<button type="button" class="sidebar-popover-item sidebar-popover-item--group" data-domain="${escapeHtml(groupName)}"><i class="fas fa-folder-open"></i><span>${escapeHtml(groupName)}</span></button>`).join('')
+                : '<button type="button" class="sidebar-popover-item sidebar-popover-item--group" data-domain="all"><i class="fas fa-folder-open"></i><span>All groups</span></button>';
+            sideMenu.innerHTML = `${baseActions}<div class="sidebar-popover-divider"></div>${groupItems}`;
+        }
         function applyFindingsFilters() {
             const listEl = document.getElementById('vulnerabilitiesList');
             if (!listEl) return;
             const search = (document.getElementById('findingSearchInput')?.value || '').trim().toLowerCase();
+            const domain = (document.getElementById('findingDomainFilter')?.value || 'all');
             const severity = (document.getElementById('findingSeverityFilter')?.value || 'all').toLowerCase();
             const category = (document.getElementById('findingCategoryFilter')?.value || 'all');
             const sortBy = (document.getElementById('findingSortSelect')?.value || 'severity_desc');
             let rows = [...(scanFindingsAll || [])];
             rows = rows.filter(v => {
+                if (domain !== 'all' && inferFindingDomain(v) !== domain) return false;
                 if (severity !== 'all' && String(v.severity || '').toLowerCase() !== severity) return false;
                 if (category !== 'all' && String(v.category || 'Security Finding') !== category) return false;
                 if (!search) return true;
@@ -1769,10 +2135,39 @@ if (!empty($profile_photo)) {
             if (rows.length === 0) {
                 listEl.innerHTML = `<div class="empty-state"><i class="fas fa-filter"></i><h3>No matching findings</h3><p>Try changing search text or filters.</p></div>`;
                 updateFindingMeta(scanFindingsAll.length, 0);
+                populateSidebarResultGroupsMenu();
                 return;
             }
-            listEl.innerHTML = rows.map((vuln, idx) => createVulnerabilityCard(vuln, idx)).join('');
+            const groups = new Map();
+            rows.forEach((v) => {
+                const d = inferFindingDomain(v);
+                if (!groups.has(d)) groups.set(d, []);
+                groups.get(d).push(v);
+            });
+            const ordered = [];
+            let runningIndex = 0;
+            let groupedHtml = '';
+            Array.from(groups.entries()).forEach(([groupName, items]) => {
+                const highestRank = Math.max(...items.map((it) => severityRank[String(it.severity || '').toLowerCase()] ?? -1));
+                const highest = Object.keys(severityRank).find((k) => severityRank[k] === highestRank) || 'info';
+                groupedHtml += `
+                    <section class="finding-domain-group" data-domain="${escapeHtml(groupName)}">
+                        <header class="finding-domain-header">
+                            <h4>${escapeHtml(groupName)}</h4>
+                            <span class="finding-domain-meta">${items.length} finding(s) · highest ${escapeHtml(highest)}</span>
+                        </header>
+                        <div class="finding-domain-list">
+                `;
+                items.forEach((vuln) => {
+                    ordered.push(vuln);
+                    groupedHtml += createVulnerabilityCard(vuln, runningIndex++);
+                });
+                groupedHtml += '</div></section>';
+            });
+            lastVulnerabilities = ordered;
+            listEl.innerHTML = groupedHtml;
             updateFindingMeta(scanFindingsAll.length, rows.length);
+            populateSidebarResultGroupsMenu();
             warmFindingReports();
         }
         function updateSSLDisplay(sslInfo) {
@@ -1906,26 +2301,82 @@ if (!empty($profile_photo)) {
                     });
                     chHtml += '</ul>';
                 } else if (delta !== null && delta !== undefined) {
-                    chHtml = '<p class="timeline-no-changes">No individual finding differences vs the previous run (scores may still reflect weighting changes).</p>';
+                    chHtml = '<p class="timeline-no-changes">Same finding fingerprints as the previous run in this list — the score can still shift slightly from weighting or evidence updates.</p>';
                 }
                 const score = Number(run.risk_score || 0);
                 const fc = Number(run.findings_count || 0);
                 const lvl = String(run.risk_level || '').trim();
                 const lvlSlug = (lvl ? lvl.toLowerCase().replace(/\s+/g, '-') : 'unknown');
+                const band = String(run.risk_band || '').toLowerCase();
+                const bandLabel = band === 'good' ? 'Good band' : (band === 'neutral' ? 'Neutral band' : (band === 'bad' ? 'High band' : ''));
+                const bandHtml = band && bandLabel
+                    ? '<span class="timeline-band-badge timeline-band-badge--' + escapeHtml(band) + '" title="0–30 Good · 31–60 Neutral · 61–100 High">' + escapeHtml(bandLabel) + '</span>'
+                    : '';
+                let durStr = '—';
+                if (run.scan_duration != null && run.scan_duration !== '' && !Number.isNaN(Number(run.scan_duration))) {
+                    const d = Number(run.scan_duration);
+                    durStr = (Math.round(d * 10) / 10) + 's';
+                }
+                const sslG = run.ssl_grade != null && String(run.ssl_grade).trim() !== '' ? escapeHtml(String(run.ssl_grade)) : '—';
+                const hdrPct = run.headers_score != null && run.headers_score !== '' ? escapeHtml(String(run.headers_score)) + '%' : '—';
+                const bd = run.severity_breakdown || {};
+                const sevParts = [];
+                if (bd.critical) sevParts.push('<span class="timeline-sev-chip crit">' + bd.critical + ' C</span>');
+                if (bd.high) sevParts.push('<span class="timeline-sev-chip high">' + bd.high + ' H</span>');
+                if (bd.medium) sevParts.push('<span class="timeline-sev-chip med">' + bd.medium + ' M</span>');
+                if (bd.low) sevParts.push('<span class="timeline-sev-chip low">' + bd.low + ' L</span>');
+                if (bd.info) sevParts.push('<span class="timeline-sev-chip info">' + bd.info + ' I</span>');
+                if (bd.secure) sevParts.push('<span class="timeline-sev-chip sec">' + bd.secure + ' OK</span>');
+                let sevRow = '';
+                if (sevParts.length) {
+                    sevRow = '<div class="timeline-run-sevchips">' + sevParts.join('') + '</div>';
+                } else {
+                    sevRow = '<div class="timeline-run-sevchips timeline-run-sevchips--empty">No critical–low findings in this snapshot (informational or “secure” items may still appear in the full report).</div>';
+                }
+                const statsHtml = '<div class="timeline-run-stats">' +
+                    '<div class="timeline-run-stat"><span class="timeline-run-stat-lbl">Scan time</span><span class="timeline-run-stat-val">' + durStr + '</span></div>' +
+                    '<div class="timeline-run-stat"><span class="timeline-run-stat-lbl">SSL grade</span><span class="timeline-run-stat-val">' + sslG + '</span></div>' +
+                    '<div class="timeline-run-stat"><span class="timeline-run-stat-lbl">Headers</span><span class="timeline-run-stat-val">' + hdrPct + '</span></div>' +
+                    '</div>' + sevRow;
                 return '<div class="timeline-run-card">' +
                     '<div class="timeline-run-top">' +
                     '<div class="timeline-run-scoreline">' +
                     '<span class="timeline-score">' + score + '</span><span class="timeline-score-lbl">/100</span>' +
                     '<span class="timeline-level lvl-' + escapeHtml(lvlSlug) + '">' + escapeHtml(lvl) + '</span>' +
+                    bandHtml +
                     deltaHtml +
                     '</div>' +
                     '<div class="timeline-run-meta">' +
                     '<span><i class="fas fa-clock"></i> ' + escapeHtml(dateStr) + '</span>' +
                     '<span><i class="fas fa-bug"></i> ' + fc + ' findings</span>' +
                     '<span class="timeline-scan-id">#' + Number(run.scan_id || 0) + '</span>' +
-                    '</div></div>' + chHtml + '</div>';
+                    '</div></div>' +
+                    statsHtml +
+                    chHtml + '</div>';
             }).join('');
         }
+
+        function loadScanRunTimeline(targetUrl) {
+            const u = (targetUrl && String(targetUrl).trim()) ? String(targetUrl).trim() : '';
+            if (!u) {
+                return Promise.resolve({ ok: false, error: 'no_target', runs: [] });
+            }
+            return fetch('../Backend/scan_run_timeline.php?target=' + encodeURIComponent(u) + '&limit=40', {
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' }
+            }).then(function (r) { return r.json(); }).then(function (res) {
+                if (res && res.ok) {
+                    sqTimelineRunsStore = res.runs || [];
+                } else {
+                    sqTimelineRunsStore = [];
+                }
+                return res || { ok: false, runs: [] };
+            }).catch(function () {
+                sqTimelineRunsStore = [];
+                return { ok: false, error: 'network', runs: [] };
+            });
+        }
+
         function openScanTimelineFullModal() {
             const modal = document.getElementById('scanTimelineFullModal');
             const body = document.getElementById('scanTimelineFullBody');
@@ -1942,6 +2393,83 @@ if (!empty($profile_photo)) {
             modal.classList.remove('active');
             modal.style.display = 'none';
         }
+
+        function closeScanTimelinePreviewModal() {
+            const modal = document.getElementById('scanTimelinePreviewModal');
+            if (!modal) return;
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+        }
+
+        function applyScanRunHistoryLink(targetUrl) {
+            const hist = document.getElementById('scanRunTimelineHistoryLink');
+            if (!hist) return;
+            const u = (targetUrl && String(targetUrl).trim()) ? String(targetUrl).trim() : '';
+            if (u) {
+                hist.href = SQ_HISTORY_PAGE + '?target=' + encodeURIComponent(u);
+            } else {
+                hist.href = SQ_HISTORY_PAGE;
+            }
+        }
+
+        function openScanTimelinePreviewModal(targetUrl) {
+            const modal = document.getElementById('scanTimelinePreviewModal');
+            const body = document.getElementById('scanTimelinePreviewBody');
+            const sub = document.getElementById('scanTimelinePreviewSub');
+            const empty = document.getElementById('scanTimelinePreviewEmpty');
+            const actions = document.getElementById('scanTimelinePreviewActions');
+            const viewFullBtn = document.getElementById('scanTimelinePreviewViewFullBtn');
+            if (!modal || !body) return;
+            const u = (targetUrl && String(targetUrl).trim()) ? String(targetUrl).trim() : '';
+            modal.dataset.timelineTarget = u || '';
+            const histBtn = document.getElementById('scanTimelinePreviewHistoryBtn');
+            if (histBtn) {
+                histBtn.href = u ? (SQ_HISTORY_PAGE + '?target=' + encodeURIComponent(u)) : SQ_HISTORY_PAGE;
+            }
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+            if (empty) empty.style.display = 'none';
+            if (actions) actions.style.display = 'none';
+            if (!u) {
+                body.innerHTML = '<p class="scan-run-timeline-error">Enter a target URL or run a scan first to load a timeline.</p>';
+                if (sub) sub.textContent = 'No target selected';
+                if (actions) actions.style.display = 'none';
+                return;
+            }
+            body.innerHTML = '<p class="scan-run-timeline-loading"><i class="fas fa-circle-notch fa-spin"></i> Loading timeline…</p>';
+            if (sub) sub.textContent = 'Loading…';
+            loadScanRunTimeline(u).then(function (res) {
+                applyScanRunHistoryLink(u);
+                if (!res || !res.ok) {
+                    body.innerHTML = '<p class="scan-run-timeline-error">Timeline unavailable (sign in required or server error).</p>';
+                    if (sub) sub.textContent = 'Could not load timeline';
+                    if (actions) actions.style.display = 'flex';
+                    if (viewFullBtn) viewFullBtn.style.display = 'none';
+                    return;
+                }
+                if (sub && res.canonical_target) {
+                    try {
+                        const h = new URL(res.canonical_target).hostname;
+                        sub.textContent = 'Last ' + SQ_TIMELINE_INLINE_PREVIEW + ' saved runs for ' + h + ' — same host as the timeline API.';
+                    } catch (e) {
+                        sub.textContent = 'Saved runs for this target — deltas compare each run to the next older one.';
+                    }
+                }
+                const runs = res.runs || [];
+                if (runs.length === 0) {
+                    body.innerHTML = '';
+                    if (empty) empty.style.display = 'block';
+                    if (actions) actions.style.display = 'flex';
+                    if (viewFullBtn) viewFullBtn.style.display = 'none';
+                    return;
+                }
+                if (empty) empty.style.display = 'none';
+                body.innerHTML = buildTimelineCardsHtml(runs.slice(0, SQ_TIMELINE_INLINE_PREVIEW));
+                if (actions) actions.style.display = 'flex';
+                if (viewFullBtn) viewFullBtn.style.display = 'inline-flex';
+            });
+        }
+
         function refreshScanRunTimeline(targetUrl) {
             const wrap = document.getElementById('scanRunTimelineWrap');
             const body = document.getElementById('scanRunTimelineBody');
@@ -1951,16 +2479,15 @@ if (!empty($profile_photo)) {
             if (!wrap || !body) return;
             if (!targetUrl) {
                 wrap.style.display = 'none';
+                applyScanRunHistoryLink('');
                 return;
             }
             wrap.style.display = 'block';
             body.innerHTML = '<p class="scan-run-timeline-loading"><i class="fas fa-circle-notch fa-spin"></i> Loading timeline…</p>';
             if (empty) empty.style.display = 'none';
             if (viewAll) viewAll.style.display = 'none';
-            fetch('../Backend/scan_run_timeline.php?target=' + encodeURIComponent(targetUrl) + '&limit=40', {
-                credentials: 'same-origin',
-                headers: { 'Accept': 'application/json' }
-            }).then(function (r) { return r.json(); }).then(function (res) {
+            applyScanRunHistoryLink(targetUrl);
+            loadScanRunTimeline(targetUrl).then(function (res) {
                 if (!res || !res.ok) {
                     body.innerHTML = '<p class="scan-run-timeline-error">Timeline unavailable (sign in required or server error).</p>';
                     return;
@@ -1974,16 +2501,15 @@ if (!empty($profile_photo)) {
                     }
                 }
                 const runs = res.runs || [];
-                sqTimelineRunsStore = runs;
                 if (runs.length === 0) {
                     body.innerHTML = '';
                     if (empty) empty.style.display = 'block';
                     return;
                 }
                 if (empty) empty.style.display = 'none';
-                const preview = runs.slice(0, 3);
+                const preview = runs.slice(0, SQ_TIMELINE_INLINE_PREVIEW);
                 body.innerHTML = buildTimelineCardsHtml(preview);
-                if (viewAll) viewAll.style.display = runs.length > 3 ? 'block' : 'none';
+                if (viewAll) viewAll.style.display = runs.length > SQ_TIMELINE_INLINE_PREVIEW ? 'block' : 'none';
             }).catch(function () {
                 body.innerHTML = '<p class="scan-run-timeline-error">Could not load timeline.</p>';
             });
@@ -2116,6 +2642,7 @@ if (!empty($profile_photo)) {
             if (cancelBtn) cancelBtn.style.display = 'inline-flex';
             if (loaderEl) loaderEl.classList.add('active');
             if (resultsEl) resultsEl.classList.remove('active');
+            syncReportShellVisibility();
             setScanProgress('Validating target and initializing scanner modules...', 12);
             stopScanProgressTimer();
             const startMs = Date.now();
@@ -2194,6 +2721,7 @@ if (!empty($profile_photo)) {
                 updateCrawlerDisplay(data.crawler);
 
                 lastScanData = data;
+                shouldPulseSidebarReportNav = true;
                 try { refreshScanRunTimeline(data.target); } catch (e) { }
 
                 // Update vulnerabilities list
@@ -2211,6 +2739,7 @@ if (!empty($profile_photo)) {
                     reportSourceTelemetrySent.clear();
                     scanFindingsAll = data.vulnerabilities.map((v, idx) => ({ ...v, _sq_uid: `${stamp}-${idx}` }));
                     populateCategoryFilter();
+                    populateDomainFilter();
                     applyFindingsFilters();
                     startReportReconcileWindow();
                 } else {
@@ -2229,6 +2758,7 @@ if (!empty($profile_photo)) {
                 persistScanState();
                 if (loaderEl) loaderEl.classList.remove('active');
                 if (resultsEl) resultsEl.classList.add('active');
+                syncReportShellVisibility();
                 if (cancelBtn) cancelBtn.style.display = 'none';
                 setScanProgress('Scan completed. Building detailed reports...', 100);
                 stopScanProgressTimer();
@@ -2242,7 +2772,7 @@ if (!empty($profile_photo)) {
                     if (!humanReportPanel) return;
                     try {
                         humanReportTimerStart = Date.now();
-                        humanReportPanel.innerHTML = '<p class="human-report-placeholder">Generating user report... <span id="humanReportWaitTimer">0s</span></p>';
+                        humanReportPanel.innerHTML = '<p class="human-report-placeholder">Generating AI summary... <span id="humanReportWaitTimer">0s</span></p>';
                     } catch (e) { }
                     humanReportTimerInterval = setInterval(() => {
                         const el = document.getElementById('humanReportWaitTimer');
@@ -2358,6 +2888,13 @@ if (!empty($profile_photo)) {
                 });
             }
             document.getElementById('scanRunTimelineViewAllBtn')?.addEventListener('click', function () {
+                openScanTimelineFullModal();
+            });
+            document.getElementById('scanTimelinePreviewClose')?.addEventListener('click', closeScanTimelinePreviewModal);
+            document.getElementById('scanTimelinePreviewViewFullBtn')?.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeScanTimelinePreviewModal();
                 openScanTimelineFullModal();
             });
         })();
@@ -2995,6 +3532,7 @@ ${headHtml}
         let lastDownloadUrls = {};
         let lastHumanReportText = '';
         let userPackage = 'freemium';
+        let shouldPulseSidebarReportNav = false;
         const scanStateStorageKey = 'sq_scan_state_v1';
         function persistScanState() {
             try {
@@ -3045,11 +3583,13 @@ ${headHtml}
                 updateServerDisplay(lastScanData.server_info || {});
                 updateCrawlerDisplay(lastScanData.crawler || {});
                 populateCategoryFilter();
+                populateDomainFilter();
                 applyFindingsFilters();
                 const loaderEl = document.getElementById('loader');
                 const resultsEl = document.getElementById('results');
                 if (loaderEl) loaderEl.classList.remove('active');
                 if (resultsEl) resultsEl.classList.add('active');
+                syncReportShellVisibility();
                 if (lastHumanReportText) {
                     const panel = document.getElementById('humanReportPanel');
                     if (panel) panel.innerHTML = '<div class="human-report-content">' + renderStyledHumanReport(lastHumanReportText) + '</div>';
@@ -3062,12 +3602,169 @@ ${headHtml}
             const aiBtn = document.getElementById('aiOverviewBtn');
             const upgradeMsg = document.getElementById('upgradeMessage');
             if (aiBtn) aiBtn.style.display = userPackage === 'enterprise' ? 'inline-flex' : 'none';
+            syncSidebarReportActions();
             if (upgradeMsg && userPackage !== 'enterprise') {
                 upgradeMsg.style.display = 'block';
                 upgradeMsg.textContent = 'Upgrade to Enterprise for AI Overview and detailed reports.';
             }
         }).catch(() => { });
         restoreScanState();
+
+        function openReportOverlay(id) {
+            const overlay = document.getElementById(id);
+            if (!overlay) return;
+            overlay.style.display = 'flex';
+            overlay.setAttribute('aria-hidden', 'false');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeReportOverlay(id) {
+            const overlay = document.getElementById(id);
+            if (!overlay) return;
+            overlay.style.display = 'none';
+            overlay.setAttribute('aria-hidden', 'true');
+            document.body.style.overflow = '';
+        }
+        (function initReportOverlayDismiss() {
+            document.querySelectorAll('.report-overlay').forEach((overlay) => {
+                const id = overlay.id;
+                if (!id) return;
+                overlay.addEventListener('click', (e) => {
+                    const isCloseButton = !!e.target.closest('[data-close-overlay]');
+                    const isBackdrop = !!e.target.closest('.report-overlay__backdrop');
+                    if (!isCloseButton && !isBackdrop) return;
+                    closeReportOverlay(id);
+                });
+            });
+        })();
+        function syncReportOverlayContent() {
+            const reportBody = document.getElementById('userReportOverlayBody');
+            const panel = document.getElementById('humanReportPanel');
+            if (reportBody && panel) {
+                reportBody.innerHTML = panel.innerHTML || '<p class="human-report-placeholder">Run a scan first to generate the AI summary.</p>';
+            }
+            const actions = document.getElementById('downloadsOverlayActions');
+            if (actions) {
+                const ids = ['downloadCsvBtn', 'downloadHtmlBtn', 'downloadPdfBtn', 'shareResultsBtn', 'aiOverviewBtn'];
+                const controls = ids.map((id) => document.getElementById(id)).filter(Boolean);
+                actions.innerHTML = controls.map((el) => el.outerHTML).join('');
+                actions.querySelectorAll('button').forEach((clonedBtn) => {
+                    const sourceBtn = document.getElementById(clonedBtn.id);
+                    if (!sourceBtn) return;
+                    clonedBtn.disabled = sourceBtn.disabled;
+                    clonedBtn.style.display = sourceBtn.style.display;
+                    clonedBtn.addEventListener('click', () => sourceBtn.click());
+                });
+            }
+        }
+        (function initSidebarReportNav() {
+            const riskBtn = document.getElementById('sidebarRiskAnalysisBtn');
+            const runtimeBtn = document.getElementById('sidebarRuntimeBtn');
+            const findingsBtn = document.getElementById('sidebarFindingsBtn');
+            const findingsMenu = document.getElementById('sidebarFindingsMenu');
+            const csvBtnSide = document.getElementById('sidebarDownloadCsvBtn');
+            const htmlBtnSide = document.getElementById('sidebarDownloadHtmlBtn');
+            const pdfBtnSide = document.getElementById('sidebarDownloadPdfBtn');
+            const aiOverviewSideBtn = document.getElementById('sidebarAiOverviewBtn');
+            const popovers = Array.from(document.querySelectorAll('.sidebar-report-popover'));
+
+            function closeAllPopovers(except = null) {
+                popovers.forEach((popover) => {
+                    if (except && popover === except) return;
+                    popover.classList.remove('is-open');
+                });
+            }
+            popovers.forEach((popover) => {
+                const trigger = popover.querySelector('.sidebar-report-btn');
+                const menu = popover.querySelector('.sidebar-report-popover-menu');
+                trigger?.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const willOpen = !popover.classList.contains('is-open');
+                    closeAllPopovers(popover);
+                    if (willOpen) popover.classList.add('is-open');
+                    else popover.classList.remove('is-open');
+                });
+                menu?.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                });
+            });
+            document.addEventListener('click', function () {
+                closeAllPopovers();
+            });
+
+            riskBtn?.addEventListener('click', function () {
+                document.getElementById('riskScoreWrapper')?.click();
+            });
+            runtimeBtn?.addEventListener('click', function () {
+                closeAllPopovers();
+                const inp = document.getElementById('targetURL');
+                const u = (typeof lastScanData !== 'undefined' && lastScanData && lastScanData.target)
+                    ? String(lastScanData.target).trim()
+                    : ((inp && inp.value) ? String(inp.value).trim() : '');
+                openScanTimelinePreviewModal(u || '');
+            });
+            findingsBtn?.addEventListener('click', function () {
+                const firstDomain = document.querySelector('.finding-domain-group[data-domain]');
+                const firstGroup = firstDomain ? (firstDomain.getAttribute('data-domain') || 'all') : 'all';
+                const domainFilter = document.getElementById('findingDomainFilter');
+                const catFilter = document.getElementById('findingCategoryFilter');
+                if (domainFilter) domainFilter.value = firstGroup;
+                if (catFilter) catFilter.value = 'all';
+                document.querySelector('[data-tab="findings"]')?.click();
+                applyFindingsFilters();
+                document.getElementById('reportFindingsSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                closeAllPopovers();
+            });
+            findingsMenu?.addEventListener('click', function (e) {
+                const item = e.target.closest('.sidebar-popover-item');
+                if (!item) return;
+                if (item.id === 'sidebarDetailedReportBtn') {
+                    const domainFilter = document.getElementById('findingDomainFilter');
+                    const catFilter = document.getElementById('findingCategoryFilter');
+                    if (domainFilter) domainFilter.value = 'all';
+                    if (catFilter) catFilter.value = 'all';
+                    applyFindingsFilters();
+                    document.querySelector('[data-tab="findings"]')?.click();
+                    document.getElementById('reportFindingsSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    closeAllPopovers();
+                    return;
+                }
+                if (item.id === 'sidebarAiSummaryBtn') {
+                    syncReportOverlayContent();
+                    openReportOverlay('userReportOverlay');
+                    closeAllPopovers();
+                    return;
+                }
+                const domain = item.getAttribute('data-domain');
+                if (domain !== null) {
+                    const domainFilter = document.getElementById('findingDomainFilter');
+                    const catFilter = document.getElementById('findingCategoryFilter');
+                    if (domainFilter) domainFilter.value = domain;
+                    if (catFilter) catFilter.value = 'all';
+                    document.querySelector('[data-tab="findings"]')?.click();
+                    applyFindingsFilters();
+                    const section = document.querySelector(`.finding-domain-group[data-domain="${CSS.escape(domain)}"]`);
+                    (section || document.getElementById('reportFindingsSection'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    closeAllPopovers();
+                }
+            });
+            csvBtnSide?.addEventListener('click', function () {
+                document.getElementById('downloadCsvBtn')?.click();
+                closeAllPopovers();
+            });
+            htmlBtnSide?.addEventListener('click', function () {
+                document.getElementById('downloadHtmlBtn')?.click();
+                closeAllPopovers();
+            });
+            pdfBtnSide?.addEventListener('click', function () {
+                document.getElementById('downloadPdfBtn')?.click();
+                closeAllPopovers();
+            });
+            aiOverviewSideBtn?.addEventListener('click', function () {
+                document.getElementById('aiOverviewBtn')?.click();
+                closeAllPopovers();
+            });
+        })();
 
 
         // Tab switching: Detailed Findings | Human-readable report
@@ -3145,12 +3842,14 @@ ${headHtml}
                     return;
                 }
                 aiOverviewBtn.disabled = true;
+                syncSidebarReportActions();
                 fetch('../Backend/save_scan_report.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ scan_data: lastScanData, detailed_ai: true })
                 }).then(r => r.json()).then(res => {
                     aiOverviewBtn.disabled = false;
+                    syncSidebarReportActions();
                     if (res.scan_id) {
                         window.location.href = 'enterprise_ai_overview.php?scan_id=' + res.scan_id;
                     } else if (res.report_text) {
@@ -3160,7 +3859,7 @@ ${headHtml}
                     } else {
                         alert('Save the scan first to open the full Enterprise AI Overview, or review the report tab.');
                     }
-                }).catch(() => { aiOverviewBtn.disabled = false; });
+                }).catch(() => { aiOverviewBtn.disabled = false; syncSidebarReportActions(); });
             });
         }
         const shareResultsBtn = document.getElementById('shareResultsBtn');
@@ -3379,6 +4078,7 @@ ${headHtml}
             if (!btn) return;
             const hasRenderedReport = !!(lastScanData && lastScanData.target);
             btn.style.display = hasRenderedReport ? 'inline-flex' : 'none';
+            syncReportShellVisibility();
         }
         function clearFindingReportCache() {
             Object.keys(findingReportCache).forEach(k => delete findingReportCache[k]);
@@ -3584,6 +4284,10 @@ ${headHtml}
                 });
                 return;
             }
+            if (t.closest('#scanTimelinePreviewClose') || t.id === 'scanTimelinePreviewModal') {
+                closeScanTimelinePreviewModal();
+                return;
+            }
             if (t.closest('#scanTimelineFullClose') || t.id === 'scanTimelineFullModal') {
                 closeScanTimelineFullModal();
                 return;
@@ -3633,6 +4337,9 @@ ${headHtml}
         });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
+                closeReportOverlay('userReportOverlay');
+                closeReportOverlay('downloadsOverlay');
+                closeScanTimelinePreviewModal();
                 closeScanTimelineFullModal();
                 closeFindingEvidenceRawModal();
                 closeEvidenceModal();
@@ -3642,15 +4349,18 @@ ${headHtml}
         });
         document.getElementById('findingPrintBtn')?.addEventListener('click', printFindingReport);
         document.getElementById('findingSearchInput')?.addEventListener('input', applyFindingsFilters);
+        document.getElementById('findingDomainFilter')?.addEventListener('change', applyFindingsFilters);
         document.getElementById('findingSeverityFilter')?.addEventListener('change', applyFindingsFilters);
         document.getElementById('findingCategoryFilter')?.addEventListener('change', applyFindingsFilters);
         document.getElementById('findingSortSelect')?.addEventListener('change', applyFindingsFilters);
         document.getElementById('findingResetFiltersBtn')?.addEventListener('click', function () {
             const s = document.getElementById('findingSearchInput');
+            const dom = document.getElementById('findingDomainFilter');
             const sev = document.getElementById('findingSeverityFilter');
             const cat = document.getElementById('findingCategoryFilter');
             const sort = document.getElementById('findingSortSelect');
             if (s) s.value = '';
+            if (dom) dom.value = 'all';
             if (sev) sev.value = 'all';
             if (cat) cat.value = 'all';
             if (sort) sort.value = 'severity_desc';
@@ -4029,6 +4739,31 @@ ${headHtml}
                 </div>
             </div>
             <pre id="findingRawFullscreenText" class="sq-evidence-raw-pre" style="flex:1; min-height:280px;">-</pre>
+        </div>
+    </div>
+    <div id="scanTimelinePreviewModal" class="modal-overlay sq-timeline-preview-modal"
+        style="display:none; position:fixed; inset:0; background:rgba(2,6,23,0.72); z-index:10007; align-items:center; justify-content:center;">
+        <div class="modal sq-timeline-preview-inner"
+            style="background:var(--bg-card); padding:22px; border-radius:16px; width:94%; max-width:920px; border:1px solid var(--border-color); max-height:88vh; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px;">
+                <div>
+                    <div style="font-size:17px; font-weight:800; color:var(--text-main);">Scan run timeline</div>
+                    <div id="scanTimelinePreviewSub" class="sq-timeline-preview-sub" style="font-size:12px; color:var(--text-light); margin-top:4px;">—</div>
+                </div>
+                <button type="button" id="scanTimelinePreviewClose" class="icon-btn" title="Close"
+                    style="width:40px;height:40px;"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="scanTimelinePreviewBody" class="scan-run-timeline-body sq-timeline-preview-body" style="flex:1; min-height:0; overflow-y:auto;"></div>
+            <p id="scanTimelinePreviewEmpty" class="scan-run-timeline-empty" style="display:none; margin:12px 0;">No
+                saved scans for this host yet. After a report is stored, repeat scans will show score deltas and changes.</p>
+            <div id="scanTimelinePreviewActions" class="sq-timeline-preview-actions" style="display:none; flex-wrap:wrap; gap:10px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-color);">
+                <button type="button" id="scanTimelinePreviewViewFullBtn" class="scan-run-timeline-viewall-btn" style="display:none;">
+                    <i class="fas fa-expand-alt"></i> View full timeline
+                </button>
+                <a id="scanTimelinePreviewHistoryBtn" class="scan-run-timeline-history-link sq-timeline-preview-history-btn" href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/historical_scans.php">
+                    Full history <i class="fas fa-external-link-alt" style="font-size:11px;" aria-hidden="true"></i>
+                </a>
+            </div>
         </div>
     </div>
     <div id="scanTimelineFullModal" class="modal-overlay sq-timeline-full-modal"
