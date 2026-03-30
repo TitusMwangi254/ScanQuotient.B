@@ -421,6 +421,111 @@
       margin-bottom: 0.75rem;
   }
 
+  /* Full-screen verifying overlay */
+  .verify-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+  }
+
+  .verify-overlay[hidden] {
+      display: none;
+  }
+
+  .verify-overlay__backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.55);
+  }
+
+  [data-theme="dark"] .verify-overlay__backdrop {
+      background: rgba(0, 0, 0, 0.65);
+  }
+
+  .verify-overlay__panel {
+      position: relative;
+      z-index: 1;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border-radius: 16px;
+      padding: 2rem 2.25rem;
+      max-width: 320px;
+      width: 100%;
+      text-align: center;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid var(--border-color);
+  }
+
+  .verify-overlay__icon-wrap {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+  }
+
+  .verify-overlay__spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid var(--border-color);
+      border-top-color: var(--accent-color);
+      border-radius: 50%;
+      animation: verify-spin 0.85s linear infinite;
+      flex-shrink: 0;
+  }
+
+  .verify-overlay__tick {
+      display: none;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: var(--success-color);
+      color: #ffffff;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      animation: verify-tick-pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .verify-overlay.is-success .verify-overlay__spinner {
+      display: none;
+      animation: none;
+  }
+
+  .verify-overlay.is-success .verify-overlay__tick {
+      display: flex;
+  }
+
+  .verify-overlay__text {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.45;
+  }
+
+  @keyframes verify-spin {
+      to {
+          transform: rotate(360deg);
+      }
+  }
+
+  @keyframes verify-tick-pop {
+      from {
+          opacity: 0;
+          transform: scale(0.5);
+      }
+
+      to {
+          opacity: 1;
+          transform: scale(1);
+      }
+  }
+
   /* FOOTER */
   .footer {
       background: var(--bg-secondary);

@@ -37,73 +37,96 @@ function showToast(message, type = "success") {
   }, 5000);
 }
 
-// Multi-step form logic
-let currentStep = 1;
-const totalSteps = 5;
-
+// Multi-step form logic (supports both full setup and agreements-only modes)
+let currentStepIndex = 0;
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 const submitBtn = document.getElementById("submitBtn");
+const completionForm = document.getElementById("completionForm");
+const completionModeInput = document.querySelector('input[name="completion_mode"]');
+const completionMode = completionModeInput ? completionModeInput.value : "pending_completion";
+
+const visibleSteps = Array.from(document.querySelectorAll(".step-content")).filter(
+  (step) => !step.hasAttribute("hidden"),
+);
+const progressSteps = Array.from(document.querySelectorAll(".progress-step"));
+
+function getCurrentStepElement() {
+  return visibleSteps[currentStepIndex] || null;
+}
+
+function validateCurrentStep() {
+  const currentStep = getCurrentStepElement();
+  if (!currentStep) return true;
+
+  const kind = currentStep.dataset.kind || "";
+  let isValid = false;
+
+  switch (kind) {
+    case "privacy": {
+      const el = document.getElementById("agreePrivacy");
+      isValid = !!el && el.checked;
+      break;
+    }
+    case "terms": {
+      const el = document.getElementById("agreeTerms");
+      isValid = !!el && el.checked;
+      break;
+    }
+    case "security": {
+      const el = document.getElementById("agreeSecurity");
+      isValid = !!el && el.checked;
+      break;
+    }
+    case "username": {
+      const usernameEl = document.getElementById("newUsername");
+      const confirmEl = document.getElementById("confirmUsername");
+      const username = usernameEl ? usernameEl.value : "";
+      const confirmUsername = confirmEl ? confirmEl.value : "";
+      const usernameValid = /^[a-zA-Z0-9_]{4,20}$/.test(username);
+      isValid = usernameValid && username === confirmUsername;
+      break;
+    }
+    case "password": {
+      const passwordEl = document.getElementById("newPassword");
+      const confirmEl = document.getElementById("confirmPassword");
+      const password = passwordEl ? passwordEl.value : "";
+      const confirmPassword = confirmEl ? confirmEl.value : "";
+      isValid = validatePassword(password) && password === confirmPassword;
+      break;
+    }
+    default:
+      isValid = true;
+      break;
+  }
+
+  if (nextBtn) nextBtn.disabled = !isValid;
+  if (submitBtn) submitBtn.disabled = !isValid;
+  return isValid;
+}
 
 function updateStep() {
-  document.querySelectorAll(".step-content").forEach((step) => {
-    step.classList.remove("active");
-  });
+  visibleSteps.forEach((step) => step.classList.remove("active"));
+  const current = getCurrentStepElement();
+  if (current) {
+    current.classList.add("active");
+  }
 
-  document
-    .querySelector(`.step-content[data-step="${currentStep}"]`)
-    .classList.add("active");
-
-  document.querySelectorAll(".progress-step").forEach((step, index) => {
-    const stepNum = index + 1;
+  progressSteps.forEach((step, index) => {
     step.classList.remove("active", "completed");
-    if (stepNum < currentStep) {
+    if (index < currentStepIndex) {
       step.classList.add("completed");
-    } else if (stepNum === currentStep) {
+    } else if (index === currentStepIndex) {
       step.classList.add("active");
     }
   });
 
-  prevBtn.style.display = currentStep === 1 ? "none" : "flex";
-  if (currentStep === totalSteps) {
-    nextBtn.style.display = "none";
-    submitBtn.style.display = "flex";
-  } else {
-    nextBtn.style.display = "flex";
-    submitBtn.style.display = "none";
-  }
+  if (prevBtn) prevBtn.style.display = currentStepIndex === 0 ? "none" : "flex";
+  const isLastStep = currentStepIndex === visibleSteps.length - 1;
+  if (nextBtn) nextBtn.style.display = isLastStep ? "none" : "flex";
+  if (submitBtn) submitBtn.style.display = isLastStep ? "flex" : "none";
 
   validateCurrentStep();
-}
-
-function validateCurrentStep() {
-  let isValid = false;
-
-  switch (currentStep) {
-    case 1:
-      isValid = document.getElementById("agreePrivacy").checked;
-      break;
-    case 2:
-      isValid = document.getElementById("agreeTerms").checked;
-      break;
-    case 3:
-      isValid = document.getElementById("agreeSecurity").checked;
-      break;
-    case 4:
-      const username = document.getElementById("newUsername").value;
-      const confirmUsername = document.getElementById("confirmUsername").value;
-      const usernameValid = /^[a-zA-Z0-9_]{4,20}$/.test(username);
-      isValid = usernameValid && username === confirmUsername;
-      break;
-    case 5:
-      const password = document.getElementById("newPassword").value;
-      const confirmPassword = document.getElementById("confirmPassword").value;
-      isValid = validatePassword(password) && password === confirmPassword;
-      break;
-  }
-
-  nextBtn.disabled = !isValid;
-  submitBtn.disabled = !isValid;
 }
 
 function validatePassword(password) {
@@ -134,22 +157,27 @@ function validatePassword(password) {
   return Object.values(criteria).every(Boolean);
 }
 
-nextBtn.addEventListener("click", () => {
-  if (currentStep < totalSteps) {
-    currentStep++;
-    updateStep();
-  }
-});
+if (nextBtn) {
+  nextBtn.addEventListener("click", () => {
+    if (currentStepIndex < visibleSteps.length - 1) {
+      currentStepIndex++;
+      updateStep();
+    }
+  });
+}
 
-prevBtn.addEventListener("click", () => {
-  if (currentStep > 1) {
-    currentStep--;
-    updateStep();
-  }
-});
+if (prevBtn) {
+  prevBtn.addEventListener("click", () => {
+    if (currentStepIndex > 0) {
+      currentStepIndex--;
+      updateStep();
+    }
+  });
+}
 
 ["agreePrivacy", "agreeTerms", "agreeSecurity"].forEach((id) => {
-  document.getElementById(id).addEventListener("change", validateCurrentStep);
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("change", validateCurrentStep);
 });
 
 const usernameInput = document.getElementById("newUsername");
@@ -184,24 +212,28 @@ function validateUsernameMatch() {
   validateCurrentStep();
 }
 
-usernameInput.addEventListener("input", validateUsername);
-confirmUsernameInput.addEventListener("input", validateUsernameMatch);
+if (usernameInput) usernameInput.addEventListener("input", validateUsername);
+if (confirmUsernameInput) confirmUsernameInput.addEventListener("input", validateUsernameMatch);
 
 const passwordInput = document.getElementById("newPassword");
 const confirmPasswordInput = document.getElementById("confirmPassword");
 
-passwordInput.addEventListener("input", () => {
-  validatePassword(passwordInput.value);
-  validateCurrentStep();
-});
+if (passwordInput) {
+  passwordInput.addEventListener("input", () => {
+    validatePassword(passwordInput.value);
+    validateCurrentStep();
+  });
+}
 
-confirmPasswordInput.addEventListener("input", () => {
-  const match = passwordInput.value === confirmPasswordInput.value;
-  document
-    .getElementById("confirmPasswordError")
-    .classList.toggle("show", !match);
-  validateCurrentStep();
-});
+if (confirmPasswordInput && passwordInput) {
+  confirmPasswordInput.addEventListener("input", () => {
+    const match = passwordInput.value === confirmPasswordInput.value;
+    document
+      .getElementById("confirmPasswordError")
+      .classList.toggle("show", !match);
+    validateCurrentStep();
+  });
+}
 
 document.querySelectorAll(".toggle-visibility").forEach((toggle) => {
   toggle.addEventListener("click", () => {
@@ -219,9 +251,7 @@ document.querySelectorAll(".toggle-visibility").forEach((toggle) => {
 });
 
 // AJAX Form Submission
-document
-  .getElementById("completionForm")
-  .addEventListener("submit", function (e) {
+completionForm.addEventListener("submit", function (e) {
     e.preventDefault();
 
     const submitBtn = document.getElementById("submitBtn");
@@ -230,7 +260,9 @@ document
     // Show loading state
     submitBtn.disabled = true;
     submitBtn.innerHTML =
-      '<i class="fas fa-spinner fa-spin"></i> Completing setup...';
+      completionMode === "agreements_only"
+        ? '<i class="fas fa-spinner fa-spin"></i> Saving agreements...'
+        : '<i class="fas fa-spinner fa-spin"></i> Completing setup...';
 
     // Collect form data
     const formData = new FormData(this);
@@ -266,7 +298,7 @@ document
         submitBtn.disabled = false;
         submitBtn.innerHTML = originalText;
       });
-  });
+});
 
 // Initialize
 updateStep();

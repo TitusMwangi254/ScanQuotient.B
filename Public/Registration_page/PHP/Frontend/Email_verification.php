@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../../security_headers.php';
 // Only get email from URL (no sessions)
 $email = $_GET['email'] ?? null;
 

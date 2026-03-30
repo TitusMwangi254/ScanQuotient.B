@@ -272,13 +272,44 @@ try {
         exit;
     }
 
+    // CHECK 3B: Policy re-acceptance for active accounts
+    $pendingAgreements = [
+        'privacy' => (($user['privacy_agreed'] ?? 'no') !== 'yes'),
+        'terms' => (($user['terms_agreed'] ?? 'no') !== 'yes'),
+        'security' => (($user['agreement_agreed'] ?? 'no') !== 'yes'),
+    ];
+    if ($pendingAgreements['privacy'] || $pendingAgreements['terms'] || $pendingAgreements['security']) {
+        $_SESSION['auth_mode'] = 'account_completion';
+        $_SESSION['auth_stage'] = 'agreements_only';
+        $_SESSION['pending_agreements'] = $pendingAgreements;
+        $_SESSION['user_id'] = $user['user_id'];
+        $_SESSION['user_email'] = $user['email'];
+        $_SESSION['first_name'] = $user['first_name'] ?? '';
+        $_SESSION['surname'] = $user['surname'] ?? '';
+
+        logSecurityEvent($pdo, $username, 'POLICY_REACCEPTANCE_REQUIRED', 'Redirecting to agreements-only completion');
+        header('Location: /ScanQuotient.v2/ScanQuotient.B/Public/Registration_completion_page/PHP/Frontend/Registration_completion_site.php');
+        exit;
+    }
+
 
     // CHECK 4: Password Reset Status
     if ($user['password_reset_status'] === 'yes') {
         $_SESSION['auth_mode'] = 'password_reset';
 
         // Check if reset has expired
-        if ($user['password_reset_expires'] !== null && strtotime($user['password_reset_expires']) < time()) {
+        $isResetExpired = false;
+        if (!empty($user['password_reset_expires'])) {
+            try {
+                $eatTz = new DateTimeZone('Africa/Nairobi');
+                $resetExpiryAt = new DateTimeImmutable((string) $user['password_reset_expires'], $eatTz);
+                $isResetExpired = ($resetExpiryAt->getTimestamp() < time());
+            } catch (Throwable $e) {
+                // Fall back to legacy parsing behavior if stored value is malformed.
+                $isResetExpired = (strtotime((string) $user['password_reset_expires']) < time());
+            }
+        }
+        if ($isResetExpired) {
             $_SESSION['force_reset_reason'] = 'expired';
             logSecurityEvent($pdo, $username, 'PASSWORD_RESET_EXPIRED', 'Forced password reset - expired token');
             header('Location: ../../../Reset_password/PHP/Frontend/Password_reset_page.php?reason=expired');
@@ -403,6 +434,7 @@ try {
     // Clear auth mode flags
     unset($_SESSION['auth_mode']);
     unset($_SESSION['auth_stage']);
+    unset($_SESSION['pending_agreements']);
     unset($_SESSION['force_reset_reason']);
     unset($_SESSION['2fa_pending']);
 

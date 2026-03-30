@@ -1,6 +1,7 @@
 <?php
 // Certificate_agreement.php - User must accept admin-issued certificate before proceeding
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 date_default_timezone_set('Africa/Nairobi');
 
 if (!isset($_SESSION['auth_mode']) || $_SESSION['auth_mode'] !== 'certificate_agreement') {

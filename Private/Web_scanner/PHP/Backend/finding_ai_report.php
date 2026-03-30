@@ -464,6 +464,20 @@ function expandSecurityTerms(string $text): string
 function classifyFinding(string $name, string $description): string
 {
     $s = strtolower($name . ' ' . $description);
+    if (str_contains($s, 'ssrf') || str_contains($s, 'server-side request forgery'))
+        return 'ssrf';
+    if (str_contains($s, 'xxe') || str_contains($s, 'xml external entity'))
+        return 'xxe';
+    if (str_contains($s, 'remote code execution') || str_contains($s, ' rce') || str_contains($s, 'command injection') || str_contains($s, 'cmd injection'))
+        return 'rce';
+    if (str_contains($s, 'path traversal') || str_contains($s, 'directory traversal') || str_contains($s, '../') || str_contains($s, 'lfi') || str_contains($s, 'rfi') || str_contains($s, 'file inclusion'))
+        return 'path';
+    if (str_contains($s, 'idor') || str_contains($s, 'insecure direct object reference') || str_contains($s, 'broken access control') || str_contains($s, 'privilege escalation'))
+        return 'idor';
+    if (str_contains($s, 'authentication bypass') || str_contains($s, 'brute force') || str_contains($s, 'weak password policy') || str_contains($s, 'account takeover'))
+        return 'auth';
+    if (str_contains($s, 'jwt') || str_contains($s, 'json web token') || str_contains($s, 'token'))
+        return 'token';
     if (str_contains($s, 'sql injection') || str_contains($s, 'sqli') || str_contains($s, 'sql'))
         return 'sqli';
     if (str_contains($s, 'xss') || str_contains($s, 'cross-site scripting'))
@@ -486,6 +500,14 @@ function classifyFinding(string $name, string $description): string
         return 'file';
     if (str_contains($s, 'secret') || str_contains($s, 'api key') || str_contains($s, 'credential'))
         return 'secret';
+    if (str_contains($s, 'clickjacking') || str_contains($s, 'x-frame-options'))
+        return 'clickjacking';
+    if (str_contains($s, 'hsts') || str_contains($s, 'strict-transport-security'))
+        return 'hsts';
+    if (str_contains($s, 'nosniff') || str_contains($s, 'x-content-type-options') || str_contains($s, 'mime sniff'))
+        return 'mime';
+    if (str_contains($s, 'csp') || str_contains($s, 'content-security-policy'))
+        return 'csp';
     if (str_contains($s, 'redirect') || str_contains($s, 'mixed content'))
         return 'content';
     return 'generic';
@@ -500,11 +522,22 @@ function categoryFromType(string $type): string
         'csrf' => 'Access Control Misconfiguration',
         'redirect' => 'Access Control Misconfiguration',
         'cookie' => 'Session Management',
+        'token' => 'Session Management',
+        'auth' => 'Authentication and Access Control',
+        'idor' => 'Authorization / Access Control',
         'tls' => 'Transport Security',
+        'hsts' => 'Transport Security',
         'header' => 'Security Header Misconfiguration',
+        'mime' => 'Security Header Misconfiguration',
+        'csp' => 'Security Header Misconfiguration',
+        'clickjacking' => 'UI Redress / Clickjacking',
         'port' => 'Network Exposure / Attack Surface',
         'file' => 'Sensitive Data Exposure',
+        'path' => 'File System Exposure / Input Validation',
         'secret' => 'Credential / Secret Exposure',
+        'ssrf' => 'Server-Side Request Handling',
+        'xxe' => 'Parser / Input Validation',
+        'rce' => 'Code Execution',
         'content' => 'Content Integrity',
         default => 'Application Security',
     };
@@ -657,6 +690,41 @@ function impactBulletsFromType(string $type, string $severity): array
 {
     $critical = in_array(strtolower($severity), ['critical', 'high'], true);
     return match ($type) {
+        'ssrf' => [
+            'Attackers can force the server to make internal network requests that are not reachable externally.',
+            'Cloud metadata endpoints and internal administrative services may be exposed through server-side request pivoting.',
+            'Server-side request forgery can be chained with credential theft or internal service exploitation.',
+        ],
+        'xxe' => [
+            'External entity processing can expose local files, configuration secrets, or service credentials.',
+            'Attackers may trigger server-side requests via XML parsers, creating internal network exposure.',
+            'XML parser abuse can lead to denial-of-service through entity expansion or oversized payload attacks.',
+        ],
+        'rce' => [
+            'Successful exploitation can provide command execution on the underlying host with application privileges.',
+            'Remote code execution often leads to complete compromise of data confidentiality, integrity, and availability.',
+            'Compromised hosts can be used for persistence, lateral movement, or malware deployment.',
+        ],
+        'path' => [
+            'Attackers may access files outside intended directories, including configuration and credential material.',
+            'Directory traversal and file inclusion issues can reveal source code that accelerates further attacks.',
+            'Sensitive local files can expose secrets that enable privilege escalation across environments.',
+        ],
+        'idor' => [
+            'Unauthorized users may access or modify records belonging to other users or tenants.',
+            'Broken object-level authorization can expose personal data and confidential business records.',
+            'Integrity of account data and transaction history may be compromised without direct authentication bypass.',
+        ],
+        'auth' => [
+            'Weak authentication controls increase the likelihood of account takeover and unauthorized access.',
+            'Brute-force or credential-stuffing attacks may succeed against exposed login surfaces.',
+            'Compromised user accounts can be abused for fraud, data exfiltration, and further privilege abuse.',
+        ],
+        'token' => [
+            'Weak token validation can allow attackers to forge or replay authenticated sessions.',
+            'Improper token handling may expose user identity data or grant unauthorized API access.',
+            'Session integrity is undermined when token signatures, expiry, or audience checks are not strictly enforced.',
+        ],
         'sqli' => [
             'Attacker can read, modify, or delete all database records including user credentials.',
             $critical ? 'In some database configurations, SQL injection can lead to remote command execution on the server.' : 'Sensitive data such as passwords and emails can be extracted and sold or published.',
@@ -686,6 +754,26 @@ function impactBulletsFromType(string $type, string $severity): array
             'Missing security headers allow common browser-based attacks that could otherwise be blocked automatically.',
             'Injected scripts or malicious content may execute without any browser-level restriction.',
             'Clickjacking, MIME-type confusion, or information leakage may be possible depending on the missing header.',
+        ],
+        'hsts' => [
+            'Users may be downgraded to unencrypted transport on first visit, enabling interception attacks.',
+            'Session tokens and credentials can be exposed if browser traffic is forced over insecure channels.',
+            'Missing strict transport policy weakens defense against protocol downgrade and SSL stripping.',
+        ],
+        'mime' => [
+            'Browsers may interpret content types incorrectly, enabling script execution from non-script resources.',
+            'MIME sniffing can turn file upload or static content paths into script execution vectors.',
+            'Response handling ambiguity increases cross-site scripting and content confusion risk.',
+        ],
+        'csp' => [
+            'Lack of strong Content Security Policy allows injected scripts to execute with fewer browser restrictions.',
+            'Compromised third-party script sources can impact all users when policy boundaries are not enforced.',
+            'Browser-side exploit containment is significantly reduced without restrictive script and frame directives.',
+        ],
+        'clickjacking' => [
+            'Attackers can trick users into clicking hidden elements and triggering unintended actions.',
+            'Sensitive workflows such as profile updates or financial operations may be performed unknowingly.',
+            'UI redress attacks become easier when framing protections are absent or weak.',
         ],
         'port' => [
             $critical ? 'Direct unauthenticated access to the service may allow data theft or remote code execution.' : 'The exposed service is reachable from the internet and increases the attack surface.',
@@ -724,6 +812,48 @@ function recommendationsFromType(string $type, array $vuln): array
 {
     $remediationFromScanner = trim((string) ($vuln['remediation'] ?? ''));
     $base = match ($type) {
+        'ssrf' => [
+            'Restrict outbound server-side HTTP requests using an explicit destination allowlist and block private or link-local address ranges.',
+            'Normalize and validate all user-supplied URLs before request dispatch, and reject non-HTTP schemes.',
+            'Disable automatic redirects on server-side fetchers unless the redirect target is revalidated against policy.',
+            'Retest with internal IP and metadata endpoint payloads to confirm internal network pivoting is blocked.',
+        ],
+        'xxe' => [
+            'Disable Document Type Definition processing and external entity resolution in XML parsers used by the application.',
+            'Use parser configurations that enforce secure processing limits and reject recursive entity expansion patterns.',
+            'Apply strict schema validation and input size limits before XML parsing.',
+            'Retest with standard external entity payloads to verify file retrieval and parser abuse are blocked.',
+        ],
+        'rce' => [
+            'Remove direct shell or interpreter invocation paths that include user-influenced input.',
+            'Use strict allowlist validation for command arguments and avoid dynamic command composition.',
+            'Run application services with least privilege and isolate runtime environments to reduce blast radius.',
+            'Retest known command injection payload variants to confirm arbitrary command execution is prevented.',
+        ],
+        'path' => [
+            'Normalize and canonicalize file paths server-side, then enforce access within approved base directories only.',
+            'Reject traversal patterns and encoded path segments that attempt to escape intended file roots.',
+            'Disable dynamic file include behavior that accepts user-controlled path input directly.',
+            'Retest with traversal and file inclusion payloads to confirm out-of-scope file access is blocked.',
+        ],
+        'idor' => [
+            'Enforce object-level authorization checks on every read, update, and delete action for resource identifiers.',
+            'Use server-derived ownership context rather than trusting client-supplied object identifiers.',
+            'Add tenancy and ownership validation middleware for all sensitive endpoints.',
+            'Retest with cross-account identifiers to confirm unauthorized object access is denied.',
+        ],
+        'auth' => [
+            'Implement rate limiting, account lockout thresholds, and anomaly detection on authentication endpoints.',
+            'Enforce strong password policy and multi-factor authentication for privileged accounts.',
+            'Harden login flows against credential stuffing by adding IP and device-based risk controls.',
+            'Retest authentication and brute-force scenarios to confirm abuse resistance is effective.',
+        ],
+        'token' => [
+            'Enforce strict JSON Web Token (JWT) signature validation and reject weak or unsupported algorithms.',
+            'Validate token issuer, audience, expiry, and not-before claims on every authenticated request.',
+            'Rotate signing keys regularly and store them in a dedicated secrets management system.',
+            'Retest with forged, expired, and replayed tokens to confirm authentication bypass is prevented.',
+        ],
         'sqli' => [
             'Replace dynamic query string concatenation with parameterized queries or prepared statements throughout the codebase — not just in the affected endpoint.',
             'Apply allowlist-based input validation on the server side for all parameters that touch database queries.',
@@ -753,6 +883,30 @@ function recommendationsFromType(string $type, array $vuln): array
             'Verify the header is returned on all pages including authenticated routes, API endpoints, and error pages — not just the homepage.',
             'Use the recommended value documented by the OWASP Secure Headers Project for the specific header.',
             'Retest the full site with a header analysis tool after deployment to confirm the header is consistent across all paths.',
+        ],
+        'hsts' => [
+            'Enable the Strict-Transport-Security response header with an appropriate max-age and includeSubDomains where applicable.',
+            'Ensure all HTTP traffic is redirected to HTTPS before authentication or session establishment.',
+            'Validate that preload criteria are met before submitting domains that require browser preload protection.',
+            'Retest transport behavior from first-visit and downgrade scenarios to confirm HTTPS enforcement.',
+        ],
+        'mime' => [
+            'Set the X-Content-Type-Options header to nosniff across all application and static content responses.',
+            'Ensure uploaded or user-controlled files are served with strict, correct Content-Type values.',
+            'Separate executable and non-executable content delivery paths to reduce content interpretation risk.',
+            'Retest browser handling for mixed content types to confirm script execution from non-script resources is blocked.',
+        ],
+        'csp' => [
+            'Deploy a strict Content Security Policy that limits script-src, object-src, and frame-src to trusted origins only.',
+            'Use nonces or hashes for allowed inline scripts instead of permitting unsafe-inline globally.',
+            'Monitor policy violations using report endpoints and tune directives before enforcing at scale.',
+            'Retest injection payloads to confirm browser-side script execution is constrained by policy.',
+        ],
+        'clickjacking' => [
+            'Set X-Frame-Options to DENY or SAMEORIGIN for sensitive routes and legacy browser coverage.',
+            'Add frame-ancestors restrictions in Content Security Policy for modern browser enforcement.',
+            'Review user interaction workflows to require explicit confirmation for high-risk actions.',
+            'Retest framing attempts from external domains to confirm UI embedding is blocked.',
         ],
         'port' => [
             'Restrict external access to this port using firewall rules or network access control lists — allow access only from approved IP ranges or through a VPN.',
@@ -903,12 +1057,23 @@ function deriveExpectedBehavior(string $name, string $description): string
 {
     $type = classifyFinding($name, $description);
     return match ($type) {
+        'ssrf' => 'Server-side request functionality should only access explicitly approved destinations and must block internal network targets.',
+        'xxe' => 'XML processing should disable external entity resolution and reject untrusted document type declarations.',
+        'rce' => 'User-controlled input must never be passed into operating system command execution paths.',
+        'path' => 'File access must be constrained to approved directories after path normalization and canonical checks.',
+        'idor' => 'Every object access should be authorized against the current authenticated user or tenant context.',
+        'auth' => 'Authentication controls should resist brute-force abuse and require strong identity verification.',
+        'token' => 'Token-based authentication should enforce strict signature, issuer, audience, and expiry validation.',
         'sqli' => 'User-supplied input should be treated strictly as data and must not alter the structure or logic of the database query.',
         'xss' => 'All user-controlled content should be encoded before being rendered in the browser so no script executes.',
         'cors' => 'Cross-origin access should be permitted only to explicitly trusted, named origins — not wildcards or reflected values.',
         'csrf' => 'State-changing requests should require an unpredictable token that is verified server-side.',
         'tls' => 'Transport encryption should use a valid, trusted certificate and only modern protocol versions with strong cipher suites.',
+        'hsts' => 'Browsers should be instructed to use HTTPS exclusively to prevent protocol downgrade attacks.',
         'header' => 'The web server should return all required security headers with values that enforce the intended browser security policy.',
+        'mime' => 'Browsers should be prevented from MIME sniffing and must honor explicit server-declared content types.',
+        'csp' => 'Content Security Policy should restrict script execution and framing to approved sources only.',
+        'clickjacking' => 'Sensitive pages should not be frameable by untrusted origins.',
         'port' => 'Only services required for production should be reachable from untrusted external networks.',
         'file' => 'Sensitive files should never be served directly — they should be outside the web root or blocked by server configuration.',
         'secret' => 'Credentials and secrets should never appear in HTTP responses, source code, or client-accessible resources.',

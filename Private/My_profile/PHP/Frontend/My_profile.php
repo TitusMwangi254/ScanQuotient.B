@@ -131,10 +131,9 @@ try {
 
                 if ($newStatus === 'yes') {
                     $secret = generate2FASecret();
-                    $backupCodes = generateBackupCodes();
-                    $updateStmt = $pdo->prepare("UPDATE users SET two_factor_enabled = 'yes', two_factor_secret = ?, two_factor_backup_codes = ?, updated_at = NOW() WHERE user_id = ?");
-                    $updateStmt->execute([$secret, json_encode($backupCodes), $user['user_id']]);
-                    $successMessage = "Two-factor authentication enabled. Save these backup codes: " . implode(', ', $backupCodes);
+                    $updateStmt = $pdo->prepare("UPDATE users SET two_factor_enabled = 'yes', two_factor_secret = ?, two_factor_backup_codes = NULL, updated_at = NOW() WHERE user_id = ?");
+                    $updateStmt->execute([$secret, $user['user_id']]);
+                    $successMessage = "Two-factor authentication enabled successfully.";
                 } else {
                     $updateStmt = $pdo->prepare("UPDATE users SET two_factor_enabled = 'no', two_factor_secret = NULL, two_factor_backup_codes = NULL, updated_at = NOW() WHERE user_id = ?");
                     $updateStmt->execute([$user['user_id']]);
@@ -253,15 +252,6 @@ function generate2FASecret()
 {
     return bin2hex(random_bytes(16));
 }
-
-function generateBackupCodes()
-{
-    $codes = [];
-    for ($i = 0; $i < 5; $i++) {
-        $codes[] = substr(str_shuffle('ABCDEFGHJKLMNPQRSTUVWXYZ23456789'), 0, 8);
-    }
-    return $codes;
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -283,7 +273,7 @@ function generateBackupCodes()
                 <i class="fas fa-arrow-left"></i>
             </a>
             <div class="brand-wrapper">
-                <a href="#" class="sq-admin-brand" style="color:#6c63ff;">ScanQuotient</a>
+                <a href="#" class="sq-admin-brand">ScanQuotient</a>
                 <p class="sq-admin-tagline">Quantifying Risk. Strengthening Security.</p>
             </div>
         </div>
@@ -423,14 +413,26 @@ function generateBackupCodes()
                     <form method="POST">
                         <input type="hidden" name="action" value="update_email">
 
-                        <div class="sq-profile-form-group">
-                            <label class="sq-profile-label">Primary Email</label>
-                            <div class="sq-profile-input-wrapper">
-                                <i class="fas fa-envelope sq-profile-input-icon"></i>
-                                <input type="email" name="email" class="sq-profile-input"
-                                    value="<?php echo htmlspecialchars($user['email'] ?? ''); ?>"
-                                    placeholder="your@email.com" readonly>
+                        <div class="sq-profile-form-group sq-profile-primary-email-field" id="sqPrimaryEmailGroup">
+                            <label class="sq-profile-label" for="sqPrimaryEmailInput">Primary Email</label>
+                            <input type="hidden" name="email"
+                                value="<?php echo htmlspecialchars($user['email'] ?? '', ENT_QUOTES, 'UTF-8'); ?>">
+                            <div class="sq-profile-input-wrapper sq-profile-input-wrapper--locked">
+                                <span class="sq-profile-input-affix sq-profile-input-affix--leading" aria-hidden="true">
+                                    <i class="fas fa-envelope"></i>
+                                </span>
+                                <input type="email" id="sqPrimaryEmailInput"
+                                    class="sq-profile-input sq-profile-input--locked-infix"
+                                    value="<?php echo htmlspecialchars($user['email'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                    placeholder="your@email.com" readonly autocomplete="email"
+                                    inputmode="email"
+                                    aria-label="Primary email (read-only). Click for how to request a change.">
+                                <span class="sq-profile-input-affix sq-profile-input-affix--trailing"
+                                    title="Cannot be changed here" aria-hidden="true">
+                                    <i class="fas fa-lock"></i>
+                                </span>
                             </div>
+                            <p class="sq-profile-primary-email-hint">Tap to learn why this address is locked</p>
                         </div>
 
                         <div class="sq-profile-form-group">
@@ -550,9 +552,34 @@ function generateBackupCodes()
         </div>
 
         <footer class="sq-profile-footer">
-            <p>ScanQuotient Security Platform • Quantifying Risk. Strengthening Security.</p>
+            <p><span class="sq-profile-footer-brand">ScanQuotient</span> Security Platform • Quantifying Risk.
+                Strengthening Security.</p>
         </footer>
     </main>
+
+    <?php
+    $helpCenterProfileUrl = BASE_URL . '/Public/Help_center/PHP/Frontend/Help_center.php';
+    ?>
+    <div id="sqPrimaryEmailToast" class="sq-primary-email-toast" role="status" aria-live="polite" aria-atomic="true"
+        hidden>
+        <div class="sq-primary-email-toast__panel">
+            <button type="button" class="sq-primary-email-toast__close" aria-label="Dismiss message">
+                <i class="fas fa-times" aria-hidden="true"></i>
+            </button>
+            <div class="sq-primary-email-toast__icon" aria-hidden="true">
+                <i class="fas fa-envelope-open-text"></i>
+            </div>
+            <div class="sq-primary-email-toast__content">
+                <p class="sq-primary-email-toast__title">Protected email</p>
+                <p class="sq-primary-email-toast__text">We use this address for identification, communications about
+                    your account, signing in, verification, authorizing sensitive actions, and payments and billing.
+                    Because it’s central to your security, it can’t be edited here.</p>
+                <p class="sq-primary-email-toast__text">To change it, contact us through the <a
+                        href="<?php echo htmlspecialchars($helpCenterProfileUrl, ENT_QUOTES, 'UTF-8'); ?>"
+                        class="sq-primary-email-toast__link">Help Center</a> so we can help you securely.</p>
+            </div>
+        </div>
+    </div>
 
     <script src="../../Javascript/my_profile.js" defer></script>
 </body>

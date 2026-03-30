@@ -1,6 +1,7 @@
 <?php
 // registration_completion_site.php - ScanQuotient Account Completion
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 
 // Check if user is in account completion flow
 if (!isset($_SESSION['user_id']) || !isset($_SESSION['auth_mode']) || $_SESSION['auth_mode'] !== 'account_completion') {
@@ -19,6 +20,15 @@ $pendingUserId = $_SESSION['user_id'];
 $pendingEmail = $_SESSION['user_email'] ?? '';
 $firstName = $_SESSION['first_name'] ?? '';
 $surname = $_SESSION['surname'] ?? '';
+$authStage = $_SESSION['auth_stage'] ?? 'pending_completion';
+$isAgreementsOnly = ($authStage === 'agreements_only');
+$pendingAgreements = is_array($_SESSION['pending_agreements'] ?? null) ? $_SESSION['pending_agreements'] : [];
+
+$showPrivacyStep = !$isAgreementsOnly || !empty($pendingAgreements['privacy']);
+$showTermsStep = !$isAgreementsOnly || !empty($pendingAgreements['terms']);
+$showSecurityStep = !$isAgreementsOnly || !empty($pendingAgreements['security']);
+$showUsernameStep = !$isAgreementsOnly;
+$showPasswordStep = !$isAgreementsOnly;
 ?>
 
 <!DOCTYPE html>
@@ -66,8 +76,12 @@ $surname = $_SESSION['surname'] ?? '';
         <div class="container">
             <div class="completion-card">
                 <div class="page-header">
-                    <h2>Complete Your Account Setup</h2>
-                    <p>Welcome to ScanQuotient! Finish setting up your account to access your security dashboard.</p>
+                    <h2><?php echo $isAgreementsOnly ? 'Policy Update Required' : 'Complete Your Account Setup'; ?></h2>
+                    <p>
+                        <?php echo $isAgreementsOnly
+                            ? 'Before you continue, please review and accept the required policies.'
+                            : 'Welcome to ScanQuotient! Finish setting up your account to access your security dashboard.'; ?>
+                    </p>
                 </div>
 
                 <div class="user-info-banner">
@@ -84,40 +98,62 @@ $surname = $_SESSION['surname'] ?? '';
 
                 <div class="security-tips">
                     <i class="fas fa-shield-alt"></i>
-                    <p><strong>Security tip:</strong> Choose a strong, unique password. Never reuse passwords from other
-                        sites. Enable two-factor authentication when available.</p>
+                    <p>
+                        <?php if ($isAgreementsOnly): ?>
+                            <strong>Notice:</strong> Your account access is temporarily paused until required policy acknowledgments are completed.
+                        <?php else: ?>
+                            <strong>Security tip:</strong> Choose a strong, unique password. Never reuse passwords from other
+                            sites. Enable two-factor authentication when available.
+                        <?php endif; ?>
+                    </p>
                 </div>
 
                 <div class="progress-indicator">
-                    <div class="progress-step active" data-step="1">
-                        <div class="progress-step-circle">1</div>
-                        <div class="progress-step-label">Privacy</div>
-                    </div>
-                    <div class="progress-step" data-step="2">
-                        <div class="progress-step-circle">2</div>
-                        <div class="progress-step-label">Terms</div>
-                    </div>
-                    <div class="progress-step" data-step="3">
-                        <div class="progress-step-circle">3</div>
-                        <div class="progress-step-label">Agreement</div>
-                    </div>
-                    <div class="progress-step" data-step="4">
-                        <div class="progress-step-circle">4</div>
-                        <div class="progress-step-label">Username</div>
-                    </div>
-                    <div class="progress-step" data-step="5">
-                        <div class="progress-step-circle">5</div>
-                        <div class="progress-step-label">Password</div>
-                    </div>
+                    <?php $stepNum = 1; ?>
+                    <?php if ($showPrivacyStep): ?>
+                        <div class="progress-step" data-step="<?php echo $stepNum; ?>">
+                            <div class="progress-step-circle"><?php echo $stepNum; ?></div>
+                            <div class="progress-step-label">Privacy</div>
+                        </div>
+                        <?php $stepNum++; ?>
+                    <?php endif; ?>
+                    <?php if ($showTermsStep): ?>
+                        <div class="progress-step" data-step="<?php echo $stepNum; ?>">
+                            <div class="progress-step-circle"><?php echo $stepNum; ?></div>
+                            <div class="progress-step-label">Terms</div>
+                        </div>
+                        <?php $stepNum++; ?>
+                    <?php endif; ?>
+                    <?php if ($showSecurityStep): ?>
+                        <div class="progress-step" data-step="<?php echo $stepNum; ?>">
+                            <div class="progress-step-circle"><?php echo $stepNum; ?></div>
+                            <div class="progress-step-label">Agreement</div>
+                        </div>
+                        <?php $stepNum++; ?>
+                    <?php endif; ?>
+                    <?php if ($showUsernameStep): ?>
+                        <div class="progress-step" data-step="<?php echo $stepNum; ?>">
+                            <div class="progress-step-circle"><?php echo $stepNum; ?></div>
+                            <div class="progress-step-label">Username</div>
+                        </div>
+                        <?php $stepNum++; ?>
+                    <?php endif; ?>
+                    <?php if ($showPasswordStep): ?>
+                        <div class="progress-step" data-step="<?php echo $stepNum; ?>">
+                            <div class="progress-step-circle"><?php echo $stepNum; ?></div>
+                            <div class="progress-step-label">Password</div>
+                        </div>
+                    <?php endif; ?>
                 </div>
 
                 <form id="completionForm"
                     action="/ScanQuotient.v2/ScanQuotient.B/Public/Registration_completion_page/PHP/Backend/complete_registration.php"
                     method="POST">
                     <input type="hidden" name="user_id" value="<?php echo htmlspecialchars($pendingUserId); ?>">
+                    <input type="hidden" name="completion_mode" value="<?php echo $isAgreementsOnly ? 'agreements_only' : 'pending_completion'; ?>">
 
                     <!-- Step 1: Privacy Policy -->
-                    <div class="step-content active" data-step="1">
+                    <div class="step-content" data-step="1" data-kind="privacy" <?php echo $showPrivacyStep ? '' : 'hidden'; ?>>
                         <h3><i class="fas fa-lock"></i> Privacy Policy</h3>
                         <div class="policy-box">
                             <h4>1. Information We Collect</h4>
@@ -149,14 +185,14 @@ $surname = $_SESSION['surname'] ?? '';
                         </div>
 
                         <div class="checkbox-group">
-                            <input type="checkbox" id="agreePrivacy" name="agree_privacy" required>
+                            <input type="checkbox" id="agreePrivacy" name="agree_privacy" <?php echo $showPrivacyStep ? 'required' : ''; ?>>
                             <label for="agreePrivacy">I have read and agree to the <a href="#"
                                     onclick="return false;">Privacy Policy</a></label>
                         </div>
                     </div>
 
                     <!-- Step 2: Terms of Service -->
-                    <div class="step-content" data-step="2">
+                    <div class="step-content" data-step="2" data-kind="terms" <?php echo $showTermsStep ? '' : 'hidden'; ?>>
                         <h3><i class="fas fa-file-contract"></i> Terms of Service</h3>
                         <div class="policy-box">
                             <h4>1. Service Description</h4>
@@ -182,14 +218,14 @@ $surname = $_SESSION['surname'] ?? '';
                         </div>
 
                         <div class="checkbox-group">
-                            <input type="checkbox" id="agreeTerms" name="agree_terms" required>
+                            <input type="checkbox" id="agreeTerms" name="agree_terms" <?php echo $showTermsStep ? 'required' : ''; ?>>
                             <label for="agreeTerms">I have read and agree to the <a href="#"
                                     onclick="return false;">Terms of Service</a></label>
                         </div>
                     </div>
 
                     <!-- Step 3: User Agreement -->
-                    <div class="step-content" data-step="3">
+                    <div class="step-content" data-step="3" data-kind="security" <?php echo $showSecurityStep ? '' : 'hidden'; ?>>
                         <h3><i class="fas fa-handshake"></i> Security Agreement</h3>
                         <div class="policy-box">
                             <h4>Responsible Disclosure Commitment</h4>
@@ -215,13 +251,13 @@ $surname = $_SESSION['surname'] ?? '';
                         </div>
 
                         <div class="checkbox-group">
-                            <input type="checkbox" id="agreeSecurity" name="agree_security" required>
+                            <input type="checkbox" id="agreeSecurity" name="agree_security" <?php echo $showSecurityStep ? 'required' : ''; ?>>
                             <label for="agreeSecurity">I agree to abide by the security and ethical use policies</label>
                         </div>
                     </div>
 
                     <!-- Step 4: Username -->
-                    <div class="step-content" data-step="4">
+                    <div class="step-content" data-step="4" data-kind="username" <?php echo $showUsernameStep ? '' : 'hidden'; ?>>
                         <h3><i class="fas fa-user"></i> Create Username</h3>
                         <p>Choose a unique username for your ScanQuotient account. This will be your login identifier.
                         </p>
@@ -230,7 +266,7 @@ $surname = $_SESSION['surname'] ?? '';
                             <label for="newUsername">Username</label>
                             <div class="input-wrapper">
                                 <input type="text" id="newUsername" name="username" class="form-control"
-                                    placeholder="Enter username (e.g., johndoe2024)" autocomplete="off" required
+                                    placeholder="Enter username (e.g., johndoe2024)" autocomplete="off" <?php echo $showUsernameStep ? 'required' : ''; ?>
                                     minlength="4" maxlength="20" pattern="[a-zA-Z0-9_]+">
                                 <i class="fas fa-check-circle validation-icon valid"></i>
                                 <i class="fas fa-times-circle validation-icon invalid"></i>
@@ -244,7 +280,7 @@ $surname = $_SESSION['surname'] ?? '';
                             <label for="confirmUsername">Confirm Username</label>
                             <div class="input-wrapper">
                                 <input type="text" id="confirmUsername" class="form-control"
-                                    placeholder="Re-enter username" autocomplete="off" required>
+                                    placeholder="Re-enter username" autocomplete="off" <?php echo $showUsernameStep ? 'required' : ''; ?>>
                                 <i class="fas fa-check-circle validation-icon valid"></i>
                                 <i class="fas fa-times-circle validation-icon invalid"></i>
                             </div>
@@ -253,7 +289,7 @@ $surname = $_SESSION['surname'] ?? '';
                     </div>
 
                     <!-- Step 5: Password -->
-                    <div class="step-content" data-step="5">
+                    <div class="step-content" data-step="5" data-kind="password" <?php echo $showPasswordStep ? '' : 'hidden'; ?>>
                         <h3><i class="fas fa-key"></i> Set Secure Password</h3>
                         <p>Create a strong password to protect your security dashboard.</p>
 
@@ -275,7 +311,7 @@ $surname = $_SESSION['surname'] ?? '';
                             <label for="newPassword">Password</label>
                             <div class="input-wrapper">
                                 <input type="password" id="newPassword" name="password" class="form-control"
-                                    placeholder="Enter strong password" autocomplete="new-password" required>
+                                    placeholder="Enter strong password" autocomplete="new-password" <?php echo $showPasswordStep ? 'required' : ''; ?>>
                                 <i class="fas fa-eye-slash toggle-visibility" data-target="newPassword"></i>
                                 <i class="fas fa-check-circle validation-icon valid"></i>
                                 <i class="fas fa-times-circle validation-icon invalid"></i>
@@ -286,7 +322,7 @@ $surname = $_SESSION['surname'] ?? '';
                             <label for="confirmPassword">Confirm Password</label>
                             <div class="input-wrapper">
                                 <input type="password" id="confirmPassword" name="confirm_password" class="form-control"
-                                    placeholder="Confirm password" autocomplete="new-password" required>
+                                    placeholder="Confirm password" autocomplete="new-password" <?php echo $showPasswordStep ? 'required' : ''; ?>>
                                 <i class="fas fa-eye-slash toggle-visibility" data-target="confirmPassword"></i>
                                 <i class="fas fa-check-circle validation-icon valid"></i>
                                 <i class="fas fa-times-circle validation-icon invalid"></i>
@@ -303,7 +339,7 @@ $surname = $_SESSION['surname'] ?? '';
                             Next <i class="fas fa-arrow-right"></i>
                         </button>
                         <button type="submit" class="btn btn-success" id="submitBtn" style="display: none;">
-                            <i class="fas fa-check"></i> Complete Setup
+                            <i class="fas fa-check"></i> <?php echo $isAgreementsOnly ? 'Save Agreements' : 'Complete Setup'; ?>
                         </button>
                     </div>
                 </form>

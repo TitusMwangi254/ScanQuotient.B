@@ -1,5 +1,6 @@
 <?php
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 $toast_message = $_SESSION['toast_message'] ?? ''; // Renamed for clarity
 unset($_SESSION['toast_message']);
 

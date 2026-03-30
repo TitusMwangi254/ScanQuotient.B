@@ -1,6 +1,7 @@
 <?php
 // password_reset_page4.php - ScanQuotient Password Reset
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 
 // Verify user is in password reset flow
 if (!isset($_SESSION['auth_mode']) || $_SESSION['auth_mode'] !== 'password_reset') {

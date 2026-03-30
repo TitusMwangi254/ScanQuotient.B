@@ -75,3 +75,67 @@ document.querySelectorAll(".sq-profile-alert").forEach((alert) => {
     setTimeout(() => alert.remove(), 300);
   }, 5000);
 });
+
+// Primary email: slide-in toast (locked field)
+(function initPrimaryEmailToast() {
+  const group = document.getElementById("sqPrimaryEmailGroup");
+  const primaryInput = document.getElementById("sqPrimaryEmailInput");
+  const toast = document.getElementById("sqPrimaryEmailToast");
+  const closeBtn = toast && toast.querySelector(".sq-primary-email-toast__close");
+  if (!group || !toast) return;
+
+  let hideTimer = null;
+
+  function hidePrimaryEmailToast() {
+    toast.classList.remove("sq-primary-email-toast--visible");
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    setTimeout(() => {
+      if (!toast.classList.contains("sq-primary-email-toast--visible")) {
+        toast.hidden = true;
+      }
+    }, 400);
+  }
+
+  function showPrimaryEmailToast() {
+    toast.hidden = false;
+    requestAnimationFrame(() => {
+      toast.classList.add("sq-primary-email-toast--visible");
+    });
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(hidePrimaryEmailToast, 12000);
+  }
+
+  group.addEventListener("click", (e) => {
+    if (e.target.closest(".sq-primary-email-toast")) return;
+    showPrimaryEmailToast();
+  });
+
+  if (primaryInput) {
+    primaryInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        showPrimaryEmailToast();
+      }
+    });
+  }
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hidePrimaryEmailToast();
+    });
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (
+      e.key === "Escape" &&
+      !toast.hidden &&
+      toast.classList.contains("sq-primary-email-toast--visible")
+    ) {
+      hidePrimaryEmailToast();
+    }
+  });
+})();

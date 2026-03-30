@@ -128,7 +128,7 @@ body.sq-dark .sq-admin-back-btn {
 }
 
 .sq-admin-brand {
-    color: #4f20bb;
+    color: #6c63ff;
     font-weight: 700;
     text-decoration: none;
     font-size: 18px;
@@ -505,6 +505,236 @@ body.sq-dark .sq-profile-section-icon {
     position: relative;
 }
 
+.sq-profile-primary-email-field {
+    cursor: pointer;
+    border-radius: 12px;
+    padding: 4px;
+    margin: -4px -4px 16px;
+    transition: background 0.2s ease;
+}
+
+.sq-profile-primary-email-field:hover {
+    background: rgba(59, 130, 246, 0.06);
+}
+
+body.sq-dark .sq-profile-primary-email-field:hover {
+    background: rgba(139, 92, 246, 0.12);
+}
+
+.sq-profile-primary-email-field:focus-visible {
+    outline: 2px solid var(--sq-brand);
+    outline-offset: 4px;
+}
+
+.sq-profile-input-wrapper--locked {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    cursor: pointer;
+    border: 2px dashed var(--sq-border);
+    border-radius: 12px;
+    background: var(--sq-bg-main);
+    overflow: hidden;
+    min-height: 48px;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.sq-profile-primary-email-field:focus-within .sq-profile-input-wrapper--locked {
+    border-color: var(--sq-brand);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+body.sq-dark .sq-profile-primary-email-field:focus-within .sq-profile-input-wrapper--locked {
+    box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.2);
+}
+
+.sq-profile-input-affix {
+    flex: 0 0 44px;
+    width: 44px;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--sq-text-light);
+    font-size: 16px;
+    line-height: 1;
+}
+
+.sq-profile-input-affix i {
+    display: block;
+    line-height: 1;
+}
+
+.sq-profile-input-affix--leading {
+    border-right: 1px solid var(--sq-border);
+}
+
+.sq-profile-input-affix--trailing {
+    border-left: 1px solid var(--sq-border);
+}
+
+.sq-profile-input--locked-infix {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+    margin: 0;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 12px 10px !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    opacity: 0.92;
+    cursor: pointer;
+}
+
+.sq-profile-input--locked-infix:focus {
+    outline: none;
+}
+
+.sq-profile-input--locked-infix::placeholder {
+    color: var(--sq-text-light);
+}
+
+.sq-profile-primary-email-hint {
+    font-size: 12px;
+    color: var(--sq-text-light);
+    margin-top: 8px;
+    margin-bottom: 0;
+}
+
+/* Slide-in toast: primary email */
+.sq-primary-email-toast {
+    position: fixed;
+    bottom: max(24px, env(safe-area-inset-bottom, 0px));
+    right: max(24px, env(safe-area-inset-right, 0px));
+    z-index: 10000;
+    max-width: min(400px, calc(100vw - 32px));
+    pointer-events: none;
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.35s ease;
+    transform: translateX(calc(100% + 32px));
+    opacity: 0;
+}
+
+@media (max-width: 520px) {
+    .sq-primary-email-toast {
+        left: 16px;
+        right: 16px;
+        max-width: none;
+        transform: translateY(calc(100% + 24px));
+    }
+}
+
+.sq-primary-email-toast:not([hidden]) {
+    pointer-events: auto;
+}
+
+.sq-primary-email-toast--visible {
+    opacity: 1;
+}
+
+@media (min-width: 521px) {
+    .sq-primary-email-toast--visible {
+        transform: translateX(0);
+    }
+}
+
+@media (max-width: 520px) {
+    .sq-primary-email-toast--visible {
+        transform: translateY(0);
+    }
+}
+
+.sq-primary-email-toast__panel {
+    position: relative;
+    display: flex;
+    gap: 14px;
+    padding: 18px 40px 18px 18px;
+    background: var(--sq-bg-card);
+    color: var(--sq-text-main);
+    border-radius: 14px;
+    border: 1px solid var(--sq-border);
+    box-shadow: var(--sq-shadow-lg);
+    border-left: 4px solid var(--sq-accent);
+}
+
+.sq-primary-email-toast__close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--sq-text-light);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, color 0.2s;
+}
+
+.sq-primary-email-toast__close:hover {
+    background: var(--sq-bg-main);
+    color: var(--sq-text-main);
+}
+
+.sq-primary-email-toast__icon {
+    flex-shrink: 0;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(59, 130, 246, 0.12));
+    color: var(--sq-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.15rem;
+}
+
+body.sq-dark .sq-primary-email-toast__icon {
+    background: linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(59, 130, 246, 0.15));
+}
+
+.sq-primary-email-toast__title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--sq-text-main);
+    margin: 0 0 8px;
+    line-height: 1.35;
+}
+
+.sq-primary-email-toast__text {
+    font-size: 13px;
+    color: var(--sq-text-light);
+    line-height: 1.55;
+    margin: 0 0 10px;
+}
+
+.sq-primary-email-toast__text:last-child {
+    margin-bottom: 0;
+}
+
+.sq-primary-email-toast__link {
+    color: var(--sq-brand);
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s, color 0.2s;
+}
+
+.sq-primary-email-toast__link:hover {
+    border-bottom-color: var(--sq-brand);
+}
+
+body.sq-dark .sq-primary-email-toast__link {
+    color: var(--sq-brand-light);
+}
+
+body.sq-dark .sq-primary-email-toast__link:hover {
+    border-bottom-color: var(--sq-brand-light);
+}
+
 .sq-profile-input-icon {
     position: absolute;
     left: 14px;
@@ -816,6 +1046,15 @@ input:checked+.sq-profile-toggle-slider:before {
     color: var(--sq-text-light);
     font-size: 13px;
     border-top: 1px solid var(--sq-border);
+}
+
+.sq-profile-footer-brand {
+    color: #6c63ff;
+    font-weight: 700;
+}
+
+body.sq-dark .sq-profile-footer-brand {
+    color: #D6BCFA;
 }
 
 /* Debug Info */

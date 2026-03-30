@@ -1,5 +1,6 @@
 <?php
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 ?>
 <!DOCTYPE html>
 <html lang="en" data-theme="light">

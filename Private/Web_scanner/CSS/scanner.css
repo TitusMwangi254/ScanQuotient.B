@@ -1312,6 +1312,7 @@
        cursor: pointer;
        background: rgba(255, 255, 255, 0.5);
        border-bottom: 1px solid var(--border-color);
+       gap: 10px;
    }
 
    body.dark .vuln-header {
@@ -1322,6 +1323,14 @@
        display: flex;
        align-items: center;
        gap: 12px;
+       flex: 1 1 auto;
+       min-width: 0;
+   }
+
+   .vuln-title-wrap {
+       flex: 1 1 auto;
+       min-width: 0;
+       overflow: hidden;
    }
 
    .vuln-icon {
@@ -1362,6 +1371,39 @@
    .vuln-title {
        font-weight: 600;
        color: var(--text-main);
+       display: block;
+       white-space: nowrap !important;
+       overflow: hidden;
+       text-overflow: ellipsis;
+       max-width: 280px;
+       word-break: normal !important;
+       overflow-wrap: normal !important;
+   }
+
+   .vuln-actions {
+       display: flex;
+       align-items: center;
+       gap: 8px;
+       flex: 0 0 auto;
+       margin-left: 12px;
+       flex-wrap: nowrap;
+       white-space: nowrap;
+   }
+
+   .vuln-actions .vuln-severity {
+       max-width: 86px;
+       white-space: nowrap;
+       overflow: hidden;
+       text-overflow: ellipsis;
+       padding: 6px 10px;
+   }
+
+   .vuln-actions .view-finding-btn,
+   .vuln-actions .regen-finding-btn {
+       flex-shrink: 0;
+       white-space: nowrap;
+       min-width: 116px;
+       justify-content: center;
    }
 
    .vuln-severity {
@@ -2107,6 +2149,7 @@
        border: 1px solid var(--border-color);
        border-radius: 12px;
        box-shadow: var(--shadow-lg);
+       width: 360px;
        max-width: 360px;
        animation: shareToastIn 0.3s ease;
    }
@@ -2132,8 +2175,23 @@
    .share-toast-icon.error { background: rgba(239, 68, 68, 0.15); color: var(--danger-color); }
    .share-toast-icon.warning { background: rgba(245, 158, 11, 0.16); color: var(--warning-color); }
    .share-toast-icon.info { background: rgba(59, 130, 246, 0.15); color: var(--info-color); }
-   .share-toast-content h4 { margin: 0 0 4px 0; font-size: 14px; font-weight: 600; }
-   .share-toast-content p { margin: 0; font-size: 13px; color: var(--text-light); }
+   .share-toast-content { min-width: 0; }
+   .share-toast-content h4 {
+       margin: 0 0 4px 0;
+       font-size: 14px;
+       font-weight: 600;
+       white-space: nowrap;
+       overflow: hidden;
+       text-overflow: ellipsis;
+   }
+   .share-toast-content p {
+       margin: 0;
+       font-size: 13px;
+       color: var(--text-light);
+       white-space: nowrap;
+       overflow: hidden;
+       text-overflow: ellipsis;
+   }
 
    .scan-run-timeline-viewall {
        margin-top: 10px;

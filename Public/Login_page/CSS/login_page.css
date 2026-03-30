@@ -128,6 +128,23 @@ body {
     box-shadow: 0 6px 8px rgba(0, 0, 0, 0.3);
 }
 
+.sign-in-btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.sign-in-btn:disabled:hover {
+    background-color: rgb(69, 42, 108);
+    transform: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+body.light-mode .sign-in-btn:disabled:hover {
+    background-color: #9B5AE2;
+}
+
 /* --- Links Section Styles (Forgot Password / Don't have an account) --- */
 .links {
     margin-top: 12px;

@@ -1,6 +1,7 @@
 <?php
 // login_page.php
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 
 // Capture any login error BEFORE clearing the session
 $loginError = $_SESSION['loginError'] ?? false;

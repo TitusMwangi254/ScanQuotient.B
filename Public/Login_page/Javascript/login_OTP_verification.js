@@ -112,19 +112,44 @@ function startTimer() {
 
 startTimer();
 
-// Resend Button
+// Resend Button — visible countdown on load and after each resend
 const resendBtn = document.getElementById("resendBtn");
-let resendCooldown = 30;
+const RESEND_COOLDOWN_SEC = 30;
+let resendCooldownTimer = null;
 
-// Enable resend after initial cooldown
-setTimeout(() => {
-  resendBtn.disabled = false;
-  resendBtn.innerHTML = '<i class="fas fa-redo"></i> Resend Code';
-}, 30000);
+function clearResendCooldown() {
+  if (resendCooldownTimer) {
+    clearInterval(resendCooldownTimer);
+    resendCooldownTimer = null;
+  }
+}
+
+function startResendCooldown(seconds) {
+  clearResendCooldown();
+  resendBtn.disabled = true;
+  let remaining = seconds;
+
+  const tick = () => {
+    if (remaining <= 0) {
+      clearResendCooldown();
+      resendBtn.disabled = false;
+      resendBtn.innerHTML = '<i class="fas fa-redo"></i> Resend Code';
+      return;
+    }
+    resendBtn.innerHTML = `<i class="fas fa-clock"></i> Resend in ${remaining}s`;
+    remaining--;
+  };
+
+  tick();
+  resendCooldownTimer = setInterval(tick, 1000);
+}
+
+startResendCooldown(RESEND_COOLDOWN_SEC);
 
 resendBtn.addEventListener("click", function () {
   if (resendBtn.disabled) return;
 
+  clearResendCooldown();
   resendBtn.disabled = true;
   resendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
 
@@ -168,22 +193,42 @@ resendBtn.addEventListener("click", function () {
       });
     })
     .finally(() => {
-      // Cooldown before next resend
-      let cooldown = 30;
-      resendBtn.innerHTML = `<i class="fas fa-clock"></i> Resend in ${cooldown}s`;
-
-      const cooldownInterval = setInterval(() => {
-        cooldown--;
-        if (cooldown > 0) {
-          resendBtn.innerHTML = `<i class="fas fa-clock"></i> Resend in ${cooldown}s`;
-        } else {
-          clearInterval(cooldownInterval);
-          resendBtn.disabled = false;
-          resendBtn.innerHTML = '<i class="fas fa-redo"></i> Resend Code';
-        }
-      }, 1000);
+      startResendCooldown(RESEND_COOLDOWN_SEC);
     });
 });
+
+// Verification full-screen overlay
+const verifyOverlay = document.getElementById("verifyOverlay");
+const verifyOverlayText = document.getElementById("verifyOverlayText");
+/** Minimum time to show the spinner so fast responses still feel visible (ms). */
+const VERIFY_SPINNER_MIN_MS = 2200;
+let verifyOverlayOpenedAt = 0;
+
+function showVerifyOverlay(message, options = {}) {
+  if (!verifyOverlay) return;
+  const success = options.success === true;
+  if (success) {
+    verifyOverlay.classList.add("is-success");
+    verifyOverlay.setAttribute("aria-busy", "false");
+  } else {
+    verifyOverlay.classList.remove("is-success");
+    verifyOverlay.setAttribute("aria-busy", "true");
+    verifyOverlayOpenedAt = Date.now();
+  }
+  if (verifyOverlayText) verifyOverlayText.textContent = message;
+  verifyOverlay.hidden = false;
+  verifyOverlay.setAttribute("aria-hidden", "false");
+  document.body.style.overflow = "hidden";
+}
+
+function hideVerifyOverlay() {
+  if (!verifyOverlay) return;
+  verifyOverlay.classList.remove("is-success");
+  verifyOverlay.hidden = true;
+  verifyOverlay.setAttribute("aria-hidden", "true");
+  verifyOverlay.setAttribute("aria-busy", "false");
+  document.body.style.overflow = "";
+}
 
 // Form Submission
 form.addEventListener("submit", function (e) {
@@ -203,7 +248,11 @@ form.addEventListener("submit", function (e) {
   }
 
   verifyBtn.disabled = true;
-  verifyBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
+  inputs.forEach((i) => (i.disabled = true));
+  clearResendCooldown();
+  resendBtn.disabled = true;
+  resendBtn.innerHTML = '<i class="fas fa-redo"></i> Resend Code';
+  showVerifyOverlay("Verifying your code…");
 
   fetch("../../PHP/Backend/verify_2fa.php", {
     method: "POST",
@@ -215,16 +264,27 @@ form.addEventListener("submit", function (e) {
     .then((response) => response.json())
     .then((data) => {
       if (data.status === "success") {
-        Swal.fire({
-          icon: "success",
-          title: "Authentication Successful!",
-          text: "Redirecting to your dashboard...",
-          showConfirmButton: false,
-          timer: 1500,
-        }).then(() => {
-          window.location.href = data.redirect;
-        });
+        const redirectUrl = data.redirect;
+        const elapsed = Date.now() - verifyOverlayOpenedAt;
+        const waitForSpinner = Math.max(0, VERIFY_SPINNER_MIN_MS - elapsed);
+        setTimeout(() => {
+          showVerifyOverlay(
+            "Code verified successfully. Redirecting to your account…",
+            {
+              success: true,
+            }
+          );
+          setTimeout(() => {
+            window.location.href = redirectUrl;
+          }, 1000);
+        }, waitForSpinner);
       } else {
+        hideVerifyOverlay();
+        inputs.forEach((i) => (i.disabled = false));
+        clearResendCooldown();
+        resendBtn.disabled = false;
+        resendBtn.innerHTML = '<i class="fas fa-redo"></i> Resend Code';
+
         Swal.fire({
           icon: "error",
           title: "Invalid Code",
@@ -244,6 +304,12 @@ form.addEventListener("submit", function (e) {
     })
     .catch((error) => {
       console.error("Error:", error);
+      hideVerifyOverlay();
+      inputs.forEach((i) => (i.disabled = false));
+      clearResendCooldown();
+      resendBtn.disabled = false;
+      resendBtn.innerHTML = '<i class="fas fa-redo"></i> Resend Code';
+
       Swal.fire({
         icon: "error",
         title: "Server Error",

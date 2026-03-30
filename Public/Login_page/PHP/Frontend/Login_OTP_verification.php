@@ -1,6 +1,7 @@
 <?php
 // two_factor_verification.php - ScanQuotient 2FA Verification
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 
 // Verify 2FA flow
 if (!isset($_SESSION['auth_mode']) || $_SESSION['auth_mode'] !== '2fa_verification') {
@@ -139,6 +140,18 @@ function maskEmail($email)
             <p>&copy; 2026 ScanQuotient. All rights reserved. | Securing your digital assets.</p>
         </div>
     </footer>
+
+    <div id="verifyOverlay" class="verify-overlay" hidden aria-hidden="true" role="alertdialog" aria-busy="true" aria-labelledby="verifyOverlayText">
+        <div class="verify-overlay__backdrop"></div>
+        <div class="verify-overlay__panel">
+            <div class="verify-overlay__icon-wrap" aria-hidden="true">
+                <div class="verify-overlay__spinner"></div>
+                <span class="verify-overlay__tick"><i class="fas fa-check" aria-hidden="true"></i></span>
+            </div>
+            <p id="verifyOverlayText" class="verify-overlay__text">Verifying your code…</p>
+        </div>
+    </div>
+
 <script src="../../Javascript/login_OTP_verification.js" defer></script>
     
 </body>

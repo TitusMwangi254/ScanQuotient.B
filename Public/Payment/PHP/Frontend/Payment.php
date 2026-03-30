@@ -1,6 +1,7 @@
 <?php
 // payment.php - Payment Details Page
 session_start();
+require_once __DIR__ . '/../../../security_headers.php';
 
 // Get package from URL
 $package = $_GET['package'] ?? 'pro';

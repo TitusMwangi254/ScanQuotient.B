@@ -1,5 +1,32 @@
 // login.js
+const SIGN_IN_LABEL = 'Sign In';
+const SIGN_IN_PENDING_LABEL = 'Signing in…';
+
 document.addEventListener('DOMContentLoaded', function() {
+    const loginForm = document.querySelector('.container form[action*="login_handler"]');
+    const signInBtn = loginForm && loginForm.querySelector('button.sign-in-btn[type="submit"]');
+
+    function resetSignInButton() {
+        if (!signInBtn) return;
+        signInBtn.disabled = false;
+        signInBtn.removeAttribute('aria-busy');
+        signInBtn.textContent = SIGN_IN_LABEL;
+    }
+
+    if (loginForm && signInBtn) {
+        loginForm.addEventListener('submit', function() {
+            signInBtn.disabled = true;
+            signInBtn.setAttribute('aria-busy', 'true');
+            signInBtn.textContent = SIGN_IN_PENDING_LABEL;
+        });
+    }
+
+    window.addEventListener('pageshow', function(e) {
+        if (e.persisted) {
+            resetSignInButton();
+        }
+    });
+
     // --- Password Visibility Toggle ---
     document.querySelectorAll('.toggle-visibility').forEach(function(icon) {
         icon.addEventListener('click', function() {

@@ -802,6 +802,13 @@ if (!empty($profile_photo)) {
             else if (name.includes('information') || name.includes('disclosure')) icon = 'fa-eye';
 
             const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            const oneLine = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+            const clamp = (s, n) => {
+                const t = oneLine(s);
+                return t.length > n ? t.slice(0, n - 1) + '…' : t;
+            };
+            const fullTitle = oneLine(vuln.name || 'Security Finding');
+            const displayTitle = clamp(fullTitle, 88);
             const shortDesc = (vuln.description || '').length > 165
                 ? (vuln.description || '').slice(0, 165) + '...'
                 : (vuln.description || '');
@@ -818,14 +825,14 @@ if (!empty($profile_photo)) {
                     <div class="vuln-icon" style="color: ${config.color}">
                         <i class="fas ${icon}"></i>
                     </div>
-                    <div>
-                        <div class="vuln-title">${esc(vuln.name)}</div>
+                    <div class="vuln-title-wrap">
+                        <div class="vuln-title" title="${esc(fullTitle)}">${esc(displayTitle)}</div>
                         
                     </div>
                 </div>
-                <div style="display: flex; align-items: center; gap: 12px;">
+                <div class="vuln-actions">
                     <span class="vuln-severity">${vuln.severity}</span>
-                    <button type="button" class="view-finding-btn ${btnStateClass}" data-vuln-index="${index}" data-vuln-uid="${esc(String(vuln._sq_uid || ''))}" data-vuln-name="${esc(String(vuln.name || 'Security Finding'))}">
+                    <button type="button" class="view-finding-btn ${btnStateClass}" data-vuln-index="${index}" data-vuln-uid="${esc(String(vuln._sq_uid || ''))}" data-vuln-name="${esc(fullTitle)}">
                         <i class="fas fa-file-shield"></i> <span class="btn-label">${btnLabel}</span>
                     </button>
                     <button type="button" class="regen-finding-btn" data-vuln-index="${index}" data-vuln-uid="${esc(String(vuln._sq_uid || ''))}" title="Regenerate this report">
@@ -1239,7 +1246,8 @@ if (!empty($profile_photo)) {
             if (ok && uid && !readyReportToastShown.has(uid)) {
                 readyReportToastShown.add(uid);
                 const findingName = String(vuln?.name || buttons[0]?.getAttribute('data-vuln-name') || 'Security finding');
-                showToast('Report ready', `${findingName} is ready to open.`, 'success');
+                const shortName = findingName.length > 44 ? findingName.slice(0, 43) + '…' : findingName;
+                showToast('Report ready', `${shortName} is ready to open.`, 'success');
             }
         }
         function syncReadyButtonsFromCache() {
@@ -1718,7 +1726,8 @@ if (!empty($profile_photo)) {
             e.stopPropagation();
             if (btn.classList.contains('pending')) {
                 const findingName = String(btn.getAttribute('data-vuln-name') || 'This finding');
-                showToast('Preparing report', `${findingName} is still preparing. Please wait a moment.`, 'warning');
+                const shortName = findingName.length > 44 ? findingName.slice(0, 43) + '…' : findingName;
+                showToast('Preparing report', `${shortName} is still preparing. Please wait a moment.`, 'warning');
                 return;
             }
             const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
@@ -2402,21 +2411,49 @@ if (!empty($profile_photo)) {
             const ssl = data.ssl || {};
             const presentNames = headers.present_names || [];
             const missingNames = headers.missing_names || [];
+            const vulns = Array.isArray(data.vulnerabilities) ? data.vulnerabilities : [];
+            const safeRisk = String(summary.risk_level || 'Secure').toLowerCase();
 
-            const issuesHtml = (data.vulnerabilities || []).map(v => `
-                <tr>
-                    <td>${escapeHtml(v.severity || '')}</td>
-                    <td>${escapeHtml(v.name || '')}</td>
-                    <td>${escapeHtml(v.description || '')}</td>
-                    <td>${escapeHtml(v.what_we_tested || '')}</td>
-                    <td>${escapeHtml(v.indicates || '')}</td>
-                    <td>${escapeHtml(v.how_exploited || '')}</td>
-                    <td>${escapeHtml(v.evidence || '')}</td>
-                    <td>${escapeHtml(v.remediation || '')}</td>
-                </tr>
-            `).join('');
+            const sevCount = { critical: 0, high: 0, medium: 0, low: 0, info: 0, secure: 0 };
+            vulns.forEach(v => {
+                const k = String(v?.severity || '').toLowerCase();
+                if (Object.prototype.hasOwnProperty.call(sevCount, k)) sevCount[k] += 1;
+            });
 
-            const actionsHtml = (friendly.priority_actions || []).map(a => `<li>${a}</li>`).join('');
+            const listOrDash = (items) => {
+                if (!Array.isArray(items) || items.length === 0) return '<li>No item provided.</li>';
+                return items.map(x => `<li>${escapeHtml(String(x || ''))}</li>`).join('');
+            };
+
+            const findingCardsHtml = vulns.map((v, idx) => {
+                const sev = String(v.severity || 'info').toLowerCase();
+                return `
+                <article class="finding-card">
+                    <div class="finding-head">
+                        <div class="finding-title-wrap">
+                            <span class="finding-index">#${idx + 1}</span>
+                            <h3 class="finding-title">${escapeHtml(v.name || 'Security Finding')}</h3>
+                        </div>
+                        <span class="severity-badge severity-${sev}">${escapeHtml(v.severity || 'Info')}</span>
+                    </div>
+                    <div class="finding-grid">
+                        <div><div class="label">Description</div><div>${escapeHtml(v.description || '-')}</div></div>
+                        <div><div class="label">What We Tested</div><div>${escapeHtml(v.what_we_tested || '-')}</div></div>
+                        <div><div class="label">What This Indicates</div><div>${escapeHtml(v.indicates || '-')}</div></div>
+                        <div><div class="label">Potential Exploitation</div><div>${escapeHtml(v.how_exploited || '-')}</div></div>
+                    </div>
+                    <div class="finding-block">
+                        <div class="label">Evidence Snapshot</div>
+                        <pre>${escapeHtml(v.evidence || '-')}</pre>
+                    </div>
+                    <div class="finding-block">
+                        <div class="label">Recommended Remediation</div>
+                        <div>${escapeHtml(v.remediation || '-')}</div>
+                    </div>
+                </article>`;
+            }).join('');
+
+            const actionsHtml = (friendly.priority_actions || []).map(a => `<li>${escapeHtml(String(a || ''))}</li>`).join('');
 
             return `
 <!DOCTYPE html>
@@ -2425,86 +2462,277 @@ if (!empty($profile_photo)) {
     <meta charset="UTF-8" />
     <title>ScanQuotient Security Report</title>
     <style>
-        body { font-family: Arial, sans-serif; color: #111827; margin: 20px; background: #f8fafc; }
-        h1, h2, h3 { color: #111827; margin: 0 0 10px 0; }
-        .header { padding: 20px; border-radius: 14px; background: linear-gradient(135deg,#eef2ff 0%,#f5f3ff 55%, #ffffff 100%); border: 1px solid #dbeafe; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08); }
-        .brand-row { display:flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
-        .brand-badge { display:inline-flex; align-items:center; gap:8px; font-size: 12px; font-weight: 700; color: #4338ca; background: rgba(99,102,241,0.12); padding: 6px 10px; border-radius: 999px; }
-        .risk-pill { display:inline-block; padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
-        .risk-pill.secure, .risk-pill.low { background: #dcfce7; color: #166534; }
-        .risk-pill.medium { background: #fef3c7; color: #92400e; }
-        .risk-pill.high, .risk-pill.critical { background: #fee2e2; color: #991b1b; }
-        .meta { margin-top: 10px; font-size: 13px; color: #374151; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px 12px; }
-        .meta div { background: rgba(255,255,255,0.7); padding: 8px 10px; border-radius: 8px; border: 1px solid #e5e7eb; }
-        .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
-        .badge-critical { background: #fee2e2; color: #b91c1c; }
-        .badge-high { background: #ffedd5; color: #c2410c; }
-        .badge-medium { background: #fef3c7; color: #92400e; }
-        .badge-low { background: #e0f2fe; color: #0369a1; }
-        .badge-secure { background: #dcfce7; color: #16a34a; }
-        .section { margin-top: 14px; }
-        .small { font-size: 12px; color: #6b7280; }
-        .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; border:1px solid #e5e7eb; background:#fff; font-size:12px; margin: 2px 6px 0 0; }
-        table { border-collapse: collapse; width: 100%; margin-top: 10px; table-layout: fixed; }
-        th, td { border: 1px solid #e5e7eb; padding: 8px; font-size: 11px; vertical-align: top; word-wrap: break-word; }
-        th { background: #f9fafb; text-align: left; }
+        :root { --ink:#0f172a; --muted:#475569; --line:#e2e8f0; --surface:#ffffff; --bg:#f8fafc; --brand:#3b82f6; }
+        * { box-sizing: border-box; }
+        body { margin:0; background:var(--bg); color:var(--ink); font-family: "Inter", "Segoe UI", Arial, sans-serif; line-height:1.45; }
+        .wrap { max-width: 980px; margin: 20px auto; padding: 0 16px 28px; }
+        .sheet { background:var(--surface); border:1px solid var(--line); border-radius:16px; box-shadow:0 16px 34px rgba(15,23,42,.08); overflow:hidden; }
+        .cover { padding:26px 28px; background: linear-gradient(140deg,#e0e7ff 0%, #eef2ff 45%, #ffffff 100%); border-bottom:1px solid var(--line); }
+        .brand { display:inline-flex; gap:8px; align-items:center; font-size:12px; font-weight:700; color:#3730a3; background:rgba(79,70,229,.12); border:1px solid rgba(99,102,241,.25); padding:6px 10px; border-radius:999px; }
+        .title { margin:12px 0 8px; font-size:30px; line-height:1.15; }
+        .subtitle { margin:0; color:#334155; font-size:14px; }
+        .risk-chip { margin-top:12px; display:inline-block; padding:8px 12px; border-radius:999px; font-weight:700; font-size:12px; }
+        .risk-chip.secure, .risk-chip.low { background:#dcfce7; color:#166534; }
+        .risk-chip.medium { background:#fef3c7; color:#92400e; }
+        .risk-chip.high, .risk-chip.critical { background:#fee2e2; color:#991b1b; }
+        .section { padding:18px 28px; border-top:1px solid var(--line); }
+        h2 { margin:0 0 12px; font-size:18px; }
+        .meta-grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:10px; }
+        .kpi { border:1px solid var(--line); border-radius:12px; background:#fff; padding:12px; }
+        .kpi .k { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:.4px; margin-bottom:6px; font-weight:700; }
+        .kpi .v { font-size:18px; font-weight:800; color:#0f172a; }
+        .kpi .s { font-size:12px; color:#64748b; margin-top:4px; }
+        .sev-row { display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:8px; margin-top:10px; }
+        .sev { border-radius:10px; border:1px solid var(--line); padding:8px; text-align:center; font-size:12px; }
+        .sev strong { display:block; font-size:16px; margin-top:2px; }
+        .sev.critical { background:#fef2f2; color:#991b1b; }
+        .sev.high { background:#fff7ed; color:#9a3412; }
+        .sev.medium { background:#fffbeb; color:#92400e; }
+        .sev.low { background:#eff6ff; color:#1d4ed8; }
+        .sev.info { background:#f8fafc; color:#334155; }
+        .sev.secure { background:#f0fdf4; color:#166534; }
+        .two-col { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+        .panel { border:1px solid var(--line); border-radius:12px; padding:12px; }
+        .panel h3 { margin:0 0 8px; font-size:14px; }
+        .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:4px 9px; margin:2px 6px 0 0; font-size:11px; color:#334155; background:#fff; }
+        ul { margin:8px 0 0 18px; padding:0; }
+        .finding-list { display:grid; gap:12px; }
+        .finding-card { border:1px solid var(--line); border-radius:14px; padding:14px; background:#fff; }
+        .finding-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:10px; }
+        .finding-title-wrap { display:flex; gap:10px; align-items:flex-start; }
+        .finding-index { display:inline-block; min-width:28px; text-align:center; padding:4px 8px; font-size:12px; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-weight:700; }
+        .finding-title { margin:0; font-size:16px; }
+        .severity-badge { font-size:11px; font-weight:800; padding:5px 9px; border-radius:999px; }
+        .severity-critical { background:#fee2e2; color:#991b1b; }
+        .severity-high { background:#ffedd5; color:#9a3412; }
+        .severity-medium { background:#fef3c7; color:#92400e; }
+        .severity-low { background:#dbeafe; color:#1d4ed8; }
+        .severity-info, .severity-secure { background:#dcfce7; color:#166534; }
+        .finding-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px; font-size:13px; color:#1e293b; }
+        .label { font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:.3px; font-weight:700; margin-bottom:4px; }
+        .finding-block { margin-top:8px; font-size:13px; color:#1e293b; }
+        pre { margin:0; white-space:pre-wrap; word-break:break-word; background:#f8fafc; border:1px solid var(--line); border-radius:10px; padding:10px; font-size:12px; max-height:240px; overflow:auto; }
+        .footer-note { color:#64748b; font-size:11px; padding:12px 28px 18px; }
+        @media print {
+            body { background:#fff; }
+            .wrap { max-width:none; margin:0; padding:0; }
+            .sheet { border:none; box-shadow:none; border-radius:0; }
+            .cover, .section { break-inside: avoid; }
+        }
     </style>
 </head>
 <body>
-    <div class="header">
-      <div class="brand-row">
-          <div class="brand-badge"><span>ScanQuotient</span><span>Security Report</span></div>
-          <span class="risk-pill ${(summary.risk_level || 'Secure').toLowerCase()}">${(summary.risk_level || 'Secure')} Risk</span>
+    <div class="wrap">
+      <div class="sheet">
+        <section class="cover">
+            <div class="brand">ScanQuotient <span>Web Security Assessment</span></div>
+            <h1 class="title">Security Assessment Report</h1>
+            <p class="subtitle">Prepared for <strong>${escapeHtml(data.target || '-')}</strong></p>
+            <div class="risk-chip ${safeRisk}">${escapeHtml(summary.risk_level || 'Secure')} Risk • Score ${escapeHtml(String(summary.risk_score || 0))}</div>
+        </section>
+
+        <section class="section">
+            <h2>Scan Overview</h2>
+            <div class="meta-grid">
+                <div class="kpi"><div class="k">Target</div><div class="v">${escapeHtml(data.target || '-')}</div></div>
+                <div class="kpi"><div class="k">Scanned At</div><div class="v">${escapeHtml(formatTimestamp(data.timestamp) || '-')}</div></div>
+                <div class="kpi"><div class="k">Duration</div><div class="v">${escapeHtml(String(data.scan_duration || 0))}s</div></div>
+                <div class="kpi"><div class="k">Total Findings</div><div class="v">${vulns.length}</div><div class="s">Detected security issues</div></div>
+            </div>
+            <div class="sev-row">
+                <div class="sev critical">Critical<strong>${sevCount.critical}</strong></div>
+                <div class="sev high">High<strong>${sevCount.high}</strong></div>
+                <div class="sev medium">Medium<strong>${sevCount.medium}</strong></div>
+                <div class="sev low">Low<strong>${sevCount.low}</strong></div>
+                <div class="sev info">Info<strong>${sevCount.info}</strong></div>
+                <div class="sev secure">Secure<strong>${sevCount.secure}</strong></div>
+            </div>
+        </section>
+
+        <section class="section">
+            <h2>Executive Summary</h2>
+            <p>${escapeHtml(friendly.message || 'This report summarizes identified web security findings, associated risk signals, and recommended remediation actions.')}</p>
+            ${actionsHtml ? `<div class="panel"><h3>Priority Actions</h3><ul>${actionsHtml}</ul></div>` : ''}
+        </section>
+
+        <section class="section">
+            <h2>Transport & Header Posture</h2>
+            <div class="two-col">
+                <div class="panel">
+                    <h3>TLS / HTTPS</h3>
+                    <div><strong>HTTPS enabled:</strong> ${ssl.https ? 'Yes' : 'No'}</div>
+                    <div><strong>TLS grade:</strong> ${escapeHtml(ssl.grade || 'N/A')}</div>
+                </div>
+                <div class="panel">
+                    <h3>Security Headers</h3>
+                    <div><strong>Header score:</strong> ${escapeHtml(String(headers.score || 0))}%</div>
+                    <div style="margin-top:8px;"><strong>Present:</strong> ${presentNames.length ? presentNames.map(h => `<span class="pill">${escapeHtml(h)}</span>`).join('') : '<span class="pill">None</span>'}</div>
+                    <div style="margin-top:6px;"><strong>Missing:</strong> ${missingNames.length ? missingNames.map(h => `<span class="pill">${escapeHtml(h)}</span>`).join('') : '<span class="pill">None</span>'}</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <h2>Detailed Findings</h2>
+            <div class="finding-list">
+                ${findingCardsHtml || '<div class="panel">No findings were detected for this scan.</div>'}
+            </div>
+        </section>
+
+        <div class="footer-note">ScanQuotient • Quantifying Risk. Strengthening Security. • Generated report artefact</div>
       </div>
-      <h1>Vulnerability Assessment Report</h1>
-      <div class="meta">
-          <div><strong>Target:</strong> ${escapeHtml(data.target || '')}</div>
-          <div><strong>Scanned at:</strong> ${escapeHtml(formatTimestamp(data.timestamp) || '')}</div>
-          <div><strong>Scan duration:</strong> ${escapeHtml(String(data.scan_duration || 0))}s</div>
-      </div>
-    </div>
-
-    <h2>Overall Risk</h2>
-    <p>
-        <span class="badge badge-${(summary.risk_level || 'Secure').toLowerCase()}">
-            ${(summary.risk_level || 'Secure')} Risk (Score: ${summary.risk_score || 0})
-        </span>
-    </p>
-    ${friendly.message ? `<p>${friendly.message}</p>` : ''}
-    ${actionsHtml ? `<h3>Suggested Next Steps</h3><ul>${actionsHtml}</ul>` : ''}
-
-    <div class="section">
-    <h2>HTTPS and Security Headers</h2>
-    <p><strong>HTTPS enabled:</strong> ${ssl.https ? 'Yes' : 'No'}</p>
-    <p><strong>SSL/TLS grade:</strong> ${ssl.grade || 'N/A'}</p>
-    <p><strong>Security headers score:</strong> ${headers.score || 0}%</p>
-    <div class="small"><strong>Present:</strong> ${presentNames.length ? presentNames.map(h => `<span class="pill">${escapeHtml(h)}</span>`).join('') : 'None'}</div>
-    <div class="small" style="margin-top:6px;"><strong>Missing:</strong> ${missingNames.length ? missingNames.map(h => `<span class="pill">${escapeHtml(h)}</span>`).join('') : 'None'}</div>
-    </div>
-
-    <div class="section">
-    <h2>Detailed Issues</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Severity</th>
-                <th>Name</th>
-                <th>Description</th>
-                <th>What We Tested</th>
-                <th>This Indicates</th>
-                <th>How Exploited</th>
-                <th>Evidence</th>
-                <th>Remediation</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${issuesHtml || '<tr><td colspan="8">No issues found.</td></tr>'}
-        </tbody>
-    </table>
     </div>
 </body>
 </html>
 `;
+        }
+
+        function buildPdfReport(data) {
+            const summary = data.summary || {};
+            const friendly = summary.user_friendly || {};
+            const headers = data.headers || {};
+            const ssl = data.ssl || {};
+            const vulns = Array.isArray(data.vulnerabilities) ? data.vulnerabilities : [];
+            const presentNames = headers.present_names || [];
+            const missingNames = headers.missing_names || [];
+            const safeRisk = String(summary.risk_level || 'Secure').toLowerCase();
+            const riskScore = Number(summary.risk_score || 0);
+
+            const sevCount = { critical: 0, high: 0, medium: 0, low: 0, info: 0, secure: 0 };
+            vulns.forEach(v => {
+                const s = String(v?.severity || '').toLowerCase();
+                if (Object.prototype.hasOwnProperty.call(sevCount, s)) sevCount[s] += 1;
+            });
+
+            const actions = Array.isArray(friendly.priority_actions) ? friendly.priority_actions : [];
+            const actionsHtml = actions.map(a => `<li>${escapeHtml(String(a || ''))}</li>`).join('');
+
+            const findingsHtml = vulns.map((v, i) => {
+                const sev = String(v.severity || 'info').toLowerCase();
+                const assessmentSignal = String(v.indicates || v.description || 'Scanner identified behavior that deviates from expected secure configuration.');
+                return `
+                <section class="finding">
+                    <div class="finding-head">
+                        <div class="finding-title"><span class="idx">#${i + 1}</span> ${escapeHtml(v.name || 'Security Finding')}</div>
+                        <span class="sev sev-${sev}">${escapeHtml(v.severity || 'Info')}</span>
+                    </div>
+                    <div class="grid">
+                        <div><div class="k">Description</div><div>${escapeHtml(v.description || '-')}</div></div>
+                        <div><div class="k">What We Tested</div><div>${escapeHtml(v.what_we_tested || '-')}</div></div>
+                        <div><div class="k">What This Indicates</div><div>${escapeHtml(v.indicates || '-')}</div></div>
+                        <div><div class="k">How It Can Be Exploited</div><div>${escapeHtml(v.how_exploited || '-')}</div></div>
+                    </div>
+                    <div class="block">
+                        <div class="k">Assessment Signal</div>
+                        <div>${escapeHtml(assessmentSignal)}</div>
+                    </div>
+                    <div class="block">
+                        <div class="k">Recommended Remediation</div>
+                        <div>${escapeHtml(v.remediation || '-')}</div>
+                    </div>
+                </section>`;
+            }).join('');
+
+            return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>ScanQuotient PDF Report</title>
+    <style>
+        @page { size: A4; margin: 16mm; }
+        * { box-sizing: border-box; }
+        body { margin: 0; color: #0f172a; font-family: "Inter", "Segoe UI", Arial, sans-serif; font-size: 12px; line-height: 1.45; background: #fff; }
+        .doc { width: 100%; }
+        .cover { border: 1px solid #bfdbfe; border-radius: 14px; padding: 16px; background: linear-gradient(145deg, #eef4ff 0%, #f8fbff 48%, #ffffff 100%); box-shadow: 0 10px 24px rgba(30, 64, 175, 0.08); }
+        .brand { display: inline-block; font-weight: 800; color: #1d4ed8; font-size: 12px; letter-spacing: .2px; background: rgba(59,130,246,.12); border: 1px solid rgba(59,130,246,.25); border-radius: 999px; padding: 4px 10px; }
+        h1 { margin: 8px 0 4px; font-size: 24px; line-height: 1.2; }
+        .sub { color: #475569; margin-bottom: 8px; }
+        .risk { display: inline-block; border-radius: 999px; padding: 4px 10px; font-weight: 700; font-size: 11px; }
+        .risk.secure, .risk.low { background: #dcfce7; color: #166534; }
+        .risk.medium { background: #fef3c7; color: #92400e; }
+        .risk.high, .risk.critical { background: #fee2e2; color: #991b1b; }
+        .row { margin-top: 10px; display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; }
+        .card { border: 1px solid #dbe3ef; border-radius: 10px; padding: 8px; background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%); }
+        .card .k { color: #64748b; text-transform: uppercase; letter-spacing: .35px; font-size: 10px; font-weight: 700; }
+        .card .v { margin-top: 4px; font-size: 14px; font-weight: 800; color: #0f172a; }
+        .section { margin-top: 14px; }
+        .section h2 { margin: 0 0 10px; font-size: 15px; color: #0f172a; background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 70%, transparent 100%); border-left: 4px solid #2563eb; border-radius: 8px; padding: 7px 10px; }
+        .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .panel { border: 1px solid #dbe3ef; border-radius: 10px; padding: 10px; background: #fcfdff; }
+        .panel h3 { margin: 0 0 8px; font-size: 12px; color: #1e3a8a; }
+        .sev-table { width: 100%; border-collapse: collapse; }
+        .sev-table th, .sev-table td { border: 1px solid #e2e8f0; padding: 6px; text-align: center; font-size: 11px; }
+        .sev-table th { background: #eff6ff; color: #1e3a8a; font-weight: 800; }
+        .chips { margin-top: 4px; }
+        .chip { display: inline-block; margin: 2px 4px 0 0; padding: 2px 8px; border: 1px solid #dbe3ef; border-radius: 999px; font-size: 10px; color: #334155; }
+        .finding { border: 1px solid #dbe3ef; border-radius: 12px; padding: 10px; margin-bottom: 10px; break-inside: avoid; page-break-inside: avoid; background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%); }
+        .finding-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .finding-title { font-size: 13px; font-weight: 800; color: #0f172a; }
+        .idx { color: #1d4ed8; }
+        .sev { border-radius: 999px; padding: 3px 9px; font-size: 10px; font-weight: 800; }
+        .sev-critical { background: #fee2e2; color: #991b1b; }
+        .sev-high { background: #ffedd5; color: #9a3412; }
+        .sev-medium { background: #fef3c7; color: #92400e; }
+        .sev-low { background: #dbeafe; color: #1d4ed8; }
+        .sev-info, .sev-secure { background: #dcfce7; color: #166534; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .k { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: .35px; font-weight: 700; margin-bottom: 3px; }
+        .block { margin-top: 8px; border: 1px solid #dbeafe; border-radius: 8px; padding: 8px; background: #f8fbff; }
+        ul { margin: 6px 0 0 18px; padding: 0; }
+        .footer { margin-top: 10px; font-size: 10px; color: #475569; text-align: right; border-top: 1px solid #dbeafe; padding-top: 6px; }
+    </style>
+</head>
+<body>
+    <div class="doc">
+        <section class="cover">
+            <div class="brand">ScanQuotient • Web Security Assessment</div>
+            <h1>Security Assessment Report</h1>
+            <div class="sub">Target: <strong>${escapeHtml(data.target || '-')}</strong> • Scanned: ${escapeHtml(formatTimestamp(data.timestamp) || '-')}</div>
+            <span class="risk ${safeRisk}">${escapeHtml(summary.risk_level || 'Secure')} Risk (Score: ${escapeHtml(String(riskScore))})</span>
+            <div class="row">
+                <div class="card"><div class="k">Target</div><div class="v">${escapeHtml(data.target || '-')}</div></div>
+                <div class="card"><div class="k">Duration</div><div class="v">${escapeHtml(String(data.scan_duration || 0))}s</div></div>
+                <div class="card"><div class="k">Findings</div><div class="v">${vulns.length}</div></div>
+                <div class="card"><div class="k">HTTPS</div><div class="v">${ssl.https ? 'Yes' : 'No'}</div></div>
+                <div class="card"><div class="k">TLS Grade</div><div class="v">${escapeHtml(ssl.grade || 'N/A')}</div></div>
+            </div>
+        </section>
+
+        <section class="section">
+            <h2>Executive Summary</h2>
+            <div>${escapeHtml(friendly.message || 'This report summarizes identified web security findings and recommended corrective actions.')}</div>
+            ${actionsHtml ? `<div class="panel" style="margin-top:8px;"><h3>Priority Actions</h3><ul>${actionsHtml}</ul></div>` : ''}
+        </section>
+
+        <section class="section">
+            <h2>Risk Distribution and Security Posture</h2>
+            <div class="twocol">
+                <div class="panel">
+                    <h3>Severity Distribution</h3>
+                    <table class="sev-table">
+                        <tr><th>Critical</th><th>High</th><th>Medium</th><th>Low</th><th>Info</th><th>Secure</th></tr>
+                        <tr><td>${sevCount.critical}</td><td>${sevCount.high}</td><td>${sevCount.medium}</td><td>${sevCount.low}</td><td>${sevCount.info}</td><td>${sevCount.secure}</td></tr>
+                    </table>
+                </div>
+                <div class="panel">
+                    <h3>Header Hygiene</h3>
+                    <div><strong>Score:</strong> ${escapeHtml(String(headers.score || 0))}%</div>
+                    <div class="chips"><strong>Present:</strong> ${presentNames.length ? presentNames.map(h => `<span class="chip">${escapeHtml(h)}</span>`).join('') : '<span class="chip">None</span>'}</div>
+                    <div class="chips"><strong>Missing:</strong> ${missingNames.length ? missingNames.map(h => `<span class="chip">${escapeHtml(h)}</span>`).join('') : '<span class="chip">None</span>'}</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <h2>Detailed Findings</h2>
+            ${findingsHtml || '<div class="panel">No findings detected.</div>'}
+        </section>
+
+        <div class="footer">ScanQuotient • Quantifying Risk. Strengthening Security.</div>
+    </div>
+</body>
+</html>`;
         }
 
         function openStyledPrintPreview(reportHtml) {
@@ -2681,47 +2909,70 @@ ${headHtml}
         }
 
         async function generateAndUploadPdf(scanId, scanData, renderScale) {
+            let tmp = null;
             try {
-                if (!window.jspdf || !window.jspdf.jsPDF) return null;
+                if (!window.jspdf || !window.jspdf.jsPDF || typeof html2canvas !== 'function') return null;
                 const { jsPDF } = window.jspdf;
-                const scale = (typeof renderScale === 'number' && renderScale > 0) ? renderScale : 0.9;
+                const scale = (typeof renderScale === 'number' && renderScale > 0) ? renderScale : 1.25;
 
-                const tmp = document.createElement('div');
-                tmp.style.position = 'fixed';
-                tmp.style.left = '0';
+                tmp = document.createElement('div');
+                tmp.style.position = 'absolute';
+                tmp.style.left = '-10000px';
                 tmp.style.top = '0';
                 tmp.style.width = '794px';
                 tmp.style.background = '#ffffff';
-                tmp.style.opacity = '0';
+                tmp.style.opacity = '1';
                 tmp.style.pointerEvents = 'none';
-                tmp.style.zIndex = '-1';
-                // Use only BODY content (feeding full <html> often renders blank)
-                const html = buildHtmlReport(scanData);
+                tmp.style.zIndex = '0';
+                const html = buildPdfReport(scanData);
                 const parsed = new DOMParser().parseFromString(html, 'text/html');
-                tmp.innerHTML = parsed.body ? parsed.body.innerHTML : html;
+                const inlineStyles = parsed.head ? Array.from(parsed.head.querySelectorAll('style')).map(s => s.textContent || '').join('\n') : '';
+                tmp.innerHTML = `${inlineStyles ? `<style>${inlineStyles}</style>` : ''}${parsed.body ? parsed.body.innerHTML : html}`;
                 document.body.appendChild(tmp);
 
-                const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-                await doc.html(tmp, {
-                    x: 20,
-                    y: 20,
-                    width: 555,
-                    windowWidth: 794,
-                    autoPaging: 'text',
-                    html2canvas: { scale: scale, useCORS: true }
+                await new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 120)));
+
+                const canvas = await html2canvas(tmp, {
+                    scale: scale,
+                    useCORS: true,
+                    backgroundColor: '#ffffff'
                 });
+                if (!canvas || canvas.width < 10 || canvas.height < 10) return null;
+
+                const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+                const pageWidth = doc.internal.pageSize.getWidth();
+                const pageHeight = doc.internal.pageSize.getHeight();
+                const margin = 20;
+                const contentWidth = pageWidth - margin * 2;
+                const contentHeight = pageHeight - margin * 2;
+                const slicePxHeight = Math.max(1, Math.floor((contentHeight * canvas.width) / contentWidth));
+
+                let srcY = 0;
+                let pageIndex = 0;
+                while (srcY < canvas.height) {
+                    const currentSlicePx = Math.min(slicePxHeight, canvas.height - srcY);
+                    const sliceCanvas = document.createElement('canvas');
+                    sliceCanvas.width = canvas.width;
+                    sliceCanvas.height = currentSlicePx;
+                    const ctx = sliceCanvas.getContext('2d');
+                    if (!ctx) break;
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+                    ctx.drawImage(canvas, 0, srcY, canvas.width, currentSlicePx, 0, 0, canvas.width, currentSlicePx);
+                    const imgData = sliceCanvas.toDataURL('image/png');
+                    const renderedHeight = (currentSlicePx * contentWidth) / canvas.width;
+                    if (pageIndex > 0) doc.addPage();
+                    doc.addImage(imgData, 'JPEG', margin, margin, contentWidth, renderedHeight);
+                    srcY += currentSlicePx;
+                    pageIndex += 1;
+                }
+
                 const ab = doc.output('arraybuffer');
-                if (!ab || ab.byteLength < 8000) {
-                    document.body.removeChild(tmp);
-                    return null;
-                }
+                if (!ab || ab.byteLength < 8000) return null;
                 const dataUri = doc.output('datauristring');
-                // Avoid oversized upload payloads by retrying once with lower render scale.
-                if (dataUri && dataUri.length > 6500000 && scale > 0.58) {
-                    document.body.removeChild(tmp);
-                    return await generateAndUploadPdf(scanId, scanData, 0.55);
+                if (dataUri && dataUri.length > 6500000 && scale > 0.85) {
+                    return await generateAndUploadPdf(scanId, scanData, 0.85);
                 }
-                document.body.removeChild(tmp);
 
                 const r = await fetch('../Backend/upload_pdf.php', {
                     method: 'POST',
@@ -2733,6 +2984,9 @@ ${headHtml}
                 try { res = await r.json(); } catch (e) { return null; }
                 if (res && res.ok && res.download) return res.download;
             } catch (e) { }
+            finally {
+                if (tmp && tmp.parentNode) tmp.parentNode.removeChild(tmp);
+            }
             return null;
         }
 
@@ -3090,7 +3344,13 @@ ${headHtml}
             }, 2600);
         }
         function showToast(title, message, type) {
-            toastQueue.push({ title: title || '', message: message || '', type: type || 'info' });
+            const maxTitle = 40;
+            const maxMsg = 88;
+            const safeTitle = String(title || '');
+            const safeMsg = String(message || '');
+            const t = safeTitle.length > maxTitle ? safeTitle.slice(0, maxTitle - 1) + '…' : safeTitle;
+            const m = safeMsg.length > maxMsg ? safeMsg.slice(0, maxMsg - 1) + '…' : safeMsg;
+            toastQueue.push({ title: t, message: m, type: type || 'info' });
             processToastQueue();
         }
         function copyTextToClipboard(text) {
@@ -3146,6 +3406,7 @@ ${headHtml}
             if (!vuln) return;
             const key = makeCacheKey(vuln);
             const MAX_MANUAL_REGEN_PER_FINDING = 2;
+            const shortName = String(vuln.name || 'Finding').replace(/\s+/g, ' ').trim().slice(0, 44) + (String(vuln.name || 'Finding').replace(/\s+/g, ' ').trim().length > 44 ? '…' : '');
             const prevCount = manualRegenCount.get(key) || 0;
             if (prevCount >= MAX_MANUAL_REGEN_PER_FINDING) {
                 showToast('Regenerate limit reached', 'You can regenerate a finding report at most twice per issue.', 'warning');
@@ -3167,7 +3428,7 @@ ${headHtml}
             });
             delete findingReportCache[key];
             warmupInFlight.delete(key);
-            showToast('Regenerating', `${String(vuln.name || 'Finding')} report is being regenerated…`, 'info');
+            showToast('Regenerating', `${shortName} report is being regenerated…`, 'info');
             try {
                 const payload = await fetchFindingReport(vuln, { forceFetch: true, useAi: true, bypassAiCache: true, disableRecommendationDiversity: true });
                 if (payload?.report) {
@@ -3182,12 +3443,12 @@ ${headHtml}
                         }
                     }
                     if (src === 'ai' || src === 'ai_corrected') {
-                        showToast('Regenerated', `${String(vuln.name || 'Finding')} report regenerated — ScanQuotient.`, 'success');
+                        showToast('Regenerated', `${shortName} report regenerated — ScanQuotient.`, 'success');
                     } else {
                         // AI route returned something else (usually deterministic fallback).
                         showToast(
                             'Regenerated',
-                            `${String(vuln.name || 'Finding')} report regenerated — ScanQuotient (fallback: ${src || 'unknown'}).`,
+                            `${shortName} report regenerated — ScanQuotient (fallback: ${src || 'unknown'}).`,
                             'warning'
                         );
                     }

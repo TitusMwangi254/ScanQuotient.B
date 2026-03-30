@@ -1,6 +1,7 @@
 <?php
 // admin_user_detail.php - Full CRUD user management detail page
 session_start();
+date_default_timezone_set('Africa/Nairobi');
 
 // Load PHPMailer
 
@@ -10,13 +11,13 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
 if (!isset($_SESSION['authenticated']) || $_SESSION['authenticated'] !== true) {
-    header("Location: /ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php?error=not_authenticated");
+    header("Location: /ScanQuotient.v2/ScanQuotient.B/Public/Login_page/PHP/Frontend/Login_page_site.php?error=not_authenticated");
     exit();
 }
 
 $adminRole = $_SESSION['role'] ?? 'user';
 if ($adminRole !== 'admin' && $adminRole !== 'super_admin') {
-    header("Location: /ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Frontend/login_page_site.php?error=unauthorized");
+    header("Location: /ScanQuotient.v2/ScanQuotient.B/Public/Login_page/PHP/Frontend/Login_page_site.php?error=unauthorized");
     exit();
 }
 
@@ -27,7 +28,7 @@ define('DB_PASS', '');
 define('DB_CHARSET', 'utf8mb4');
 
 // URL Configuration - images are stored in different project folder
-define('BASE_URL', '/ScanQuotient/ScanQuotient');
+define('BASE_URL', '/ScanQuotient.v2/ScanQuotient.B');
 define('STORAGE_URL', '/ScanQuotient.v2/ScanQuotient.B');
 // Physical path for uploads
 define('UPLOAD_PATH', 'C:/xampp/htdocs/ScanQuotient.v2/ScanQuotient.B/Storage/User_Profile_images');
@@ -221,10 +222,12 @@ try {
                 // Generate temporary password
                 $tempPassword = bin2hex(random_bytes(4)); // 8 characters
                 $passwordHash = password_hash($tempPassword, PASSWORD_DEFAULT);
+                $nowEAT = date('Y-m-d H:i:s');
+                $resetExpiryEAT = date('Y-m-d H:i:s', strtotime('+24 hours'));
 
-                // Update database - set password_reset_status to yes
-                $stmt = $pdo->prepare("UPDATE users SET password_hash = ?, password_reset_status = 'yes', last_password_change = NOW(), password_reset_expires = DATE_ADD(NOW(), INTERVAL 24 HOUR), updated_at = NOW(), updated_by = ? WHERE id = ?");
-                $stmt->execute([$passwordHash, $adminName, $userId]);
+                // Store reset timestamps in East Africa Time to avoid DB/session timezone mismatch.
+                $stmt = $pdo->prepare("UPDATE users SET password_hash = ?, password_reset_status = 'yes', last_password_change = ?, password_reset_expires = ?, updated_at = ?, updated_by = ? WHERE id = ?");
+                $stmt->execute([$passwordHash, $nowEAT, $resetExpiryEAT, $nowEAT, $adminName, $userId]);
 
                 // Send email with temporary password
                 $emailSent = sendPasswordResetEmail($user['email'], $user['first_name'], $tempPassword);
@@ -602,6 +605,29 @@ If you did not request this reset, contact your administrator immediately.
             animation: sq-toast-out 0.3s ease forwards;
         }
 
+        .sq-inline-warning {
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+            margin: 8px 0 18px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--sq-text-main, #1f2937);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .sq-inline-warning i {
+            color: #d97706;
+            margin-top: 2px;
+        }
+
+        .sq-inline-warning--hidden {
+            display: none;
+        }
+
         /* Profile Image Upload Styles */
         .sq-profile-image-container {
             position: relative;
@@ -964,6 +990,28 @@ If you did not request this reset, contact your administrator immediately.
         </div>
     </div>
 
+    <div class="sq-modal" id="sqTempPasswordModal">
+        <div class="sq-modal-content">
+            <h3 class="sq-modal-title">
+                <i class="fas fa-key" style="color: var(--sq-warning);"></i>
+                Generate Temporary Password?
+            </h3>
+            <p class="sq-modal-text">
+                This will reset the user's password and require them to set a new password on next login.
+                The temporary password expires in 24 hours.
+            </p>
+            <div class="sq-modal-actions">
+                <button class="sq-btn sq-btn-secondary" onclick="sqCloseModal('sqTempPasswordModal')">Cancel</button>
+                <form method="POST" style="display: inline;" onsubmit="return sqHandleTempPasswordSubmit(this)">
+                    <input type="hidden" name="action" value="reset_password">
+                    <button type="submit" id="sqTempPasswordSubmitBtn" class="sq-btn sq-btn-warning">
+                        <i class="fas fa-key"></i> Generate Password
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- Profile Image Upload Modal -->
     <div class="sq-upload-modal" id="sqUploadModal">
         <div class="sq-upload-modal-content">
@@ -1255,13 +1303,10 @@ If you did not request this reset, contact your administrator immediately.
                     <!-- Single Password Reset Button -->
                     <?php if (!$user['deleted_at']): ?>
                         <div style="margin-top: 16px;">
-                            <form method="POST" style="display: inline;"
-                                onsubmit="return confirm('Generate temporary password? User will be forced to reset on next login.')">
-                                <input type="hidden" name="action" value="reset_password">
-                                <button type="submit" class="sq-btn sq-btn-warning sq-requires-edit">
-                                    <i class="fas fa-key"></i> Generate Temp Password
-                                </button>
-                            </form>
+                            <button type="button" id="sqOpenTempPasswordBtn" class="sq-btn sq-btn-warning sq-requires-edit"
+                                onclick="sqOpenModal('sqTempPasswordModal')">
+                                <i class="fas fa-key"></i> Generate Temp Password
+                            </button>
                         </div>
                     <?php endif; ?>
                 </div>
@@ -1277,6 +1322,13 @@ If you did not request this reset, contact your administrator immediately.
 
                     <form method="POST">
                         <input type="hidden" name="action" value="update_agreements">
+                        <?php if (!$user['deleted_at']): ?>
+                            <div id="sqAgreementsWarning" class="sq-inline-warning sq-inline-warning--hidden">
+                                <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
+                                <span>Setting any agreement to <strong>Not Agreed</strong> will require this user to re-accept missing
+                                    policies on their next login.</span>
+                            </div>
+                        <?php endif; ?>
                         <div class="sq-form-grid">
                             <div class="sq-form-group">
                                 <label class="sq-form-label">Privacy Policy</label>
@@ -1543,6 +1595,23 @@ If you did not request this reset, contact your administrator immediately.
             showToast(<?php echo json_encode($toastMessage); ?>, <?php echo json_encode($toastType); ?>);
         <?php endif; ?>
 
+        function sqHandleTempPasswordSubmit(form) {
+            const submitBtn = document.getElementById('sqTempPasswordSubmitBtn');
+            const openBtn = document.getElementById('sqOpenTempPasswordBtn');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+            }
+            if (openBtn) {
+                openBtn.disabled = true;
+                openBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating...';
+            }
+            if (form) {
+                form.dataset.submitting = '1';
+            }
+            return true;
+        }
+
         // Modal Functions
         function sqOpenModal(modalId) {
             document.getElementById(modalId).classList.add('sq-modal--active');
@@ -1619,6 +1688,26 @@ If you did not request this reset, contact your administrator immediately.
                         : '<i class="fas fa-lock"></i><span>Read-only mode</span>';
                 }
             };
+
+            // Show agreements warning only when agreement fields are interacted with.
+            const agreementsForm = managedForms.find((form) => {
+                const actionInput = form.querySelector('input[name="action"]');
+                return actionInput && actionInput.value === 'update_agreements';
+            });
+            const agreementsWarning = document.getElementById('sqAgreementsWarning');
+            if (agreementsForm && agreementsWarning) {
+                const agreementSelects = Array.from(
+                    agreementsForm.querySelectorAll('select[name="privacy_agreed"], select[name="terms_agreed"], select[name="agreement_agreed"]')
+                );
+                const showAgreementsWarning = () => {
+                    agreementsWarning.classList.remove('sq-inline-warning--hidden');
+                };
+                agreementSelects.forEach((select) => {
+                    select.addEventListener('focus', showAgreementsWarning);
+                    select.addEventListener('click', showAgreementsWarning);
+                    select.addEventListener('change', showAgreementsWarning);
+                });
+            }
 
             applyMode(false);
             editFab.addEventListener('click', () => {
