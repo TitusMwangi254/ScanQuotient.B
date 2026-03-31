@@ -41,6 +41,10 @@ if (!empty($profile_photo)) {
                 <span id="current-time"></span>
             </span>
             <button id="helpBtn" class="icon-btn" title="Help"><i class="fas fa-question-circle"></i></button>
+            <button id="notificationsBtn" class="icon-btn notifications-btn" title="Notifications" aria-label="Open notifications">
+                <i class="fas fa-bell"></i>
+                <span id="notificationsBadge" class="notifications-badge" style="display:none;">0</span>
+            </button>
             <a href="/ScanQuotient.v2/ScanQuotient.B/Private/User_dashboard/PHP/Frontend/User_dashboard.php"
                 class="icon-btn" title="Home">
                 <i class="fas fa-home"></i>
@@ -75,10 +79,16 @@ if (!empty($profile_photo)) {
                             <p class="sidebar-report-head__title">Scan report</p>
                         </div>
                     </div>
-                    <button type="button" id="sidebarRiskAnalysisBtn" class="nav-btn sidebar-report-btn">
+                    <button type="button" id="sidebarRiskAnalysisBtn" class="nav-btn sidebar-report-btn sidebar-rich-tip"
+                        data-tip-title="Risk score analysis"
+                        data-tip-text="Understand the score band, weighted severity math, and why this scan landed in its current risk level."
+                        aria-label="Risk score analysis: score model, formula, and severity impact">
                         <i class="fas fa-chart-line"></i><span>Risk score analysis</span>
                     </button>
-                    <button type="button" id="sidebarRuntimeBtn" class="nav-btn sidebar-report-btn">
+                    <button type="button" id="sidebarRuntimeBtn" class="nav-btn sidebar-report-btn sidebar-rich-tip"
+                        data-tip-title="Scan runtime"
+                        data-tip-text="Preview the latest runs for this host, compare score changes, then open the full timeline or host-scoped history."
+                        aria-label="Scan runtime: recent runs, deltas, and history for this host">
                         <i class="fas fa-stopwatch"></i><span>Scan runtime</span>
                     </button>
                     <div class="sidebar-report-popover">
@@ -95,12 +105,30 @@ if (!empty($profile_photo)) {
                             <i class="fas fa-download"></i><span>Available downloads</span>
                         </button>
                         <div class="sidebar-report-popover-menu" id="sidebarDownloadsMenu" role="menu" aria-label="Download formats">
-                            <button type="button" id="sidebarDownloadCsvBtn" class="sidebar-popover-item"><i class="fas fa-file-csv"></i><span>CSV report</span></button>
-                            <button type="button" id="sidebarDownloadHtmlBtn" class="sidebar-popover-item"><i class="fas fa-file-code"></i><span>HTML report</span></button>
-                            <button type="button" id="sidebarDownloadPdfBtn" class="sidebar-popover-item"><i class="fas fa-file-pdf"></i><span>PDF report</span></button>
+                            <button type="button" id="sidebarDownloadCsvBtn" class="sidebar-popover-item sidebar-rich-tip"
+                                data-tip-title="CSV export"
+                                data-tip-text="Download a spreadsheet-friendly export of findings and key metadata."><i class="fas fa-file-csv"></i><span>CSV report</span></button>
+                            <button type="button" id="sidebarDownloadHtmlBtn" class="sidebar-popover-item sidebar-rich-tip"
+                                data-tip-title="HTML report"
+                                data-tip-text="Download an interactive web report for browser-based review and sharing."><i class="fas fa-file-code"></i><span>HTML report</span></button>
+                            <button type="button" id="sidebarDownloadPdfBtn" class="sidebar-popover-item sidebar-rich-tip"
+                                data-tip-title="PDF report"
+                                data-tip-text="Download a printable report format suitable for meetings and audit records."><i class="fas fa-file-pdf"></i><span>PDF report</span></button>
+                            <button type="button" id="sidebarDownloadDocBtn" class="sidebar-popover-item sidebar-rich-tip"
+                                data-tip-title="DOC report ready"
+                                data-tip-text="Download the AI summary as a Word document."
+                                style="display:none;"><i class="fas fa-file-word"></i><span>DOC AI summary</span></button>
                         </div>
                     </div>
-                    <button type="button" id="sidebarAiOverviewBtn" class="nav-btn sidebar-report-btn" style="display:none;">
+                    <button type="button" id="sidebarShareBtn" class="nav-btn sidebar-report-btn sidebar-rich-tip"
+                        data-tip-title="Share report"
+                        data-tip-text="Send selected report artefacts by email to one or more recipients."
+                        <i class="fas fa-share-alt"></i><span>Share report</span>
+                    </button>
+                    <button type="button" id="sidebarAiOverviewBtn" class="nav-btn sidebar-report-btn sidebar-rich-tip"
+                        data-tip-title="AI overview"
+                        data-tip-text="Open the executive AI overview, then use the chatbot for deeper insight and follow-up questions."
+                        style="display:none;">
                         <i class="fas fa-brain"></i><span>AI overview</span>
                     </button>
                 </div>
@@ -307,6 +335,7 @@ if (!empty($profile_photo)) {
                             <section id="reportFindingsSection" class="report-section">
                             <div id="detailedFindingsAnchor" class="detailed-findings-scroll-target" tabindex="-1" aria-label="Detailed findings"></div>
                             <div class="results-tabs">
+                                <span id="targetBadge" class="target-badge">example.com</span>
                                 <button type="button" class="results-tab active" data-tab="findings" id="tabFindings">
                                     <i class="fas fa-clipboard-list"></i>
                                     <span>Detailed Findings</span>
@@ -315,28 +344,43 @@ if (!empty($profile_photo)) {
                                     <i class="fas fa-file-alt"></i>
                                     <span>AI summary</span>
                                 </button>
-                                <span id="targetBadge" class="target-badge">example.com</span>
                                 <div class="report-actions report-download-row">
                                     <div class="report-artefact-btns">
-                                        <button type="button" id="downloadCsvBtn" class="artefact-btn"
+                                        <button type="button" id="downloadDocBtn" class="artefact-btn artefact-rich-tip artefact-rich-tip--doc"
+                                            data-tip-title="DOC report"
+                                            data-tip-text="Download the AI summary as a Word document."
+                                            aria-disabled="true">
+                                            <i class="fas fa-file-word"></i><span>DOC</span>
+                                        </button>
+                                        <button type="button" id="downloadCsvBtn" class="artefact-btn artefact-rich-tip"
+                                            data-tip-title="CSV export"
+                                            data-tip-text="Download a spreadsheet-friendly export of findings, severities, and key metadata for analysis."
                                             title="Download CSV">
                                             <i class="fas fa-file-csv"></i><span>CSV</span>
                                         </button>
-                                        <button type="button" id="downloadHtmlBtn" class="artefact-btn"
-                                            title="Download HTML">
-                                            <i class="fas fa-file-code"></i><span>HTML</span>
-                                        </button>
-                                        <button type="button" id="downloadPdfBtn" class="artefact-btn"
+                                        <button type="button" id="downloadPdfBtn" class="artefact-btn artefact-rich-tip"
+                                            data-tip-title="PDF report"
+                                            data-tip-text="Download a printable report format suitable for review meetings and audit records."
                                             title="Download PDF">
                                             <i class="fas fa-file-pdf"></i><span>PDF</span>
                                         </button>
+                                        <button type="button" id="downloadHtmlBtn" class="artefact-btn artefact-rich-tip"
+                                            data-tip-title="HTML report"
+                                            data-tip-text="Download an interactive web report version for easier browsing and sharing in browsers."
+                                            title="Download HTML">
+                                            <i class="fas fa-file-code"></i><span>HTML</span>
+                                        </button>
                                     </div>
                                     <div class="report-extra-actions">
-                                        <button type="button" id="aiOverviewBtn" class="artefact-btn secondary"
+                                        <button type="button" id="aiOverviewBtn" class="artefact-btn secondary artefact-rich-tip"
+                                            data-tip-title="AI overview"
+                                            data-tip-text="Open the executive AI overview, then use the chatbot for deeper insight and follow-up questions."
                                             title="AI Overview (Enterprise)" style="display:none;">
                                             <i class="fas fa-brain"></i><span>AI Overview</span>
                                         </button>
-                                        <button type="button" id="shareResultsBtn" class="artefact-btn share-btn"
+                                        <button type="button" id="shareResultsBtn" class="artefact-btn share-btn artefact-rich-tip"
+                                            data-tip-title="Share report"
+                                            data-tip-text="Send selected report artefacts by email to one or more recipients."
                                             title="Share by email" style="display:inline-flex;">
                                             <i class="fas fa-share-alt"></i><span>Share</span>
                                         </button>
@@ -940,12 +984,11 @@ if (!empty($profile_photo)) {
         function updateUserFriendlySummary(summary) {
             const friendly = summary.user_friendly || {};
             const message = friendly.message || '';
-            const actions = friendly.priority_actions || [];
 
             const container = document.getElementById('userSummary');
             if (!container) return;
 
-            if (!message && (!actions || actions.length === 0)) {
+            if (!message) {
                 container.style.display = 'none';
                 container.innerHTML = '';
                 return;
@@ -963,19 +1006,23 @@ if (!empty($profile_photo)) {
                 container.appendChild(title);
                 container.appendChild(p);
             }
-                if (actions && actions.length > 0) {
-                const ul = document.createElement('ul');
-                actions.forEach(function (action) {
-                    const li = document.createElement('li');
-                    li.textContent = String(action || '');
-                    ul.appendChild(li);
-                });
-                const sub = document.createElement('div');
-                sub.style.cssText = 'font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:10px 0 6px 0;';
-                sub.textContent = 'Suggested next steps';
-                container.appendChild(sub);
-                container.appendChild(ul);
-            }
+            const sub = document.createElement('div');
+            sub.style.cssText = 'font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-light);margin:10px 0 6px 0;';
+            sub.textContent = 'Suggested next steps';
+            container.appendChild(sub);
+            const workflow = document.createElement('ul');
+            const workflowItems = [
+                'Step 1: Open Detailed findings to review evidence and exact remediation guidance.',
+                'Step 2: Use domain, severity, and category filters to prioritize highest-risk items first.',
+                'Step 3: Read the AI summary tab for plain-language context you can share with stakeholders.',
+                'Step 4: Use download and share actions to hand off the report to your team.'
+            ];
+            workflowItems.forEach(function (line) {
+                const li = document.createElement('li');
+                li.textContent = line;
+                workflow.appendChild(li);
+            });
+            container.appendChild(workflow);
 
             const jump = document.createElement('div');
             jump.className = 'user-summary-callout__jump';
@@ -1418,7 +1465,7 @@ if (!empty($profile_photo)) {
             };
             set('findingTitle', report.title || vuln.name || 'Security Finding');
             set('findingSeverity', report.severity || vuln.severity || '-');
-            set('findingCategory', report.category || vuln.category || 'Security Finding');
+            set('findingCategory', report.category || inferFindingCategory(vuln));
             set('findingTarget', report.target || (lastScanData?.target || ''));
             set('findingIp', report.ip_address || '');
             set('findingPort', report.port || '');
@@ -1688,7 +1735,7 @@ if (!empty($profile_photo)) {
             const fallbackReport = {
                 title: vuln.name || 'Security Finding',
                 severity: vuln.severity || '-',
-                category: vuln.category || 'Security Finding',
+                category: inferFindingCategory(vuln),
                 target: lastScanData?.target || '',
                 detection_time: lastScanData?.timestamp || '',
                 description: vuln.description || '-',
@@ -2064,10 +2111,39 @@ if (!empty($profile_photo)) {
         function syncSidebarReportActions() {
             const sourceAiBtn = document.getElementById('aiOverviewBtn');
             const sideAiBtn = document.getElementById('sidebarAiOverviewBtn');
-            if (!sideAiBtn) return;
+            const sideDocBtn = document.getElementById('sidebarDownloadDocBtn');
+            const sideShareBtn = document.getElementById('sidebarShareBtn');
+            const bodyDocBtn = document.getElementById('downloadDocBtn');
             const visible = !!(sourceAiBtn && sourceAiBtn.style.display !== 'none');
-            sideAiBtn.style.display = visible ? 'inline-flex' : 'none';
-            if (sourceAiBtn) sideAiBtn.disabled = sourceAiBtn.disabled;
+            if (sideAiBtn) {
+                sideAiBtn.style.display = visible ? 'inline-flex' : 'none';
+                if (sourceAiBtn) sideAiBtn.disabled = sourceAiBtn.disabled;
+            }
+            if (sideDocBtn) {
+                const hasDoc = !!(lastScanId && lastDownloadUrls && lastDownloadUrls.doc);
+                sideDocBtn.style.display = hasDoc ? 'flex' : 'none';
+                sideDocBtn.disabled = !hasDoc;
+                sideDocBtn.title = hasDoc
+                    ? 'Download AI summary DOC file'
+                    : 'DOC file appears after AI summary generation completes';
+                if (bodyDocBtn) {
+                    bodyDocBtn.style.display = 'inline-flex';
+                    bodyDocBtn.disabled = false;
+                    bodyDocBtn.setAttribute('aria-disabled', hasDoc ? 'false' : 'true');
+                    bodyDocBtn.classList.toggle('is-disabled', !hasDoc);
+                    bodyDocBtn.setAttribute('data-tip-title', hasDoc ? 'DOC report ready' : 'DOC report preparing');
+                    bodyDocBtn.setAttribute(
+                        'data-tip-text',
+                        hasDoc
+                            ? 'Download the AI summary as a Word document.'
+                            : 'Document is still being prepared. Please wait a moment, then try again.'
+                    );
+                    bodyDocBtn.title = hasDoc ? 'Download DOC' : '';
+                }
+            }
+            if (sideShareBtn) {
+                sideShareBtn.disabled = !(lastScanId || (lastScanData && lastScanData.target));
+            }
         }
         function inferFindingDomain(v) {
             const cat = String(v?.category || '').toLowerCase();
@@ -2083,6 +2159,23 @@ if (!empty($profile_photo)) {
             if (/crawl|discovery|sitemap|robots/.test(blob)) return 'Crawling & Surface Discovery';
             return 'General Security';
         }
+        function inferFindingCategory(v) {
+            const explicit = String(v?.category || '').trim();
+            if (explicit) return explicit;
+            const name = String(v?.name || '').toLowerCase();
+            const desc = String(v?.description || '').toLowerCase();
+            const blob = `${name} ${desc}`;
+            if (/sql|sqli|xss|xxe|rce|command|injection|traversal|lfi|rfi/.test(blob)) return 'Injection & Input Validation';
+            if (/cors|redirect/.test(blob)) return 'Access Control & Redirects';
+            if (/header|csp|hsts|x-frame|x-content-type|permissions-policy/.test(blob)) return 'Security Headers';
+            if (/tls|ssl|certificate|https|cipher|mixed content/.test(blob)) return 'Transport & TLS';
+            if (/cookie|session|csrf|auth|token|login|idor/.test(blob)) return 'Session & Authentication';
+            if (/secret|exposed|backup|config|\\.env|\\.git|sensitive file|leak/.test(blob)) return 'Sensitive Data Exposure';
+            if (/port|service|open port|mongodb|redis|telnet|ftp|ssh/.test(blob)) return 'Network & Services';
+            if (/server|x-powered-by|framework|version/.test(blob)) return 'Server Fingerprinting';
+            if (/crawl|sitemap|robots|discovery/.test(blob)) return 'Discovery & Surface';
+            return 'General Security';
+        }
         function populateDomainFilter() {
             const el = document.getElementById('findingDomainFilter');
             if (!el) return;
@@ -2092,7 +2185,7 @@ if (!empty($profile_photo)) {
         function populateCategoryFilter() {
             const el = document.getElementById('findingCategoryFilter');
             if (!el) return;
-            const values = Array.from(new Set((scanFindingsAll || []).map(v => (v.category || 'Security Finding').trim()).filter(Boolean))).sort();
+            const values = Array.from(new Set((scanFindingsAll || []).map(v => inferFindingCategory(v)).filter(Boolean))).sort();
             el.innerHTML = '<option value="all">All categories</option>' + values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
         }
         function populateSidebarResultGroupsMenu() {
@@ -2106,7 +2199,10 @@ if (!empty($profile_photo)) {
             const groupItems = groups.length
                 ? groups.map((groupName) => `<button type="button" class="sidebar-popover-item sidebar-popover-item--group" data-domain="${escapeHtml(groupName)}"><i class="fas fa-folder-open"></i><span>${escapeHtml(groupName)}</span></button>`).join('')
                 : '<button type="button" class="sidebar-popover-item sidebar-popover-item--group" data-domain="all"><i class="fas fa-folder-open"></i><span>All groups</span></button>';
-            sideMenu.innerHTML = `${baseActions}<div class="sidebar-popover-divider"></div>${groupItems}`;
+            const groupsClass = groups.length > 4
+                ? 'sidebar-popover-groups sidebar-popover-groups--split'
+                : 'sidebar-popover-groups';
+            sideMenu.innerHTML = `${baseActions}<div class="sidebar-popover-divider"></div><div class="${groupsClass}">${groupItems}</div>`;
         }
         function applyFindingsFilters() {
             const listEl = document.getElementById('vulnerabilitiesList');
@@ -2120,7 +2216,7 @@ if (!empty($profile_photo)) {
             rows = rows.filter(v => {
                 if (domain !== 'all' && inferFindingDomain(v) !== domain) return false;
                 if (severity !== 'all' && String(v.severity || '').toLowerCase() !== severity) return false;
-                if (category !== 'all' && String(v.category || 'Security Finding') !== category) return false;
+                if (category !== 'all' && inferFindingCategory(v) !== category) return false;
                 if (!search) return true;
                 const blob = `${v.name || ''} ${v.description || ''} ${v.evidence || ''} ${v.remediation || ''}`.toLowerCase();
                 return blob.includes(search);
@@ -2809,6 +2905,7 @@ if (!empty($profile_photo)) {
                     if (res.download && res.download.doc) {
                         showToast('DOC ready', 'Word report generated and ready for download/share.', 'success');
                     }
+                    syncSidebarReportActions();
                     persistScanState();
                     try { if (lastScanData && lastScanData.target) refreshScanRunTimeline(lastScanData.target); } catch (e) { }
 
@@ -2891,12 +2988,6 @@ if (!empty($profile_photo)) {
                 openScanTimelineFullModal();
             });
             document.getElementById('scanTimelinePreviewClose')?.addEventListener('click', closeScanTimelinePreviewModal);
-            document.getElementById('scanTimelinePreviewViewFullBtn')?.addEventListener('click', function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                closeScanTimelinePreviewModal();
-                openScanTimelineFullModal();
-            });
         })();
 
         // Help button popup
@@ -3644,7 +3735,7 @@ ${headHtml}
             }
             const actions = document.getElementById('downloadsOverlayActions');
             if (actions) {
-                const ids = ['downloadCsvBtn', 'downloadHtmlBtn', 'downloadPdfBtn', 'shareResultsBtn', 'aiOverviewBtn'];
+                const ids = ['downloadDocBtn', 'downloadCsvBtn', 'downloadPdfBtn', 'downloadHtmlBtn', 'shareResultsBtn', 'aiOverviewBtn'];
                 const controls = ids.map((id) => document.getElementById(id)).filter(Boolean);
                 actions.innerHTML = controls.map((el) => el.outerHTML).join('');
                 actions.querySelectorAll('button').forEach((clonedBtn) => {
@@ -3664,6 +3755,8 @@ ${headHtml}
             const csvBtnSide = document.getElementById('sidebarDownloadCsvBtn');
             const htmlBtnSide = document.getElementById('sidebarDownloadHtmlBtn');
             const pdfBtnSide = document.getElementById('sidebarDownloadPdfBtn');
+            const docBtnSide = document.getElementById('sidebarDownloadDocBtn');
+            const shareBtnSide = document.getElementById('sidebarShareBtn');
             const aiOverviewSideBtn = document.getElementById('sidebarAiOverviewBtn');
             const popovers = Array.from(document.querySelectorAll('.sidebar-report-popover'));
 
@@ -3760,6 +3853,19 @@ ${headHtml}
                 document.getElementById('downloadPdfBtn')?.click();
                 closeAllPopovers();
             });
+            docBtnSide?.addEventListener('click', function () {
+                if (!lastScanId || !lastDownloadUrls || !lastDownloadUrls.doc) {
+                    closeAllPopovers();
+                    return;
+                }
+                const docUrl = lastDownloadUrls.doc.startsWith('http') ? lastDownloadUrls.doc : (downloadBase + lastDownloadUrls.doc);
+                window.open(docUrl, '_blank');
+                closeAllPopovers();
+            });
+            shareBtnSide?.addEventListener('click', function () {
+                document.getElementById('shareResultsBtn')?.click();
+                closeAllPopovers();
+            });
             aiOverviewSideBtn?.addEventListener('click', function () {
                 document.getElementById('aiOverviewBtn')?.click();
                 closeAllPopovers();
@@ -3783,6 +3889,7 @@ ${headHtml}
         const csvBtn = document.getElementById('downloadCsvBtn');
         const htmlBtn = document.getElementById('downloadHtmlBtn');
         const pdfBtn = document.getElementById('downloadPdfBtn');
+        const docBtn = document.getElementById('downloadDocBtn');
 
         if (csvBtn) {
             csvBtn.addEventListener('click', () => {
@@ -3831,6 +3938,15 @@ ${headHtml}
                 }
                 const html = buildHtmlReport(lastScanData);
                 openStyledPrintPreview(html);
+            });
+        }
+        if (docBtn) {
+            docBtn.addEventListener('click', () => {
+                if (!lastScanId || !lastDownloadUrls || !lastDownloadUrls.doc) {
+                    return;
+                }
+                const docUrl = lastDownloadUrls.doc.startsWith('http') ? lastDownloadUrls.doc : (downloadBase + lastDownloadUrls.doc);
+                window.open(docUrl, '_blank');
             });
         }
         const aiOverviewBtn = document.getElementById('aiOverviewBtn');
@@ -3887,13 +4003,20 @@ ${headHtml}
         }
         function openShareModal() {
             const shareModal = getShareModal();
-            if (shareModal) { shareModal.classList.add('active'); shareModal.style.display = 'flex'; }
+            if (shareModal) {
+                shareModal.classList.add('active');
+                shareModal.style.display = 'flex';
+                ensureShareEmailRows();
+            }
         }
         function closeShareModal() {
             const shareModal = getShareModal();
             if (shareModal) { shareModal.classList.remove('active'); shareModal.style.display = 'none'; }
         }
         document.getElementById('shareModalClose')?.addEventListener('click', closeShareModal);
+        document.getElementById('notificationsBtn')?.addEventListener('click', function () {
+            openNotificationsModal();
+        });
         document.addEventListener('click', function (e) {
             const shareModal = getShareModal();
             if (!shareModal) return;
@@ -3921,6 +4044,87 @@ ${headHtml}
         });
         ['shareArtefactsPdf', 'shareArtefactsDoc', 'shareArtefactsHtml', 'shareArtefactsCsv'].forEach(id => {
             document.getElementById(id)?.addEventListener('change', syncShareAllCheckbox);
+        });
+
+        function createShareEmailRow(value) {
+            const row = document.createElement('div');
+            row.className = 'share-email-row';
+            const input = document.createElement('input');
+            input.type = 'email';
+            input.className = 'share-email-input';
+            input.placeholder = 'email@example.com';
+            input.value = value || '';
+            input.autocomplete = 'email';
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.className = 'share-email-btn share-email-btn--add';
+            addBtn.title = 'Add another email';
+            addBtn.textContent = '+';
+            const rmBtn = document.createElement('button');
+            rmBtn.type = 'button';
+            rmBtn.className = 'share-email-btn share-email-btn--remove';
+            rmBtn.title = 'Remove this email';
+            rmBtn.textContent = '-';
+            row.appendChild(input);
+            row.appendChild(addBtn);
+            row.appendChild(rmBtn);
+            return row;
+        }
+
+        function ensureShareEmailRows(seedList) {
+            const wrap = document.getElementById('shareEmailsWrap');
+            if (!wrap) return;
+            const seeds = Array.isArray(seedList) ? seedList.filter(Boolean) : [];
+            if (wrap.children.length === 0) {
+                const initial = seeds.length ? seeds : [''];
+                initial.forEach(v => wrap.appendChild(createShareEmailRow(v)));
+            }
+            updateShareEmailRowButtons();
+            const first = wrap.querySelector('.share-email-input');
+            if (first && !first.value) first.focus();
+        }
+
+        function updateShareEmailRowButtons() {
+            const wrap = document.getElementById('shareEmailsWrap');
+            if (!wrap) return;
+            const rows = Array.from(wrap.querySelectorAll('.share-email-row'));
+            rows.forEach((row, idx) => {
+                const rm = row.querySelector('.share-email-btn--remove');
+                if (rm) {
+                    rm.disabled = rows.length <= 1;
+                    rm.style.display = (idx === 0) ? 'none' : 'inline-flex';
+                }
+                const add = row.querySelector('.share-email-btn--add');
+                if (add) add.style.display = (idx === rows.length - 1) ? 'inline-flex' : 'none';
+            });
+        }
+
+        function collectShareRecipients() {
+            const wrap = document.getElementById('shareEmailsWrap');
+            if (!wrap) return [];
+            return Array.from(wrap.querySelectorAll('.share-email-input'))
+                .map(el => String(el.value || '').trim())
+                .filter(Boolean);
+        }
+
+        document.addEventListener('click', function (e) {
+            const t = e.target;
+            if (!(t instanceof Element)) return;
+            const row = t.closest('.share-email-row');
+            const wrap = document.getElementById('shareEmailsWrap');
+            if (!row || !wrap || !wrap.contains(row)) return;
+            if (t.closest('.share-email-btn--add')) {
+                wrap.appendChild(createShareEmailRow(''));
+                updateShareEmailRowButtons();
+                const lastInput = wrap.querySelector('.share-email-row:last-child .share-email-input');
+                if (lastInput) lastInput.focus();
+                return;
+            }
+            if (t.closest('.share-email-btn--remove')) {
+                if (wrap.querySelectorAll('.share-email-row').length <= 1) return;
+                row.remove();
+                updateShareEmailRowButtons();
+            }
         });
 
         async function waitForPdfUrl(timeoutMs) {
@@ -3960,11 +4164,7 @@ ${headHtml}
             if (document.getElementById('shareArtefactsDoc').checked) artefacts.push('doc');
             if (document.getElementById('shareArtefactsHtml').checked) artefacts.push('html');
             if (document.getElementById('shareArtefactsCsv').checked) artefacts.push('csv');
-            const emailsRaw = (document.getElementById('shareEmails')?.value || '').trim();
-            const recipients = emailsRaw
-                .split(/[\s,;]+/)
-                .map(v => v.trim())
-                .filter(Boolean);
+            const recipients = collectShareRecipients();
 
             if (!scanId || artefacts.length === 0 || recipients.length === 0) {
                 showToast('Share', 'Provide recipient email(s) and at least one format (PDF/DOC/HTML/CSV).', 'error');
@@ -4049,8 +4249,149 @@ ${headHtml}
             const safeMsg = String(message || '');
             const t = safeTitle.length > maxTitle ? safeTitle.slice(0, maxTitle - 1) + '…' : safeTitle;
             const m = safeMsg.length > maxMsg ? safeMsg.slice(0, maxMsg - 1) + '…' : safeMsg;
+            pushNotification(t, m, type || 'info');
             toastQueue.push({ title: t, message: m, type: type || 'info' });
             processToastQueue();
+        }
+        const notificationStore = [];
+        let notificationSeq = 0;
+        let notificationBadgeShown = 0;
+        let notificationBadgeTimer = null;
+        let notificationBadgeTarget = 0;
+        function getNotificationModal() {
+            return document.getElementById('notificationsModal');
+        }
+        function getNotificationById(id) {
+            const nid = String(id || '');
+            if (!nid) return null;
+            return notificationStore.find(n => n.id === nid) || null;
+        }
+        function formatNotifTime(ts) {
+            try {
+                return new Date(ts).toLocaleString();
+            } catch (e) {
+                return '';
+            }
+        }
+        function stepBadgeCount(target) {
+            const badge = document.getElementById('notificationsBadge');
+            if (!badge) return;
+            notificationBadgeTarget = Math.max(0, Number(target) || 0);
+            if (notificationBadgeTimer) return;
+            if (notificationBadgeShown > 0 || notificationBadgeTarget > 0) {
+                badge.style.display = 'inline-flex';
+            }
+            const tick = function () {
+                if (notificationBadgeShown === notificationBadgeTarget) {
+                    if (notificationBadgeShown <= 0) {
+                        badge.style.display = 'none';
+                        badge.textContent = '0';
+                    } else {
+                        badge.style.display = 'inline-flex';
+                        badge.textContent = notificationBadgeShown > 99 ? '99+' : String(notificationBadgeShown);
+                    }
+                    notificationBadgeTimer = null;
+                    return;
+                }
+                notificationBadgeShown += (notificationBadgeShown < notificationBadgeTarget ? 1 : -1);
+                badge.style.display = 'inline-flex';
+                badge.textContent = notificationBadgeShown > 99 ? '99+' : String(notificationBadgeShown);
+                notificationBadgeTimer = setTimeout(tick, 85);
+            };
+            notificationBadgeTimer = setTimeout(tick, 85);
+        }
+        function updateNotificationBadge() {
+            const unread = notificationStore.filter(n => !n.read).length;
+            stepBadgeCount(unread);
+        }
+        function renderNotificationsList() {
+            const list = document.getElementById('notificationsList');
+            const empty = document.getElementById('notificationsEmpty');
+            if (!list || !empty) return;
+            if (!notificationStore.length) {
+                list.innerHTML = '';
+                empty.style.display = 'block';
+                return;
+            }
+            empty.style.display = 'none';
+            list.innerHTML = notificationStore.slice().reverse().map(n => {
+                const type = String(n.type || 'info');
+                const unread = !n.read ? ' is-unread' : '';
+                const state = !n.read ? 'Unread' : 'Read';
+                return '<button type="button" class="notif-item notif-' + escapeHtml(type) + unread + '" data-notif-id="' + escapeHtml(n.id) + '">' +
+                    '<div class="notif-dot"></div>' +
+                    '<div class="notif-body">' +
+                    '<div class="notif-head"><h4>' + escapeHtml(n.title || 'Notification') + '</h4><span class="notif-state">' + state + '</span></div>' +
+                    '<p>' + escapeHtml(n.message || '') + '</p>' +
+                    '<span class="notif-time">' + escapeHtml(formatNotifTime(n.ts)) + '</span>' +
+                    '</div></button>';
+            }).join('');
+        }
+        function markNotificationRead(id) {
+            const item = getNotificationById(id);
+            if (!item || item.read) return;
+            item.read = true;
+            updateNotificationBadge();
+            renderNotificationsList();
+        }
+        function pushNotification(title, message, type) {
+            notificationSeq += 1;
+            notificationStore.push({
+                id: 'n' + notificationSeq,
+                title: String(title || ''),
+                message: String(message || ''),
+                type: String(type || 'info'),
+                ts: Date.now(),
+                read: false,
+            });
+            updateNotificationBadge();
+            renderNotificationsList();
+        }
+        function markAllNotificationsRead() {
+            notificationStore.forEach(n => { n.read = true; });
+            updateNotificationBadge();
+            renderNotificationsList();
+        }
+        function clearAllNotifications() {
+            notificationStore.length = 0;
+            updateNotificationBadge();
+            renderNotificationsList();
+        }
+        function openNotificationDetailModal(id) {
+            const item = getNotificationById(id);
+            const modal = document.getElementById('notificationDetailModal');
+            if (!item || !modal) return;
+            markNotificationRead(item.id);
+            const titleEl = document.getElementById('notificationDetailTitle');
+            const msgEl = document.getElementById('notificationDetailMessage');
+            const metaEl = document.getElementById('notificationDetailMeta');
+            const level = String(item.type || 'info').toUpperCase();
+            if (titleEl) titleEl.textContent = String(item.title || 'Notification');
+            if (msgEl) msgEl.textContent = String(item.message || '');
+            if (metaEl) metaEl.textContent = level + ' - ' + formatNotifTime(item.ts);
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+        }
+        function closeNotificationDetailModal() {
+            const modal = document.getElementById('notificationDetailModal');
+            if (!modal) return;
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+        }
+        function openNotificationsModal() {
+            const modal = getNotificationModal();
+            if (!modal) return;
+            renderNotificationsList();
+            modal.style.display = 'flex';
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeNotificationsModal() {
+            const modal = getNotificationModal();
+            if (!modal) return;
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+            document.body.style.overflow = '';
         }
         function copyTextToClipboard(text) {
             const raw = String(text || '').trim();
@@ -4097,6 +4438,7 @@ ${headHtml}
             lastScanId = null;
             lastDownloadUrls = {};
             lastHumanReportText = '';
+            clearAllNotifications();
             stopReportReconcileWindow();
             try { sessionStorage.removeItem(scanStateStorageKey); } catch (e) { }
             window.location.href = window.location.pathname;
@@ -4245,6 +4587,28 @@ ${headHtml}
                 closeShareModal();
                 return;
             }
+            if (t.closest('#notificationsModalClose') || t.id === 'notificationsModal') {
+                closeNotificationsModal();
+                return;
+            }
+            if (t.closest('#notificationDetailClose') || t.id === 'notificationDetailModal') {
+                closeNotificationDetailModal();
+                return;
+            }
+            if (t.closest('#notificationsMarkAllReadBtn')) {
+                markAllNotificationsRead();
+                return;
+            }
+            if (t.closest('#notificationsClearAllBtn')) {
+                clearAllNotifications();
+                return;
+            }
+            const notifItem = t.closest('.notif-item[data-notif-id]');
+            if (notifItem) {
+                const id = notifItem.getAttribute('data-notif-id') || '';
+                openNotificationDetailModal(id);
+                return;
+            }
             if (t.closest('#shareSubmitBtn')) {
                 submitShareScan();
                 return;
@@ -4286,6 +4650,13 @@ ${headHtml}
             }
             if (t.closest('#scanTimelinePreviewClose') || t.id === 'scanTimelinePreviewModal') {
                 closeScanTimelinePreviewModal();
+                return;
+            }
+            if (t.closest('#scanTimelinePreviewViewFullBtn')) {
+                e.preventDefault();
+                e.stopPropagation();
+                closeScanTimelinePreviewModal();
+                openScanTimelineFullModal();
                 return;
             }
             if (t.closest('#scanTimelineFullClose') || t.id === 'scanTimelineFullModal') {
@@ -4337,6 +4708,8 @@ ${headHtml}
         });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') {
+                closeNotificationDetailModal();
+                closeNotificationsModal();
                 closeReportOverlay('userReportOverlay');
                 closeReportOverlay('downloadsOverlay');
                 closeScanTimelinePreviewModal();
@@ -4373,6 +4746,32 @@ ${headHtml}
         });
     </script>
 
+    <div id="notificationsModal" class="modal-overlay notifications-modal-overlay"
+        style="display:none; position:fixed; inset:0; background:rgba(2, 6, 23, 0.65); z-index:10019; align-items:center; justify-content:center;">
+        <div class="modal notifications-modal">
+            <div class="notifications-modal-head">
+                <h3><i class="fas fa-bell"></i> Notifications</h3>
+                <button type="button" id="notificationsModalClose" class="icon-btn" title="Close"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="notifications-modal-actions">
+                <button type="button" id="notificationsMarkAllReadBtn" class="modal-btn secondary">Mark all as read</button>
+                <button type="button" id="notificationsClearAllBtn" class="modal-btn secondary">Clear all</button>
+            </div>
+            <div id="notificationsEmpty" class="notifications-empty">No notifications yet.</div>
+            <div id="notificationsList" class="notifications-list"></div>
+        </div>
+    </div>
+    <div id="notificationDetailModal" class="modal-overlay notifications-modal-overlay"
+        style="display:none; position:fixed; inset:0; background:rgba(2, 6, 23, 0.65); z-index:10021; align-items:center; justify-content:center;">
+        <div class="modal notification-detail-modal">
+            <h3 id="notificationDetailTitle">Notification</h3>
+            <p id="notificationDetailMessage"></p>
+            <div id="notificationDetailMeta" class="notification-detail-meta"></div>
+            <div class="notifications-modal-actions">
+                <button type="button" id="notificationDetailClose" class="modal-btn secondary">Close</button>
+            </div>
+        </div>
+    </div>
     <div id="toastContainer"
         style="position:fixed;bottom:24px;right:24px;z-index:10020;display:flex;flex-direction:column;gap:8px;pointer-events:none;">
     </div>
@@ -4497,21 +4896,6 @@ ${headHtml}
             color: var(--text-main);
         }
 
-        #shareModal #shareEmails {
-            border: 1px solid var(--border-color);
-            background: #fff;
-            color: var(--text-main);
-            resize: vertical;
-            min-height: 96px;
-            transition: border-color .15s ease, box-shadow .2s ease;
-        }
-
-        #shareModal #shareEmails:focus {
-            outline: none;
-            border-color: rgba(59, 130, 246, .5);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, .16);
-        }
-
         #shareModal label {
             color: var(--text-main);
         }
@@ -4521,6 +4905,132 @@ ${headHtml}
             transform: translateY(1px);
             margin-right: 6px;
         }
+
+        .share-emails-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+        .share-email-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 8px;
+            align-items: center;
+        }
+        .share-email-input {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: #fff;
+            color: var(--text-main);
+            transition: border-color .15s ease, box-shadow .2s ease;
+        }
+        .share-email-input:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, .55);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, .14);
+        }
+        .share-email-btn {
+            width: 34px;
+            height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-weight: 800;
+            font-size: 18px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .share-email-btn:hover { filter: brightness(0.96); }
+        .share-email-btn--add {
+            color: #0f766e;
+            border-color: rgba(20, 184, 166, 0.35);
+            background: rgba(20, 184, 166, 0.10);
+        }
+        .share-email-btn--remove {
+            color: #b91c1c;
+            border-color: rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.10);
+        }
+
+        .sidebar-rich-tip { position: relative; overflow: visible; }
+        .sidebar-rich-tip::after,
+        .sidebar-rich-tip::before {
+            position: absolute;
+            left: calc(100% + 12px);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity .16s ease, transform .16s ease;
+            pointer-events: none;
+            z-index: 90;
+        }
+        .sidebar-rich-tip::after {
+            content: attr(data-tip-title) "\A" attr(data-tip-text);
+            white-space: pre-line;
+            top: 50%;
+            transform: translateY(-50%) translateX(-4px);
+            min-width: 260px;
+            max-width: 320px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-main);
+            box-shadow: 0 10px 24px rgba(2, 6, 23, 0.18);
+            font-size: 12px;
+            line-height: 1.45;
+            text-align: left;
+        }
+        .sidebar-rich-tip::before {
+            content: "";
+            top: 50%;
+            transform: translateY(-50%) translateX(-4px);
+            border: 7px solid transparent;
+            border-right-color: var(--border-color);
+            left: calc(100% + 0px);
+        }
+        .sidebar-rich-tip:hover::after,
+        .sidebar-rich-tip:hover::before,
+        .sidebar-rich-tip:focus-visible::after,
+        .sidebar-rich-tip:focus-visible::before {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(-50%) translateX(0);
+        }
+        /* For download items inside the sidebar popover, show tooltip beside each item. */
+        .sidebar-popover-item.sidebar-rich-tip::after,
+        .sidebar-popover-item.sidebar-rich-tip::before {
+            left: calc(100% + 12px);
+            top: 50%;
+            right: auto;
+        }
+        .sidebar-popover-item.sidebar-rich-tip::after {
+            bottom: auto;
+            transform: translateY(-50%) translateX(-4px);
+            min-width: 220px;
+            max-width: 300px;
+        }
+        .sidebar-popover-item.sidebar-rich-tip::before {
+            bottom: auto;
+            left: calc(100% + 0px);
+            transform: translateY(-50%) translateX(-4px);
+            border: 7px solid transparent;
+            border-right-color: var(--border-color);
+            border-top-color: transparent;
+        }
+        .sidebar-popover-item.sidebar-rich-tip:hover::after,
+        .sidebar-popover-item.sidebar-rich-tip:hover::before,
+        .sidebar-popover-item.sidebar-rich-tip:focus-visible::after,
+        .sidebar-popover-item.sidebar-rich-tip:focus-visible::before {
+            transform: translateY(-50%) translateX(0);
+        }
     </style>
     <div id="shareModal" class="modal-overlay"
         style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
@@ -4529,10 +5039,8 @@ ${headHtml}
             <h3 style="margin-bottom:16px;">Share scan results</h3>
             <input type="hidden" id="shareScanId" value="">
             <p style="margin-bottom:6px; font-size:13px; font-weight:600;">Share with</p>
-            <p style="margin-bottom:8px; font-size:12px; color:var(--text-light);">Enter one or several email addresses
-                (comma or space separated):</p>
-            <textarea id="shareEmails" rows="3" style="width:100%; margin-bottom:16px; padding:10px; border-radius:8px;"
-                placeholder="email1@example.com, email2@example.com"></textarea>
+            <p style="margin-bottom:8px; font-size:12px; color:var(--text-light);">Enter one or several email addresses:</p>
+            <div id="shareEmailsWrap" class="share-emails-stack" aria-label="Recipient email addresses"></div>
             <p style="margin-bottom:8px; font-size:13px; font-weight:600;">Attach</p>
             <div style="margin-bottom:16px;">
                 <label style="display:block; margin:4px 0; font-weight:600;"><input type="checkbox"

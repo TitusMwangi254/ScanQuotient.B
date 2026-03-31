@@ -841,8 +841,8 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
         }
 
         .actions-modal-list {
-            display: flex;
-            flex-direction: column;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 12px;
             margin-top: 6px;
         }
@@ -1303,6 +1303,8 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             padding: 32px;
             max-width: 500px;
             width: 90%;
+            max-height: min(88vh, 860px);
+            overflow: auto;
             box-shadow: var(--shadow-lg);
             animation: modalSlide 0.3s ease;
         }
@@ -1383,6 +1385,68 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
 
         .modal-btn.danger:hover {
             background: var(--critical-color);
+        }
+
+        .share-email-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .share-email-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 8px;
+            align-items: center;
+        }
+        .share-email-input {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            transition: border-color .15s ease, box-shadow .2s ease;
+        }
+        .share-email-input:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, .55);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, .14);
+        }
+        .share-email-op {
+            width: 34px;
+            height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-weight: 800;
+            font-size: 18px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .share-email-op--add {
+            color: #0f766e;
+            border-color: rgba(20, 184, 166, 0.35);
+            background: rgba(20, 184, 166, 0.10);
+        }
+        .share-email-op--remove {
+            color: #b91c1c;
+            border-color: rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.10);
+        }
+        .share-email-op:hover { filter: brightness(0.96); }
+        #actionsModal .modal {
+            max-width: 860px;
+            width: 94%;
+        }
+        @media (max-width: 860px) {
+            .actions-modal-list {
+                grid-template-columns: 1fr;
+            }
         }
 
         /* Footer */
@@ -1895,11 +1959,8 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             </div>
             <input type="hidden" id="shareModalScanId" value="">
             <p style="margin-bottom:8px; font-weight:600;">Share with</p>
-            <p style="margin-bottom:8px; font-size:12px; color:var(--text-light);">Enter one or several email addresses
-                (comma or space separated):</p>
-            <textarea id="shareModalEmails" rows="3"
-                style="width:100%; margin-bottom:16px; padding:10px; border-radius:8px;"
-                placeholder="email1@example.com, email2@example.com"></textarea>
+            <p style="margin-bottom:8px; font-size:12px; color:var(--text-light);">Enter one or several email addresses:</p>
+            <div id="shareModalEmailsWrap" class="share-email-stack" style="margin-bottom:14px;"></div>
             <p style="margin-bottom:8px; font-weight:600;">Attach</p>
             <div style="margin-bottom:12px;">
                 <label style="display:block; font-weight:600;"><input type="checkbox" id="shareModalAll"> Select
@@ -2751,6 +2812,80 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             const m = document.getElementById('shareModal');
             if (m) { m.style.display = 'none'; }
         }
+        function createHistoryShareEmailRow(value) {
+            const row = document.createElement('div');
+            row.className = 'share-email-row';
+            const input = document.createElement('input');
+            input.type = 'email';
+            input.className = 'share-email-input';
+            input.placeholder = 'email@example.com';
+            input.value = value || '';
+            input.autocomplete = 'email';
+            const add = document.createElement('button');
+            add.type = 'button';
+            add.className = 'share-email-op share-email-op--add';
+            add.title = 'Add another email';
+            add.textContent = '+';
+            const rm = document.createElement('button');
+            rm.type = 'button';
+            rm.className = 'share-email-op share-email-op--remove';
+            rm.title = 'Remove this email';
+            rm.textContent = '-';
+            row.appendChild(input);
+            row.appendChild(add);
+            row.appendChild(rm);
+            return row;
+        }
+        function ensureHistoryShareEmailRows(seed) {
+            const wrap = document.getElementById('shareModalEmailsWrap');
+            if (!wrap) return;
+            const seeds = Array.isArray(seed) ? seed.filter(Boolean) : [];
+            wrap.innerHTML = '';
+            (seeds.length ? seeds : ['']).forEach(v => wrap.appendChild(createHistoryShareEmailRow(v)));
+            syncHistoryShareEmailRows();
+        }
+        function syncHistoryShareEmailRows() {
+            const wrap = document.getElementById('shareModalEmailsWrap');
+            if (!wrap) return;
+            const rows = Array.from(wrap.querySelectorAll('.share-email-row'));
+            rows.forEach((row, idx) => {
+                const add = row.querySelector('.share-email-op--add');
+                const rm = row.querySelector('.share-email-op--remove');
+                if (add) add.style.display = (idx === rows.length - 1) ? 'inline-flex' : 'none';
+                if (rm) {
+                    rm.disabled = rows.length <= 1;
+                    rm.style.display = (idx === 0) ? 'none' : 'inline-flex';
+                }
+            });
+            const first = wrap.querySelector('.share-email-input');
+            if (first && !first.value) first.focus();
+        }
+        function collectHistoryShareRecipients() {
+            const wrap = document.getElementById('shareModalEmailsWrap');
+            if (!wrap) return [];
+            return Array.from(wrap.querySelectorAll('.share-email-input'))
+                .map(el => String(el.value || '').trim())
+                .filter(Boolean);
+        }
+        document.getElementById('shareModalEmailsWrap')?.addEventListener('click', (e) => {
+            const t = e.target;
+            if (!(t instanceof Element)) return;
+            const row = t.closest('.share-email-row');
+            const wrap = document.getElementById('shareModalEmailsWrap');
+            if (!row || !wrap) return;
+            if (t.closest('.share-email-op--add')) {
+                wrap.appendChild(createHistoryShareEmailRow(''));
+                syncHistoryShareEmailRows();
+                const last = wrap.querySelector('.share-email-row:last-child .share-email-input');
+                if (last) last.focus();
+                return;
+            }
+            if (t.closest('.share-email-op--remove')) {
+                if (wrap.querySelectorAll('.share-email-row').length <= 1) return;
+                row.remove();
+                syncHistoryShareEmailRows();
+            }
+        });
         function syncHistoryShareAll() {
             const all = document.getElementById('shareModalAll');
             const pdf = document.getElementById('shareModalPdf');
@@ -2814,7 +2949,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             if (csvHint) csvHint.style.display = opts.hasCsv ? 'none' : 'inline';
             const all = document.getElementById('shareModalAll');
             if (all) all.checked = !!((pdf && pdf.checked) && (doc && doc.checked) && (html && html.checked) && (csv && csv.checked));
-            document.getElementById('shareModalEmails').value = '';
+            ensureHistoryShareEmailRows(['']);
             document.getElementById('shareModal').style.display = 'flex';
         }
         document.querySelector('.history-table')?.addEventListener('click', (e) => {
@@ -2838,11 +2973,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             if (document.getElementById('shareModalDoc').checked) artefacts.push('doc');
             if (document.getElementById('shareModalHtml').checked) artefacts.push('html');
             if (document.getElementById('shareModalCsv').checked) artefacts.push('csv');
-            const emailsRaw = (document.getElementById('shareModalEmails')?.value || '').trim();
-            const recipients = emailsRaw
-                .split(/[\s,;]+/)
-                .map(v => v.trim())
-                .filter(Boolean);
+            const recipients = collectHistoryShareRecipients();
 
             if (!scanId || artefacts.length === 0 || recipients.length === 0) {
                 showToast('Share', 'Provide recipient email(s) and at least one format (PDF/DOC/HTML/CSV).', 'error');
