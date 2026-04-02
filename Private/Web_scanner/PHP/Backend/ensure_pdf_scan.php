@@ -4,6 +4,8 @@
  * then redirect to download_scan.php. If PDF already exists, redirect immediately.
  */
 session_start();
+require_once __DIR__ . '/../Include/sq_auth_guard.php';
+sq_require_web_scanner_auth(false);
 
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'scanquotient.a1');

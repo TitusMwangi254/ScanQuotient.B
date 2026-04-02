@@ -4,6 +4,8 @@
  * Forwards POST body to http://127.0.0.1:5000/scan and returns the response.
  */
 session_start();
+require_once __DIR__ . '/../Include/sq_auth_guard.php';
+sq_require_web_scanner_auth(true);
 header('Content-Type: application/json; charset=utf-8');
 // Never leak internal PHP warnings/fatal details to end users.
 ini_set('display_errors', '0');

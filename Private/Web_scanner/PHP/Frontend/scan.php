@@ -1,5 +1,16 @@
 <?php
 session_start();
+
+$allowed_roles = ['user', 'admin', 'super_admin'];
+if (
+    !isset($_SESSION['authenticated'], $_SESSION['role']) ||
+    $_SESSION['authenticated'] !== true ||
+    !in_array($_SESSION['role'], $allowed_roles, true)
+) {
+    header('Location: ../../../../Public/Login_page/PHP/Frontend/Login_page_site.php');
+    exit();
+}
+
 $currentUserName = $_SESSION['user_name'] ?? 'User';
 $profile_photo = $_SESSION['profile_photo'] ?? null;
 if (!empty($profile_photo)) {
@@ -2115,34 +2126,52 @@ if (!empty($profile_photo)) {
             const sideShareBtn = document.getElementById('sidebarShareBtn');
             const bodyDocBtn = document.getElementById('downloadDocBtn');
             const visible = !!(sourceAiBtn && sourceAiBtn.style.display !== 'none');
+            const setStyleDisplay = (el, value) => {
+                if (!el) return;
+                if (el.style.display !== value) el.style.display = value;
+            };
+            const setDisabled = (el, disabled) => {
+                if (!el) return;
+                if (!!el.disabled !== !!disabled) el.disabled = !!disabled;
+            };
+            const setAttr = (el, name, value) => {
+                if (!el) return;
+                const next = String(value);
+                if (el.getAttribute(name) !== next) el.setAttribute(name, next);
+            };
             if (sideAiBtn) {
-                sideAiBtn.style.display = visible ? 'inline-flex' : 'none';
-                if (sourceAiBtn) sideAiBtn.disabled = sourceAiBtn.disabled;
+                setStyleDisplay(sideAiBtn, visible ? 'inline-flex' : 'none');
+                if (sourceAiBtn) setDisabled(sideAiBtn, !!sourceAiBtn.disabled);
             }
             if (sideDocBtn) {
                 const hasDoc = !!(lastScanId && lastDownloadUrls && lastDownloadUrls.doc);
-                sideDocBtn.style.display = hasDoc ? 'flex' : 'none';
-                sideDocBtn.disabled = !hasDoc;
-                sideDocBtn.title = hasDoc
+                const docTitle = hasDoc
                     ? 'Download AI summary DOC file'
                     : 'DOC file appears after AI summary generation completes';
+                setStyleDisplay(sideDocBtn, hasDoc ? 'flex' : 'none');
+                setDisabled(sideDocBtn, !hasDoc);
+                setAttr(sideDocBtn, 'title', docTitle);
                 if (bodyDocBtn) {
-                    bodyDocBtn.style.display = 'inline-flex';
-                    bodyDocBtn.disabled = false;
-                    bodyDocBtn.setAttribute('aria-disabled', hasDoc ? 'false' : 'true');
+                    setStyleDisplay(bodyDocBtn, 'inline-flex');
+                    setDisabled(bodyDocBtn, false);
+                    setAttr(bodyDocBtn, 'aria-disabled', hasDoc ? 'false' : 'true');
                     bodyDocBtn.classList.toggle('is-disabled', !hasDoc);
-                    bodyDocBtn.setAttribute('data-tip-title', hasDoc ? 'DOC report ready' : 'DOC report preparing');
-                    bodyDocBtn.setAttribute(
+                    setAttr(bodyDocBtn, 'data-tip-title', hasDoc ? 'DOC report ready' : 'DOC report preparing');
+                    setAttr(
+                        bodyDocBtn,
                         'data-tip-text',
                         hasDoc
                             ? 'Download the AI summary as a Word document.'
                             : 'Document is still being prepared. Please wait a moment, then try again.'
                     );
-                    bodyDocBtn.title = hasDoc ? 'Download DOC' : '';
+                    setAttr(bodyDocBtn, 'title', hasDoc ? 'Download DOC' : '');
                 }
             }
             if (sideShareBtn) {
-                sideShareBtn.disabled = !(lastScanId || (lastScanData && lastScanData.target));
+                setDisabled(sideShareBtn, !(lastScanId || (lastScanData && lastScanData.target)));
+            }
+            if (document.getElementById('downloadsOverlay')?.style.display === 'flex') {
+                syncReportOverlayContent();
             }
         }
         function inferFindingDomain(v) {
@@ -3739,10 +3768,18 @@ ${headHtml}
                 const controls = ids.map((id) => document.getElementById(id)).filter(Boolean);
                 actions.innerHTML = controls.map((el) => el.outerHTML).join('');
                 actions.querySelectorAll('button').forEach((clonedBtn) => {
-                    const sourceBtn = document.getElementById(clonedBtn.id);
+                    const sourceId = clonedBtn.id;
+                    const sourceBtn = sourceId ? document.getElementById(sourceId) : null;
                     if (!sourceBtn) return;
+                    if (sourceId) {
+                        clonedBtn.setAttribute('data-source-id', sourceId);
+                        clonedBtn.id = sourceId + '__overlay';
+                    }
                     clonedBtn.disabled = sourceBtn.disabled;
                     clonedBtn.style.display = sourceBtn.style.display;
+                    clonedBtn.setAttribute('aria-disabled', sourceBtn.getAttribute('aria-disabled') || 'false');
+                    clonedBtn.className = sourceBtn.className;
+                    clonedBtn.title = sourceBtn.title || '';
                     clonedBtn.addEventListener('click', () => sourceBtn.click());
                 });
             }

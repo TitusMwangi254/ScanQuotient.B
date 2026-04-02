@@ -4,6 +4,8 @@
  * Uses user_id from session (set by login_handler). Local use only - API key in code to be removed for production.
  */
 session_start();
+require_once __DIR__ . '/../Include/sq_auth_guard.php';
+sq_require_web_scanner_auth(true);
 header('Content-Type: application/json; charset=utf-8');
 
 // Ensure consistent timestamps in East Africa time (EAT, UTC+03:00)

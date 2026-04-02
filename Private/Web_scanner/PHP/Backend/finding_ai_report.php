@@ -41,6 +41,8 @@
  */
 
 session_start();
+require_once __DIR__ . '/../Include/sq_auth_guard.php';
+sq_require_web_scanner_auth(true);
 header('Content-Type: application/json; charset=utf-8');
 
 if (!isset($_SESSION['authenticated']) || $_SESSION['authenticated'] !== true) {

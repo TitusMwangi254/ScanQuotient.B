@@ -3,6 +3,8 @@
  * Serve stored scan artefacts (PDF, HTML, CSV) for the logged-in user.
  */
 session_start();
+require_once __DIR__ . '/../Include/sq_auth_guard.php';
+sq_require_web_scanner_auth(false);
 
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'scanquotient.a1');

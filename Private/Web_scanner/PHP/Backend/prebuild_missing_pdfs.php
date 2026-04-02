@@ -4,6 +4,8 @@
  * Helps make share/download actions instant on older scans.
  */
 session_start();
+require_once __DIR__ . '/../Include/sq_auth_guard.php';
+sq_require_web_scanner_auth(true);
 header('Content-Type: application/json; charset=utf-8');
 
 define('DB_HOST', '127.0.0.1');
