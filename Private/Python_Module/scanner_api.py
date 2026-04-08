@@ -21,6 +21,7 @@ from enum import Enum
 import subprocess
 import platform
 from threading import Lock
+from evidence_engine import EvidenceFactory
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -344,89 +345,16 @@ class PortScanner:
             open_ports = self._connect_scan(target_ip, ports)
 
         def _port_evidence(title: str, info: PortInfo) -> str:
-            """
-            Forensic-quality port evidence.
-            Covers: what was tested, what the scanner did, exactly what it found,
-            what a layperson should understand, and what a developer can act on.
-            """
-            protocol = "TCP"
-            state    = info.status.value.upper() if hasattr(info.status, "value") else "OPEN"
-            risk_label = {
-                'critical': 'CRITICAL — Do not expose to the internet',
-                'high':     'HIGH — Should be restricted or hidden behind a firewall',
-                'medium':   'MEDIUM — Review whether internet access is necessary',
-                'low':      'LOW — Generally acceptable but worth reviewing',
-                'info':     'INFO — Expected open port',
-            }.get(info.risk.lower(), info.risk.upper())
-
-            lines = [
-                f"{'='*60}",
-                f"PORT SCAN EVIDENCE — {title}",
-                f"{'='*60}",
-                "",
-                "WHAT WE DID",
-                f"{'-'*40}",
-                f"  Scan Method      : TCP {scan_type.upper()} connect — we attempted a full",
-                f"                     TCP handshake with port {info.port} on the target host.",
-                f"  Target Hostname  : {hostname}",
-                f"  Resolved IP      : {target_ip}",
-                f"  Port Tested      : {info.port}/{protocol.lower()}",
-                f"  Scan Timestamp   : {now_eat_iso()}",
-                "",
-                "WHAT WE FOUND",
-                f"{'-'*40}",
-                f"  Port             : {info.port}/{protocol.lower()}",
-                f"  Observed State   : {state}",
-                f"  Detected Service : {info.service}",
-                f"  Risk Rating      : {risk_label}",
-                "",
-                "SERVICE FINGERPRINT",
-                f"{'-'*40}",
-            ]
-
-            if info.banner:
-                banner_clean = info.banner.replace('\r\n', '\n').replace('\r', '\n').strip()
-                lines.append(f"  Banner Received  : Yes — the service sent the following greeting:")
-                for banner_line in banner_clean.split('\n')[:8]:
-                    lines.append(f"    | {banner_line}")
-                lines.append(f"  Banner Length    : {len(info.banner)} characters")
-            else:
-                lines.append("  Banner Received  : No — port accepted connection but sent no greeting data.")
-                lines.append("  Implication      : Service is listening but silent (common for databases, proxies).")
-
-            if info.version:
-                lines.append(f"  Version String   : {info.version}")
-                lines.append(f"  Implication      : Exact version is visible — enables targeted CVE lookup.")
-
-            lines += [
-                "",
-                "NETWORK REACHABILITY",
-                f"{'-'*40}",
-                f"  Connection Result  : TCP handshake completed successfully",
-                f"  Firewall Status    : Not filtered — connection completed within {self.timeout:.1f}s timeout",
-                f"  Internet Exposure  : This port is reachable from outside your network",
-                "",
-                "SUMMARY",
-                f"{'-'*40}",
-                f"  Port {info.port} on your server is open and responding to anyone on the internet.",
-                f"  The service running here is identified as: {info.service}.",
-            ]
-
-            if info.risk in ('critical', 'high'):
-                lines += [
-                    f"  This type of service ({info.service}) is commonly targeted by automated",
-                    f"  attack tools. It should not be directly reachable from the public internet.",
-                    f"  If you need it, restrict access to specific IP addresses using a firewall rule.",
-                ]
-            elif info.risk == 'medium':
-                lines += [
-                    f"  This service does not need to be publicly accessible in most deployments.",
-                    f"  Verify whether internet access is intentional and restrict if not needed.",
-                ]
-            else:
-                lines.append(f"  This is an expected open port for serving web traffic.")
-
-            return "\n".join(lines) + "\n"
+            return self.evidence_factory.port_exposed_service(
+                hostname=hostname,
+                port=info.port,
+                service=info.service,
+                risk=info.risk,
+                banner=info.banner,
+                version=info.version,
+                target_ip=target_ip,
+                scan_type=scan_type
+            ).combined
 
         for port_info in open_ports:
             entry = {
@@ -676,6 +604,7 @@ class SecurityScanner:
         self.timeout       = 10
         self.max_redirects = 5
         self.port_scanner  = PortScanner(timeout=2.0, max_workers=30)
+        self.evidence_factory = EvidenceFactory()
 
         self.sql_payloads = [
             "'", "''", "' OR '1'='1", "' OR 1=1--", "' UNION SELECT NULL--",
@@ -826,98 +755,81 @@ class SecurityScanner:
                         body_highlight: Optional[str] = None,
                         body_preview_chars: int = 400,
                         plain_english_summary: Optional[str] = None) -> str:
-        """
-        Central evidence builder — produces a structured, forensic-quality block.
+        if response is None:
+            return f"{title}\nNo HTTP response captured for this test."
 
-        Sections:
-          WHAT WE DID         — scanner action in plain language
-          REQUEST             — full HTTP request sent (method, URL, all headers)
-          RESPONSE            — full status line + all response headers received
-          RESPONSE BODY       — excerpt with finding highlighted (>>> ... <<<)
-          FINDING DETAILS     — finding-specific key/value fields
-          PLAIN-LANGUAGE      — one-paragraph summary for non-technical readers
+        ev = self.evidence_factory
+        fields = dict(extra_fields or [])
 
-        Both technical and non-technical readers can extract value from this layout.
-        """
-        sep  = "=" * 60
-        sep2 = "-" * 40
+        if title == "CORS Wildcard Policy":
+            return ev.cors_wildcard(
+                request_url, response,
+                fields.get("Test: Injected Origin Header", ""),
+                fields.get("Result: Access-Control-Allow-Origin", ""),
+                fields.get("Result: Access-Control-Allow-Credentials", ""),
+                fields.get("Preflight Detail", "")
+            ).combined
+        if title == "CORS Origin Reflection + Credentials":
+            return ev.cors_reflection_with_credentials(
+                request_url, response,
+                fields.get("Test: Injected Origin Header", ""),
+                fields.get("Result: Access-Control-Allow-Origin", ""),
+                fields.get("Result: Access-Control-Allow-Credentials", ""),
+                fields.get("Preflight Detail", "")
+            ).combined
+        if title == "CORS Origin Reflection":
+            return ev.cors_reflection_no_credentials(
+                request_url, response,
+                fields.get("Test: Injected Origin Header", ""),
+                fields.get("Result: Access-Control-Allow-Origin", ""),
+                fields.get("Result: Access-Control-Allow-Credentials", ""),
+                fields.get("Preflight Detail", "")
+            ).combined
+        if title == "Open Redirect Validation":
+            return ev.open_redirect(
+                request_url,
+                fields.get("Parameter Tested", ""),
+                fields.get("Injected Payload", ""),
+                response,
+                fields.get("Location Header", ""),
+                fields.get("Redirect Chain", "")
+            ).combined
+        if title == "SQL Injection — Error-Based":
+            baseline_status_raw = str(fields.get("Baseline Status", "")).strip()
+            baseline_status = int(baseline_status_raw) if baseline_status_raw.isdigit() else None
+            return ev.sqli_error_based(
+                request_url,
+                fields.get("Parameter Tested", ""),
+                fields.get("Injected Payload", ""),
+                fields.get("Error Pattern Matched", ""),
+                fields.get("Error Snippet from Body", ""),
+                response,
+                fields.get("Baseline URL", ""),
+                baseline_status,
+                fields.get("Database Type Indicated", "Unknown")
+            ).combined
+        if title.startswith("Reflected Cross-Site Scripting (XSS)"):
+            return ev.xss_reflected(
+                request_url,
+                fields.get("Injected Payload", body_highlight or ""),
+                response,
+                fields.get("Injection Context Type", "Unknown"),
+                fields.get("Context Location", "Unknown"),
+                fields.get("Context Detail", ""),
+                response.headers.get("Content-Security-Policy", ""),
+                "Possibly" in str(fields.get("CSP Blocks Execution", ""))
+            ).combined
+        if title == "Cookie Missing Secure Flag":
+            cookies = response.raw.headers.getlist('Set-Cookie') if hasattr(response, "raw") and hasattr(response.raw, "headers") and hasattr(response.raw.headers, "getlist") else [response.headers.get("Set-Cookie", "")]
+            return ev.cookie_missing_flag(request_url, response, "Secure", cookies).combined
+        if title == "Cookie Missing HttpOnly Flag":
+            cookies = response.raw.headers.getlist('Set-Cookie') if hasattr(response, "raw") and hasattr(response.raw, "headers") and hasattr(response.raw.headers, "getlist") else [response.headers.get("Set-Cookie", "")]
+            return ev.cookie_missing_flag(request_url, response, "HttpOnly", cookies).combined
+        if title == "Cookie Missing SameSite Attribute":
+            cookies = response.raw.headers.getlist('Set-Cookie') if hasattr(response, "raw") and hasattr(response.raw, "headers") and hasattr(response.raw.headers, "getlist") else [response.headers.get("Set-Cookie", "")]
+            return ev.cookie_missing_flag(request_url, response, "SameSite", cookies).combined
 
-        # Derive body metadata if response exists
-        body_type    = ""
-        page_title   = ""
-        content_type = ""
-        if response is not None:
-            content_type = response.headers.get('Content-Type', '')
-            body_type    = _classify_response_body(response.text, content_type)
-            if 'html' in content_type.lower():
-                page_title = _extract_title(response.text)
-
-        lines = [sep, f"EVIDENCE: {title}", sep, ""]
-
-        # ── WHAT WE DID ──────────────────────────────────────────────────
-        lines += [
-            "WHAT WE DID",
-            sep2,
-            f"  We sent a {method} request to the URL shown below and inspected the",
-            f"  response for signs of the vulnerability described in this finding.",
-            f"  URL Tested  : {request_url}",
-            f"  Method      : {method}",
-            f"  Timestamp   : {now_eat_iso()}",
-            "",
-        ]
-
-        # ── REQUEST ──────────────────────────────────────────────────────
-        lines += ["REQUEST", sep2,
-                  f"  Method  : {method}",
-                  f"  URL     : {request_url}"]
-        if request_headers:
-            lines.append("  Headers Sent:")
-            for k, v in request_headers.items():
-                lines.append(f"    {k}: {v}")
-        lines.append("")
-
-        # ── RESPONSE ─────────────────────────────────────────────────────
-        lines += ["RESPONSE", sep2]
-        if response is not None:
-            lines.append(f"  Status  : {response.status_code} {response.reason}")
-            if content_type:
-                lines.append(f"  Content-Type   : {content_type}")
-            if page_title:
-                lines.append(f"  Page Title     : {page_title}")
-            lines.append(f"  Body Type      : {body_type}")
-            lines.append(f"  Body Size      : {len(response.content):,} bytes")
-            lines.append("  All Response Headers:")
-            for k, v in response.headers.items():
-                lines.append(f"    {k}: {v}")
-            lines.append("")
-
-            # ── RESPONSE BODY ─────────────────────────────────────────
-            lines += ["RESPONSE BODY", sep2]
-            if body_highlight:
-                excerpt = _highlight_in_body(response.text, body_highlight)
-                lines.append("  The scanner looked for the payload in the response body.")
-                lines.append("  The finding is marked with >>> ... <<< below:")
-                lines.append(f"  {excerpt}")
-            else:
-                lines.append(f"  (First {body_preview_chars} characters of response body)")
-                lines.append(f"  {_body_preview(response.text, body_preview_chars)}")
-        else:
-            lines.append("  (No HTTP response received — connection may have failed or timed out)")
-        lines.append("")
-
-        # ── FINDING DETAILS ───────────────────────────────────────────
-        if extra_fields:
-            lines += ["FINDING DETAILS", sep2]
-            for k, v in extra_fields:
-                lines.append(f"  {k:<35}: {v if v is not None and v != '' else 'Not observed'}")
-            lines.append("")
-
-        # ── PLAIN-LANGUAGE SUMMARY ────────────────────────────────────
-        if plain_english_summary:
-            lines += ["PLAIN-LANGUAGE SUMMARY", sep2,
-                      f"  {plain_english_summary}", ""]
-
-        return "\n".join(lines)
+        return f"{title}\nEvidence mapping not implemented for this finding."
 
     def get_server_info(self, response: requests.Response) -> Dict:
         info = {}
@@ -1013,127 +925,27 @@ class SecurityScanner:
                       extra_fields: Optional[List[Tuple[str, str]]] = None,
                       error: Optional[str] = None,
                       plain_english_summary: Optional[str] = None) -> str:
-        """
-        Forensic-quality SSL/TLS evidence block.
-        Includes full socket handshake details, complete certificate fields,
-        SAN list, cipher suite breakdown, finding-specific extras,
-        and a plain-language summary.
-        """
-        sep  = "=" * 60
-        sep2 = "-" * 40
-        lines = [sep, f"EVIDENCE: {title}", sep, ""]
+        ev = self.evidence_factory
+        fields = dict(extra_fields or [])
 
-        # ── WHAT WE DID ──────────────────────────────────────────────────
-        lines += [
-            "WHAT WE DID",
-            sep2,
-            f"  We opened a raw TLS socket connection to {hostname}:{port} and",
-            f"  inspected the cryptographic handshake, server certificate, and",
-            f"  negotiated cipher suite for security weaknesses.",
-            f"  Scan Timestamp  : {now_eat_iso()}",
-            "",
-        ]
+        if title == "Insecure HTTP — No Transport Encryption":
+            return ev.ssl_no_https(f"http://{hostname}:{port}", hostname, port).combined
+        if title == "Expired SSL/TLS Certificate" and cert and cipher and protocol:
+            days = int(fields.get("Days Since Expiry", "0")) if str(fields.get("Days Since Expiry", "0")).isdigit() else 0
+            return ev.ssl_expired_cert(hostname, port, cert, cipher, protocol, days).combined
+        if title == "SSL/TLS Certificate Expiring Soon" and cert and cipher and protocol:
+            days = int(fields.get("Days Remaining", "0")) if str(fields.get("Days Remaining", "0")).isdigit() else 0
+            return ev.ssl_expiring_soon(hostname, port, cert, cipher, protocol, days).combined
+        if title.startswith("Weak TLS Protocol Accepted") and cert and cipher and protocol:
+            return ev.ssl_weak_protocol(hostname, port, cert, cipher, protocol).combined
+        if title.startswith("Weak Cipher Suite Negotiated") and cert and cipher and protocol:
+            return ev.ssl_weak_cipher(hostname, port, cert, cipher, protocol).combined
+        if title == "Untrusted / Self-Signed SSL Certificate":
+            return ev.ssl_untrusted_cert(hostname, port, error or "").combined
+        if title == "SSL/TLS Handshake Failed":
+            return ev.ssl_untrusted_cert(hostname, port, error or "TLS handshake failed").combined
 
-        # ── CONNECTION ───────────────────────────────────────────────────
-        lines += [
-            "CONNECTION",
-            sep2,
-            f"  Test Method     : Raw TLS socket handshake (ssl.SSLContext)",
-            f"  Target Hostname : {hostname}",
-            f"  Target Port     : {port}",
-            "",
-        ]
-
-        # ── TLS HANDSHAKE ────────────────────────────────────────────────
-        lines += ["TLS HANDSHAKE", sep2]
-        if error:
-            lines.append(f"  Handshake Result : FAILED")
-            lines.append(f"  Error            : {error}")
-            lines.append(f"  Meaning          : The browser would show a security warning for this site.")
-        else:
-            lines.append(f"  Handshake Result : SUCCESS — TLS connection established")
-        if protocol:
-            proto_note = {
-                'TLSv1.3': 'Current best standard — excellent',
-                'TLSv1.2': 'Acceptable — widely supported',
-                'TLSv1.1': 'DEPRECATED — should be disabled',
-                'TLSv1':   'DEPRECATED — vulnerable to BEAST attack',
-                'SSLv3':   'BROKEN — vulnerable to POODLE attack',
-                'SSLv2':   'BROKEN — critically insecure',
-            }.get(protocol, 'Unknown protocol version')
-            lines.append(f"  Negotiated Protocol : {protocol} ({proto_note})")
-        if cipher:
-            cipher_note = "strong" if any(x in cipher[0].upper() for x in ['GCM', 'CHACHA', 'POLY']) else "potentially weak — review"
-            lines.append(f"  Cipher Suite        : {cipher[0]} ({cipher_note})")
-            lines.append(f"  Cipher Protocol     : {cipher[1] if len(cipher) > 1 else 'unknown'}")
-            lines.append(f"  Key Bits            : {cipher[2] if len(cipher) > 2 else 'unknown'}")
-        lines.append("")
-
-        # ── CERTIFICATE ──────────────────────────────────────────────────
-        if cert:
-            lines += ["CERTIFICATE", sep2]
-            subject = cert.get('subject', ())
-            subject_str = ", ".join(
-                f"{k}={v}" for fields in subject for k, v in (fields if isinstance(fields[0], tuple) else [fields])
-            ) if subject else "unknown"
-            lines.append(f"  Subject          : {subject_str}")
-
-            issuer = cert.get('issuer', ())
-            issuer_str = ", ".join(
-                f"{k}={v}" for fields in issuer for k, v in (fields if isinstance(fields[0], tuple) else [fields])
-            ) if issuer else "unknown"
-            lines.append(f"  Issuer           : {issuer_str}")
-
-            not_before = cert.get('notBefore', 'unknown')
-            not_after  = cert.get('notAfter',  'unknown')
-            lines.append(f"  Serial Number    : {cert.get('serialNumber', 'unknown')}")
-            lines.append(f"  Valid From       : {not_before}")
-            lines.append(f"  Valid Until      : {not_after}")
-
-            # Validity window in days
-            try:
-                expiry = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %Z')
-                days_left = (expiry - now_eat_naive()).days
-                if days_left < 0:
-                    lines.append(f"  Validity Status  : EXPIRED {abs(days_left)} days ago")
-                elif days_left < 30:
-                    lines.append(f"  Validity Status  : Expiring in {days_left} days — renew now")
-                else:
-                    lines.append(f"  Validity Status  : Valid for {days_left} more days")
-            except Exception:
-                pass
-
-            san_list = cert.get('subjectAltName', [])
-            if san_list:
-                lines.append(f"  Subject Alt Names ({len(san_list)} domains covered):")
-                for san_type, san_val in san_list[:10]:
-                    lines.append(f"    {san_type}: {san_val}")
-                if len(san_list) > 10:
-                    lines.append(f"    ... and {len(san_list) - 10} more")
-            else:
-                lines.append("  Subject Alt Names: None")
-
-            ocsp = cert.get('OCSP', [])
-            if ocsp:
-                lines.append(f"  OCSP URLs        : {', '.join(ocsp)}")
-            ca_issuers = cert.get('caIssuers', [])
-            if ca_issuers:
-                lines.append(f"  CA Issuers       : {', '.join(ca_issuers)}")
-            lines.append("")
-
-        # ── FINDING DETAILS ───────────────────────────────────────────
-        if extra_fields:
-            lines += ["FINDING DETAILS", sep2]
-            for k, v in extra_fields:
-                lines.append(f"  {k:<35}: {v if v is not None and v != '' else 'Not observed'}")
-            lines.append("")
-
-        # ── PLAIN-LANGUAGE SUMMARY ────────────────────────────────────
-        if plain_english_summary:
-            lines += ["PLAIN-LANGUAGE SUMMARY", sep2,
-                      f"  {plain_english_summary}", ""]
-
-        return "\n".join(lines)
+        return f"{title}\nEvidence mapping not implemented for this finding."
 
     # ── SSL/TLS ───────────────────────────────────────────────────────────
 
@@ -1767,98 +1579,19 @@ class SecurityScanner:
                         if m:
                             secret_findings.append(f"{sp_label}: {m.group(0)[:80]}")
 
-                    # Build a rich, structured evidence block
-                    sep  = "=" * 60
-                    sep2 = "-" * 40
-                    ev_lines = [
-                        sep,
-                        f"EVIDENCE: Exposed Sensitive File — {label}",
-                        sep,
-                        "",
-                        "WHAT WE DID",
-                        sep2,
-                        f"  We requested the path '{path}' directly from your server.",
-                        f"  This file should not be publicly accessible — we confirmed it is.",
-                        f"  URL Tested  : {url}",
-                        f"  Timestamp   : {now_eat_iso()}",
-                        "",
-                        "REQUEST",
-                        sep2,
-                        f"  Method  : GET",
-                        f"  URL     : {url}",
-                        f"  Headers : Standard browser-like headers (User-Agent, Accept)",
-                        "",
-                        "RESPONSE",
-                        sep2,
-                        f"  Status         : {resp.status_code} {resp.reason}",
-                        f"  Content-Type   : {content_type or '(not set)'}",
-                        f"  Content-Length : {content_len:,} bytes",
-                        f"  Body Type      : {body_type}",
-                        f"  Server         : {resp.headers.get('Server', '(not disclosed)')}",
-                        "",
-                        "ALL RESPONSE HEADERS",
-                        sep2,
-                    ]
-                    for k, v in resp.headers.items():
-                        ev_lines.append(f"  {k}: {v}")
-
-                    ev_lines += [
-                        "",
-                        "RESPONSE BODY (first 600 characters)",
-                        sep2,
-                        f"  {body_excerpt}",
-                        "",
-                    ]
-
-                    if secret_findings:
-                        ev_lines += [
-                            "CREDENTIALS / SECRETS DETECTED IN BODY",
-                            sep2,
-                            "  *** WARNING: Live credentials appear to be present in this file ***",
-                        ]
-                        for sf in secret_findings:
-                            ev_lines.append(f"  >>> {sf}")
-                        ev_lines += [
-                            "",
-                            "  ACTION REQUIRED: Rotate all credentials listed above immediately.",
-                            "  Treat them as fully compromised — they have been publicly accessible.",
-                            "",
-                        ]
-
-                    ev_lines += [
-                        "FINDING DETAILS",
-                        sep2,
-                        f"  File / Path          : {path}",
-                        f"  File Type            : {label}",
-                        f"  Credentials Found    : {'YES — see above' if secret_findings else 'None detected by pattern matching (manual review recommended)'}",
-                        f"  Access Control       : None — file is fully public with no authentication",
-                        "",
-                        "PLAIN-LANGUAGE SUMMARY",
-                        sep2,
-                    ]
-
-                    if secret_findings:
-                        ev_lines.append(
-                            f"  Your file '{path}' is publicly accessible and appears to contain "
-                            f"live credentials (passwords, API keys, or secrets). Anyone who visits "
-                            f"that URL — including automated scanners — can read these credentials "
-                            f"and use them to access your database or third-party services. "
-                            f"Delete or block the file immediately, then rotate every credential it contains."
-                        )
-                    else:
-                        ev_lines.append(
-                            f"  Your file '{path}' is publicly accessible on the internet. "
-                            f"Files like this ({label}) are not meant to be served publicly — "
-                            f"they can reveal your server technology, configuration, or source code "
-                            f"to attackers who scan for them. Block access via your web server config."
-                        )
-                    ev_lines.append("")
+                    evidence_text = self.evidence_factory.sensitive_file_exposed(
+                        url=url,
+                        path=path,
+                        label=label,
+                        response=resp,
+                        secret_findings=secret_findings
+                    ).combined
 
                     return Vulnerability(
                         name=f"Exposed {label}",
                         severity=severity,
                         description=f"The file or path '{path}' is publicly accessible and should not be",
-                        evidence="\n".join(ev_lines),
+                        evidence=evidence_text,
                         remediation=f"Block access to '{path}' via your server/firewall config, or delete the file if it shouldn't exist.",
                         what_we_tested=f"We requested the path '{path}' to check if it is publicly accessible.",
                         indicates=f"Exposed {label} can leak credentials, source code, configuration, or sensitive data.",
@@ -2038,43 +1771,15 @@ class SecurityScanner:
                             name=f"SQL Injection (Time-Based Blind — {db_type})",
                             severity=Severity.CRITICAL,
                             description=f"Parameter '{param_name}' causes a {delay:.1f}s server delay with a sleep payload, indicating blind SQL injection",
-                            evidence=(
-                                f"{'='*60}\n"
-                                f"EVIDENCE: SQL Injection — Time-Based Blind ({db_type})\n"
-                                f"{'='*60}\n\n"
-                                f"WHAT WE DID\n{'-'*40}\n"
-                                f"  We sent two requests to the same parameter: one with a safe value,\n"
-                                f"  and one with a payload that tells the database to pause for 4 seconds.\n"
-                                f"  If the server pauses only when we send the sleep payload, the database\n"
-                                f"  is executing our injected command — confirming SQL injection.\n\n"
-                                f"REQUEST A — Baseline (safe value)\n{'-'*40}\n"
-                                f"  Method          : GET\n"
-                                f"  URL             : {baseline_url_blind}\n"
-                                f"  Parameter Value : {param_name} = 1 (safe, normal input)\n\n"
-                                f"REQUEST B — Payload (sleep injection)\n{'-'*40}\n"
-                                f"  Method          : GET\n"
-                                f"  URL             : {test_url_blind}\n"
-                                f"  Parameter Value : {param_name} = {payload}\n\n"
-                                f"TIMING COMPARISON\n{'-'*40}\n"
-                                f"  Baseline Response Time  : {baseline_delay:.2f}s  (normal speed)\n"
-                                f"  Payload Response Time   : {delay:.2f}s  (delayed by sleep command)\n"
-                                f"  Observed Delay Delta    : {delay - baseline_delay:.2f}s above baseline\n"
-                                f"  Detection Threshold     : 3.5s delay above baseline\n"
-                                f"  Conclusion              : THRESHOLD EXCEEDED — sleep function executed in the database\n\n"
-                                f"FINDING DETAILS\n{'-'*40}\n"
-                                f"  Database Type Indicated : {db_type}\n"
-                                f"  Sleep Function Used     : {payload}\n"
-                                f"  Parameter Tested        : {param_name}\n"
-                                f"  Error Visible           : No — this is 'blind' injection (no error shown, but still exploitable)\n"
-                                f"  Observed Result         : Response delayed by {delay:.1f}s — injected sleep executed in DB\n\n"
-                                f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                                f"  This is SQL injection without visible error messages — called 'blind' injection.\n"
-                                f"  When we told the database to sleep for 4 seconds, the server waited exactly that long.\n"
-                                f"  A normal request took {baseline_delay:.2f}s. The attack request took {delay:.2f}s.\n"
-                                f"  This proves the database is running our commands. Even without seeing any error,\n"
-                                f"  automated tools (like sqlmap) can extract your entire database one bit at a time\n"
-                                f"  by asking yes/no questions through timing differences.\n"
-                            ),
+                            evidence=self.evidence_factory.sqli_time_based(
+                                url=test_url_blind,
+                                param=param_name,
+                                payload=payload,
+                                db_type=db_type,
+                                delay=delay,
+                                baseline_delay=baseline_delay,
+                                baseline_url=baseline_url_blind
+                            ).combined,
                             remediation="Use parameterized queries. This is a blind injection — no visible error, but fully exploitable.",
                             cvss_score=9.8,
                             what_we_tested=f"We injected time-delay SQL payloads into '{param_name}' and measured response time vs baseline.",
@@ -2251,51 +1956,18 @@ class SecurityScanner:
                     found_sinks.append((sink, desc, snippet))
 
             if found_sinks:
-                sink_names    = ', '.join(s for s, _, _ in found_sinks[:3])
-                sink_detail_lines = []
-                for sink, desc, snippet in found_sinks[:5]:
-                    sink_detail_lines.append(f"  Sink     : {sink}")
-                    sink_detail_lines.append(f"  Risk     : {desc}")
-                    sink_detail_lines.append(f"  In Source: ...{snippet}...")
-                    sink_detail_lines.append("")
-                sink_details = "\n".join(sink_detail_lines)
+                sink_names = ', '.join(s for s, _, _ in found_sinks[:3])
+                sink_summaries = [(sink, desc, snippet) for sink, desc, snippet in found_sinks[:5]]
 
                 vulnerabilities.append(Vulnerability(
                     name="Potential DOM XSS Sink Detected",
                     severity=Severity.MEDIUM,
                     description=f"Page uses JavaScript patterns that can lead to DOM XSS: {sink_names}",
-                    evidence=(
-                        f"{'='*60}\n"
-                        f"EVIDENCE: DOM Cross-Site Scripting (XSS) Sink Detection\n"
-                        f"{'='*60}\n\n"
-                        f"WHAT WE DID\n{'-'*40}\n"
-                        f"  We loaded the page and scanned its JavaScript source code for\n"
-                        f"  patterns (called 'sinks') that are dangerous when they receive\n"
-                        f"  user-controlled data. A sink is a JavaScript function that can\n"
-                        f"  execute code or modify the page if given malicious input.\n\n"
-                        f"REQUEST\n{'-'*40}\n"
-                        f"  Method  : GET\n"
-                        f"  URL     : {url}\n\n"
-                        f"RESPONSE\n{'-'*40}\n"
-                        f"  Status       : {response.status_code} {response.reason}\n"
-                        f"  Content-Type : {response.headers.get('Content-Type', 'not set')}\n"
-                        f"  Page Title   : {_extract_title(response.text)}\n\n"
-                        f"SINKS DETECTED — WITH SOURCE CONTEXT\n{'-'*40}\n"
-                        f"{sink_details}\n"
-                        f"  Total dangerous sinks found: {len(found_sinks)}\n\n"
-                        f"FINDING DETAILS\n{'-'*40}\n"
-                        f"  Sinks Found        : {', '.join(s for s,_,_ in found_sinks)}\n"
-                        f"  Observed Result    : Dangerous JavaScript patterns present in page source\n"
-                        f"  Exploitability     : Depends on whether any sink receives user-controlled data\n"
-                        f"                       (URL parameters, hash fragment, postMessage, localStorage)\n\n"
-                        f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                        f"  We found {len(found_sinks)} JavaScript function(s) in your page that can be dangerous:\n"
-                        f"  {sink_names}.\n"
-                        f"  These are not necessarily exploitable by themselves — they only become\n"
-                        f"  a vulnerability if they ever receive data that an attacker can control\n"
-                        f"  (like a URL parameter or page hash). A developer should review each\n"
-                        f"  occurrence and verify it does not use untrusted data.\n"
-                    ),
+                    evidence=self.evidence_factory.xss_dom_sinks(
+                        url=url,
+                        response=response,
+                        found_sinks=sink_summaries
+                    ).combined,
                     remediation="Avoid using dangerous sinks with user-controlled data. Use textContent instead of innerHTML. Sanitize inputs with DOMPurify if HTML is required.",
                     what_we_tested="We scanned the page JavaScript for dangerous DOM manipulation patterns.",
                     indicates="If any of these sinks receive user-controlled data (URL params, hash, postMessage), XSS is possible.",
@@ -2327,37 +1999,13 @@ class SecurityScanner:
         vulnerabilities = []
         headers = response.headers
         content = response.text
-        all_headers_str = "\n".join(f"    {k}: {v}" for k, v in response.headers.items())
-
         server_header = headers.get('Server', '')
         if server_header and any(char.isdigit() for char in server_header):
             vulnerabilities.append(Vulnerability(
                 name="Server Version Disclosure",
                 severity=Severity.LOW,
                 description="Server header reveals exact version information",
-                evidence=(
-                    f"{'='*60}\n"
-                    f"EVIDENCE: Server Version Disclosure\n"
-                    f"{'='*60}\n\n"
-                    f"WHAT WE DID\n{'-'*40}\n"
-                    f"  We made a standard HTTP request and examined the Server header\n"
-                    f"  in the response for software name and version number disclosure.\n\n"
-                    f"REQUEST\n{'-'*40}\n"
-                    f"  Method  : GET\n"
-                    f"  URL     : {url}\n\n"
-                    f"RESPONSE\n{'-'*40}\n"
-                    f"  Status       : {response.status_code} {response.reason}\n"
-                    f"  All Headers:\n{all_headers_str}\n\n"
-                    f"FINDING DETAILS\n{'-'*40}\n"
-                    f"  Server Header Value : {server_header}\n"
-                    f"  Version Disclosed   : YES — contains version number\n"
-                    f"  Observed Result     : Exact server software version visible in every HTTP response\n\n"
-                    f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                    f"  Every page your server sends includes a 'Server' header that announces\n"
-                    f"  exactly what software is running and its version number ({server_header}).\n"
-                    f"  Attackers use this to look up known security vulnerabilities for that\n"
-                    f"  exact version. Hiding the version takes one line of config.\n"
-                ),
+                evidence=self.evidence_factory.info_server_version(url, response, server_header).combined,
                 remediation="Configure your server to omit version details. In Apache: ServerTokens Prod. In Nginx: server_tokens off.",
                 what_we_tested="We inspected the Server response header for version numbers.",
                 indicates="Exact version info helps attackers look up known CVEs for that specific version.",
@@ -2370,28 +2018,7 @@ class SecurityScanner:
                 name="Technology Stack Disclosure",
                 severity=Severity.LOW,
                 description="X-Powered-By header reveals backend technology and version",
-                evidence=(
-                    f"{'='*60}\n"
-                    f"EVIDENCE: Technology Stack Disclosure\n"
-                    f"{'='*60}\n\n"
-                    f"WHAT WE DID\n{'-'*40}\n"
-                    f"  We examined the X-Powered-By response header, which many frameworks\n"
-                    f"  set automatically to identify the backend technology.\n\n"
-                    f"REQUEST\n{'-'*40}\n"
-                    f"  Method  : GET\n"
-                    f"  URL     : {url}\n\n"
-                    f"RESPONSE\n{'-'*40}\n"
-                    f"  Status       : {response.status_code} {response.reason}\n"
-                    f"  All Headers:\n{all_headers_str}\n\n"
-                    f"FINDING DETAILS\n{'-'*40}\n"
-                    f"  X-Powered-By Value  : {powered_by}\n"
-                    f"  Technology Revealed : {powered_by}\n"
-                    f"  Observed Result     : Backend framework/version disclosed in every response\n\n"
-                    f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                    f"  Your server is advertising that it runs '{powered_by}' in every\n"
-                    f"  HTTP response. This helps attackers narrow down which exploits to try.\n"
-                    f"  Removing this header is a one-line configuration change.\n"
-                ),
+                evidence=self.evidence_factory.info_server_version(url, response, powered_by).combined,
                 remediation="Remove X-Powered-By header. In Express.js: app.disable('x-powered-by'). In PHP: expose_php = Off.",
                 what_we_tested="We inspected the X-Powered-By response header.",
                 indicates="Technology disclosure helps attackers target framework-specific vulnerabilities.",
@@ -2421,38 +2048,9 @@ class SecurityScanner:
                     name=f"Exposed {name} in Response",
                     severity=severity,
                     description=f"The page response contains what appears to be a {name}",
-                    evidence=(
-                        f"{'='*60}\n"
-                        f"EVIDENCE: Credential/Secret Exposure — {name}\n"
-                        f"{'='*60}\n\n"
-                        f"WHAT WE DID\n{'-'*40}\n"
-                        f"  We scanned the HTTP response body for patterns matching known\n"
-                        f"  credential formats ({name}). This pattern was found.\n\n"
-                        f"REQUEST\n{'-'*40}\n"
-                        f"  Method  : GET\n"
-                        f"  URL     : {url}\n\n"
-                        f"RESPONSE\n{'-'*40}\n"
-                        f"  Status       : {response.status_code} {response.reason}\n"
-                        f"  Content-Type : {response.headers.get('Content-Type', 'not set')}\n"
-                        f"  Body Length  : {len(content):,} characters\n\n"
-                        f"CREDENTIAL FOUND IN BODY\n{'-'*40}\n"
-                        f"  Secret Type          : {name}\n"
-                        f"  Matched Text         : {matched_text}\n"
-                        f"  Position in Body     : character {m.start():,} of {len(content):,}\n"
-                        f"  Pattern Used         : {pattern[:60]}\n"
-                        f"  Context in Body:\n"
-                        f"    {body_context}\n\n"
-                        f"FINDING DETAILS\n{'-'*40}\n"
-                        f"  Credential Active    : Assumed YES — rotate immediately to be safe\n"
-                        f"  Exposure Duration    : Unknown — assume it has been indexed/scraped\n"
-                        f"  Observed Result      : Live credential/secret visible in page response body\n\n"
-                        f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                        f"  A {name} appears to be embedded in a page your server is serving publicly.\n"
-                        f"  Anyone who visits this URL — including automated bots and search engine crawlers —\n"
-                        f"  can read this credential and use it to access your {name.split()[0]} account,\n"
-                        f"  database, or payment system. Revoke the credential immediately and remove\n"
-                        f"  it from the source code or response. Never put secrets in client-facing files.\n"
-                    ),
+                    evidence=self.evidence_factory.info_exposed_secret(
+                        url, response, name, matched_text, pattern, body_context
+                    ).combined,
                     remediation="Remove all secrets from client-facing code and responses. Use server-side environment variables. Rotate the exposed credential immediately.",
                     what_we_tested=f"We scanned the response body for patterns matching {name} formats.",
                     indicates="A live secret is exposed in the page source — this is an active credential leak.",
@@ -2479,37 +2077,9 @@ class SecurityScanner:
                     name="Mixed Content (HTTP Resources on HTTPS Page)",
                     severity=Severity.MEDIUM,
                     description=f"HTTPS page loads {len(all_mixed)} resource(s) over plain HTTP",
-                    evidence=(
-                        f"{'='*60}\n"
-                        f"EVIDENCE: Mixed Content — HTTP Resources on HTTPS Page\n"
-                        f"{'='*60}\n\n"
-                        f"WHAT WE DID\n{'-'*40}\n"
-                        f"  We loaded the HTTPS page and scanned its HTML source for any resources\n"
-                        f"  (scripts, stylesheets, images) loaded over unencrypted HTTP.\n\n"
-                        f"REQUEST\n{'-'*40}\n"
-                        f"  Method  : GET\n"
-                        f"  URL     : {url}\n\n"
-                        f"RESPONSE\n{'-'*40}\n"
-                        f"  Status  : {response.status_code} {response.reason}\n"
-                        f"  Page loads these HTTP resources:\n\n"
-                        f"RESOURCE BREAKDOWN\n{'-'*40}\n" +
-                        "\n".join(f"  {rb}" for rb in resource_breakdown) +
-                        f"\n  Total mixed resources: {len(all_mixed)}\n\n"
-                        f"MIXED RESOURCE EXAMPLES (first 5)\n{'-'*40}\n" +
-                        "\n".join(f"  {i+1}. {r}" for i, r in enumerate(all_mixed[:5])) +
-                        f"\n\n"
-                        f"FINDING DETAILS\n{'-'*40}\n"
-                        f"  Mixed JS Files  : {len(http_scripts)} — MOST CRITICAL (scripts can be hijacked to run code)\n"
-                        f"  Mixed CSS Files : {len(http_styles)}\n"
-                        f"  Mixed Images    : {len(http_images)}\n"
-                        f"  Observed Result : HTTPS page fetches resources over unencrypted HTTP connections\n\n"
-                        f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                        f"  Your site uses HTTPS (good), but it is loading {len(all_mixed)} resource(s) using\n"
-                        f"  the unencrypted HTTP protocol. This breaks the security of your HTTPS connection\n"
-                        f"  because an attacker on the same network can modify those HTTP resources in transit.\n"
-                        f"  If any are JavaScript files, the attacker can inject arbitrary code into your page.\n"
-                        f"  Fix: change all resource URLs to HTTPS or use protocol-relative URLs (//...).\n"
-                    ),
+                    evidence=self.evidence_factory.info_mixed_content(
+                        url, response, http_scripts, http_styles, http_images, all_mixed
+                    ).combined,
                     remediation="Change all resource URLs to HTTPS or use protocol-relative URLs (//example.com/script.js).",
                     what_we_tested="We scanned the page HTML for HTTP resource references on an HTTPS page.",
                     indicates="Mixed content means parts of the page are unencrypted, undermining HTTPS protection.",
@@ -2741,84 +2311,9 @@ class SecurityScanner:
             def _header_evidence_text(target_url: str, header_name: str,
                                        resp: requests.Response,
                                        headers_info_local: Dict) -> str:
-                status_code  = getattr(resp, "status_code", "unknown")
-                present      = [str(p.get('name', '')) for p in headers_info_local.get('present', []) if p.get('name')]
-                present_str  = ", ".join(present[:8]) if present else "None found"
-                missing_names = [str(m.get('name', '')) for m in headers_info_local.get('missing', []) if m.get('name')]
-                missing_str   = ", ".join(missing_names[:8]) if missing_names else "None"
-                expected      = self.header_recommended.get(header_name, "See OWASP Secure Headers Project")
-                all_resp_headers = "\n".join(f"    {k}: {v}" for k, v in resp.headers.items())
-
-                header_explanations = {
-                    'Strict-Transport-Security': (
-                        "Tells browsers to always use HTTPS for this domain — prevents protocol downgrade attacks.",
-                        "A user visits http://yoursite.com — without HSTS the browser may use HTTP, "
-                        "exposing the session cookie. With HSTS, the browser upgrades to HTTPS automatically."
-                    ),
-                    'Content-Security-Policy': (
-                        "Tells the browser which scripts, styles, and resources are allowed to load — blocks injected scripts.",
-                        "If an attacker injects a script via XSS, without CSP the browser will execute it. "
-                        "With CSP, the browser refuses to run scripts not explicitly permitted."
-                    ),
-                    'X-Frame-Options': (
-                        "Prevents your page from being embedded in an iframe on another site — blocks clickjacking.",
-                        "An attacker puts your login page in an invisible iframe on their site. "
-                        "Without X-Frame-Options, users can be tricked into clicking buttons they cannot see."
-                    ),
-                    'X-Content-Type-Options': (
-                        "Prevents browsers from guessing the file type — stops MIME-sniffing attacks.",
-                        "If a user uploads a JavaScript file named 'image.jpg', a browser without nosniff "
-                        "may execute it as a script. With nosniff, it treats it as an image."
-                    ),
-                    'Referrer-Policy': (
-                        "Controls how much URL information is sent to third parties in the Referer header.",
-                        "Without this, query parameters (including session tokens) in your URLs may leak "
-                        "to every third-party resource loaded on your pages."
-                    ),
-                    'Permissions-Policy': (
-                        "Restricts which browser features (camera, mic, location) scripts can access.",
-                        "An injected script could request camera or microphone access. "
-                        "With Permissions-Policy set to deny these, the browser blocks the request."
-                    ),
-                    'X-XSS-Protection': (
-                        "Enables the built-in XSS filter in older browsers (IE, older Chrome).",
-                        "Low impact on modern browsers which use CSP instead, but adds a layer for legacy users."
-                    ),
-                }
-                what_it_does, attack_scenario = header_explanations.get(
-                    header_name,
-                    (f"Security header that protects against specific browser-based attacks.", "Consult OWASP Secure Headers Project for details.")
-                )
-
-                return (
-                    f"{'='*60}\n"
-                    f"EVIDENCE: Missing Security Header — {header_name}\n"
-                    f"{'='*60}\n\n"
-                    f"WHAT WE DID\n{'-'*40}\n"
-                    f"  We made a GET request and checked whether the response included\n"
-                    f"  the '{header_name}' security header.\n\n"
-                    f"REQUEST\n{'-'*40}\n"
-                    f"  Method     : GET\n"
-                    f"  URL        : {target_url}\n\n"
-                    f"RESPONSE\n{'-'*40}\n"
-                    f"  Status     : {status_code}\n"
-                    f"  All Response Headers:\n{all_resp_headers}\n\n"
-                    f"FINDING DETAILS\n{'-'*40}\n"
-                    f"  Header Checked             : {header_name}\n"
-                    f"  Header Present             : NO\n"
-                    f"  Recommended Value          : {header_name}: {expected}\n"
-                    f"  What This Header Does      : {what_it_does}\n"
-                    f"  Attack It Prevents         : {attack_scenario}\n"
-                    f"  Other Present Headers      : {present_str}\n"
-                    f"  Other Missing Headers      : {missing_str}\n"
-                    f"  Observed Result            : Header absent from server response\n\n"
-                    f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                    f"  Your server is not sending the '{header_name}' header.\n"
-                    f"  What this header does: {what_it_does}\n"
-                    f"  Without it: {attack_scenario}\n"
-                    f"  Fix: Add this line to your web server config:\n"
-                    f"    {header_name}: {expected}\n"
-                )
+                return self.evidence_factory.security_header_missing(
+                    target_url, header_name, resp, headers_info_local
+                ).combined
 
             header_report = {
                 'Strict-Transport-Security': (
@@ -2910,40 +2405,9 @@ class SecurityScanner:
                         rec         = self.header_recommended.get(missing['name'], '')
                         remediation = (f"Add to all pages including {page_path}: {missing['name']}: {rec}" if rec
                                        else f"Implement {missing['name']} on all pages including {page_path}.")
-                        all_resp_headers_page = "\n".join(
-                            f"    {k}: {v}" for k, v in page_resp.headers.items()
-                        )
-                        _, attack_scenario = {
-                            'Strict-Transport-Security': ("HSTS", "Protocol downgrade attack possible on this page."),
-                            'Content-Security-Policy':   ("CSP",  "XSS on this page will execute without browser restriction."),
-                            'X-Frame-Options':           ("XFO",  "This page can be framed for clickjacking attacks."),
-                            'X-Content-Type-Options':    ("XCTO", "MIME sniffing attacks possible on this page."),
-                        }.get(missing['name'], ("", "Implement the header on all pages."))
-
-                        page_evidence = (
-                            f"{'='*60}\n"
-                            f"EVIDENCE: Missing Security Header — {missing['name']} (page: {page_path})\n"
-                            f"{'='*60}\n\n"
-                            f"WHAT WE DID\n{'-'*40}\n"
-                            f"  We crawled to this page ({page_path}) and checked for the\n"
-                            f"  '{missing['name']}' security header. It was absent.\n\n"
-                            f"REQUEST\n{'-'*40}\n"
-                            f"  Method  : GET\n"
-                            f"  URL     : {page_url}\n\n"
-                            f"RESPONSE\n{'-'*40}\n"
-                            f"  Status  : {page_resp.status_code} {page_resp.reason}\n"
-                            f"  All Response Headers:\n{all_resp_headers_page}\n\n"
-                            f"FINDING DETAILS\n{'-'*40}\n"
-                            f"  Header Checked     : {missing['name']}\n"
-                            f"  Page Path          : {page_path}\n"
-                            f"  Expected Value     : {missing['name']}: {rec if rec else 'see OWASP'}\n"
-                            f"  Observed Result    : Header absent from this page path\n"
-                            f"  Security Impact    : {attack_scenario}\n\n"
-                            f"PLAIN-LANGUAGE SUMMARY\n{'-'*40}\n"
-                            f"  This specific page ({page_path}) is missing the '{missing['name']}' header.\n"
-                            f"  Security headers should be applied at the web server level so every\n"
-                            f"  page and endpoint is protected automatically, not just the homepage.\n"
-                        )
+                        page_evidence = self.evidence_factory.security_header_missing(
+                            page_url, missing['name'], page_resp, page_headers
+                        ).combined
                         all_vulnerabilities.append(Vulnerability(
                             name=f"Missing {missing['name']} (page: {page_path})",
                             severity=severity,

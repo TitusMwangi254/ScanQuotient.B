@@ -42,6 +42,7 @@
 
 session_start();
 require_once __DIR__ . '/../Include/sq_auth_guard.php';
+require_once __DIR__ . '/deterministic_report_engine.php';
 sq_require_web_scanner_auth(true);
 header('Content-Type: application/json; charset=utf-8');
 
@@ -1619,7 +1620,7 @@ if (empty($vuln)) {
 }
 
 // ── Deterministic base ────────────────────────────────────────────────────
-$base = fallbackReport($vuln, $scan);
+$base = DeterministicReport::build($vuln, $scan);
 $base = enforceEvidenceStructure($base, $vuln, $scan);
 $base = enforceRecommendationDiversity($base, $seenStems);
 

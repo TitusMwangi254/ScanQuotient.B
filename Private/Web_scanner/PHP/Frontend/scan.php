@@ -346,17 +346,19 @@ if (!empty($profile_photo)) {
                             <section id="reportFindingsSection" class="report-section">
                             <div id="detailedFindingsAnchor" class="detailed-findings-scroll-target" tabindex="-1" aria-label="Detailed findings"></div>
                             <div class="results-tabs">
-                                <span id="targetBadge" class="target-badge">example.com</span>
-                                <button type="button" class="results-tab active" data-tab="findings" id="tabFindings">
-                                    <i class="fas fa-clipboard-list"></i>
-                                    <span>Detailed Findings</span>
-                                </button>
-                                <button type="button" class="results-tab" data-tab="report" id="tabReport">
-                                    <i class="fas fa-file-alt"></i>
-                                    <span>AI summary</span>
-                                </button>
-                                <div class="report-actions report-download-row">
-                                    <div class="report-artefact-btns">
+                                <div class="results-tabs-row results-tabs-row-top">
+                                    <span id="targetBadge" class="target-badge">example.com</span>
+                                    <button type="button" class="results-tab active" data-tab="findings" id="tabFindings">
+                                        <i class="fas fa-clipboard-list"></i>
+                                        <span>Detailed Findings</span>
+                                    </button>
+                                    <button type="button" class="results-tab" data-tab="report" id="tabReport">
+                                        <i class="fas fa-file-alt"></i>
+                                        <span>AI summary</span>
+                                    </button>
+                                </div>
+                                <div class="report-actions report-download-row results-tabs-row results-tabs-row-bottom">
+                                    <div class="report-artefact-btns report-artefact-btns-left">
                                         <button type="button" id="downloadDocBtn" class="artefact-btn artefact-rich-tip artefact-rich-tip--doc"
                                             data-tip-title="DOC report"
                                             data-tip-text="Download the AI summary as a Word document."
@@ -382,7 +384,7 @@ if (!empty($profile_photo)) {
                                             <i class="fas fa-file-code"></i><span>HTML</span>
                                         </button>
                                     </div>
-                                    <div class="report-extra-actions">
+                                    <div class="report-extra-actions report-extra-actions-right">
                                         <button type="button" id="aiOverviewBtn" class="artefact-btn secondary artefact-rich-tip"
                                             data-tip-title="AI overview"
                                             data-tip-text="Open the executive AI overview, then use the chatbot for deeper insight and follow-up questions."
@@ -4497,6 +4499,15 @@ ${headHtml}
             }
             manualRegenInFlight.add(key);
             manualRegenCount.set(key, prevCount + 1);
+            document.querySelectorAll('.regen-finding-btn').forEach(btn => {
+                const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
+                if (idx !== vulnIndex) return;
+                if (!(btn instanceof HTMLButtonElement)) return;
+                btn.disabled = true;
+                btn.classList.add('is-loading');
+                const label = btn.querySelector('.btn-label');
+                if (label) label.textContent = 'Regenerating...';
+            });
             document.querySelectorAll('.view-finding-btn').forEach(btn => {
                 const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
                 if (idx !== vulnIndex) return;
@@ -4538,8 +4549,50 @@ ${headHtml}
                 showToast('Regenerate failed', 'Could not regenerate this report right now.', 'error');
             } finally {
                 manualRegenInFlight.delete(key);
+                document.querySelectorAll('.regen-finding-btn').forEach(btn => {
+                    const idx = parseInt(btn.getAttribute('data-vuln-index') || '-1', 10);
+                    if (idx !== vulnIndex) return;
+                    if (!(btn instanceof HTMLButtonElement)) return;
+                    btn.disabled = false;
+                    btn.classList.remove('is-loading');
+                    const label = btn.querySelector('.btn-label');
+                    if (label) label.textContent = 'Regenerate';
+                });
                 syncReadyButtonsFromCache();
             }
+        }
+        function setFindingModalRegenerateState(isLoading) {
+            const ids = ['findingModalRegenerateBtn', 'findingModalRegenerateBtnBottom'];
+            ids.forEach(id => {
+                const btn = document.getElementById(id);
+                if (!(btn instanceof HTMLButtonElement)) return;
+                if (!btn.dataset.originalHtml) {
+                    btn.dataset.originalHtml = btn.innerHTML;
+                }
+                if (isLoading) {
+                    btn.disabled = true;
+                    btn.setAttribute('aria-busy', 'true');
+                    btn.classList.add('is-loading');
+                    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Regenerating...</span>';
+                } else {
+                    btn.disabled = false;
+                    btn.removeAttribute('aria-busy');
+                    btn.classList.remove('is-loading');
+                    btn.innerHTML = btn.dataset.originalHtml || 'Regenerate';
+                }
+            });
+        }
+        function triggerFindingModalRegenerate() {
+            const idx = Number(window.currentFindingModalIndex);
+            if (Number.isFinite(idx) && idx >= 0) {
+                return regenerateFindingReport(idx);
+            }
+            const uid = String(window.currentFindingContext?.vuln?._sq_uid || '');
+            const fallbackIdx = uid ? (lastVulnerabilities || []).findIndex(v => String(v?._sq_uid || '') === uid) : -1;
+            if (fallbackIdx >= 0) {
+                return regenerateFindingReport(fallbackIdx);
+            }
+            return Promise.resolve();
         }
         async function copyEvidenceToClipboard() {
             const fullEl = document.getElementById('evidenceRawPlain');
@@ -4561,44 +4614,15 @@ ${headHtml}
         document.addEventListener('click', function (e) {
             const t = e.target;
             if (!(t instanceof Element)) return;
-            if (t.closest('#findingModalRegenerateBtn')) {
+            if (t.closest('#findingModalRegenerateBtn') || t.closest('#findingModalRegenerateBtnBottom')) {
                 e.preventDefault();
                 e.stopPropagation();
-                const btn = t.closest('#findingModalRegenerateBtn');
-                if (btn instanceof HTMLButtonElement) {
-                    if (btn.disabled) return;
-                    btn.disabled = true;
-                    btn.style.opacity = '0.65';
-                    btn.style.cursor = 'not-allowed';
-                }
-                const idx = Number(window.currentFindingModalIndex);
-                if (Number.isFinite(idx) && idx >= 0) {
-                    Promise.resolve(regenerateFindingReport(idx)).finally(() => {
-                        if (btn instanceof HTMLButtonElement) {
-                            btn.disabled = false;
-                            btn.style.opacity = '';
-                            btn.style.cursor = 'pointer';
-                        }
-                    });
-                } else {
-                    const uid = String(window.currentFindingContext?.vuln?._sq_uid || '');
-                    const fallbackIdx = uid ? (lastVulnerabilities || []).findIndex(v => String(v?._sq_uid || '') === uid) : -1;
-                    if (fallbackIdx >= 0) {
-                        Promise.resolve(regenerateFindingReport(fallbackIdx)).finally(() => {
-                            if (btn instanceof HTMLButtonElement) {
-                                btn.disabled = false;
-                                btn.style.opacity = '';
-                                btn.style.cursor = 'pointer';
-                            }
-                        });
-                    } else {
-                        if (btn instanceof HTMLButtonElement) {
-                            btn.disabled = false;
-                            btn.style.opacity = '';
-                            btn.style.cursor = 'pointer';
-                        }
-                    }
-                }
+                const clicked = t.closest('#findingModalRegenerateBtn, #findingModalRegenerateBtnBottom');
+                if (clicked instanceof HTMLButtonElement && clicked.disabled) return;
+                setFindingModalRegenerateState(true);
+                Promise.resolve(triggerFindingModalRegenerate()).finally(() => {
+                    setFindingModalRegenerateState(false);
+                });
                 return;
             }
             if (t.closest('#shareResultsBtn')) {
@@ -4813,19 +4837,143 @@ ${headHtml}
         style="position:fixed;bottom:24px;right:24px;z-index:10020;display:flex;flex-direction:column;gap:8px;pointer-events:none;">
     </div>
     <style>
-        #findingModalRegenerateBtn {
+        /* Prevent findings/report action controls from overlapping on wide layouts */
+        .results-tabs {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .results-tabs .results-tabs-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            flex-wrap: wrap;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .results-tabs .results-tabs-row-top .results-tab {
+            flex: 1 1 calc(50% - 4px);
+            max-width: calc(50% - 4px);
+            white-space: nowrap;
+            justify-content: center;
+        }
+
+        .results-tabs .results-tabs-row-top #targetBadge {
+            flex: 1 0 100%;
+            max-width: 100%;
+        }
+
+        .results-tabs .results-tabs-row-bottom {
+            justify-content: space-between;
+        }
+
+        .results-tabs .report-actions {
+            width: 100%;
+            margin-left: 0;
+            margin-right: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            min-width: 0;
+            max-width: 100%;
+            flex-wrap: wrap;
+            box-sizing: border-box;
+            padding-left: 0;
+            padding-right: 0;
+        }
+
+        /* Keep artefacts/action row aligned with the same inner margins */
+        .results-tabs .results-tabs-row-bottom {
+            padding-left: 2px;
+            padding-right: 2px;
+            box-sizing: border-box;
+        }
+
+        .results-tabs .report-artefact-btns-left,
+        .results-tabs .report-extra-actions-right {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .results-tabs .report-extra-actions-right {
+            margin-left: auto;
+            justify-content: flex-end;
+        }
+
+        .results-tabs .artefact-btn {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
+        #findingModalRegenerateBtn,
+        #findingModalRegenerateBtnBottom {
             display: inline-block;
             transition: transform .15s ease, filter .2s ease, opacity .2s ease;
         }
 
-        #findingModalRegenerateBtn:hover:not(:disabled) {
+        #findingModalRegenerateBtn:hover:not(:disabled),
+        #findingModalRegenerateBtnBottom:hover:not(:disabled) {
             transform: translateY(-1px);
             filter: drop-shadow(0 8px 14px rgba(15, 23, 42, 0.25));
         }
 
-        #findingModalRegenerateBtn:active:not(:disabled) {
+        #findingModalRegenerateBtn:active:not(:disabled),
+        #findingModalRegenerateBtnBottom:active:not(:disabled) {
             transform: translateY(0);
             filter: drop-shadow(0 4px 10px rgba(15, 23, 42, 0.18));
+        }
+
+        #findingModalRegenerateBtn.is-loading,
+        #findingModalRegenerateBtnBottom.is-loading {
+            opacity: .7;
+            cursor: not-allowed !important;
+            filter: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #findingModalRegenerateBtnBottom.modal-btn.sq-pill-btn {
+            border-radius: 999px !important;
+            padding: 9px 16px !important;
+            font-weight: 700;
+            border: 1px solid rgba(59, 130, 246, 0.35);
+            background: rgba(59, 130, 246, 0.12);
+            color: var(--brand-color);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: transform .2s ease, box-shadow .2s ease, filter .2s ease, background .2s ease, border-color .2s ease;
+        }
+
+        #findingModalRegenerateBtnBottom.modal-btn.sq-pill-btn:hover:not(:disabled) {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.5);
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+            transform: translateY(-1px);
+        }
+
+        #findingModalRegenerateBtnBottom.modal-btn.sq-pill-btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
+        }
+
+        #findingModalRegenerateBtnBottom.modal-btn.sq-pill-btn:focus-visible {
+            outline: 2px solid var(--brand-color);
+            outline-offset: 2px;
+        }
+
+        .regen-finding-btn.is-loading {
+            opacity: .72;
+            cursor: not-allowed !important;
+            pointer-events: none;
         }
 
         #evidenceModal .sq-pill-btn {
@@ -5203,6 +5351,10 @@ ${headHtml}
             <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
                 <button type="button" id="findingPrintBtn" class="modal-btn secondary sq-pill-btn" title="Print report"
                     aria-label="Print report"><i class="fas fa-print"></i></button>
+                <button type="button" id="findingModalRegenerateBtnBottom" class="modal-btn secondary sq-pill-btn"
+                    title="Regenerate this report">
+                    <i class="fas fa-rotate-right"></i><span>Regenerate</span>
+                </button>
                 <button type="button" id="findingReportDone" class="modal-btn sq-pill-btn finding-close-btn"><i
                         class="fas fa-check-circle"></i><span>Close Report</span></button>
             </div>
