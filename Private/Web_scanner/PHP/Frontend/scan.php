@@ -467,6 +467,9 @@ if (!empty($profile_photo)) {
     <button type="button" id="backToTopBtn" class="back-to-top" title="Back to top" aria-label="Back to top">
         <i class="fas fa-arrow-up"></i>
     </button>
+    <button type="button" id="scrollToBottomBtn" class="back-to-top" title="Scroll to bottom" aria-label="Scroll to bottom">
+        <i class="fas fa-arrow-down"></i>
+    </button>
 
     <div id="userReportOverlay" class="report-overlay" style="display:none;" aria-hidden="true">
         <div class="report-overlay__backdrop"></div>
@@ -1227,7 +1230,16 @@ if (!empty($profile_photo)) {
         }
         function normalizeEvidenceLineBreaks(t) {
             let s = String(t || '');
-            const keys = ['Finding Title:', 'Finding Category:', 'Finding Reference:', 'Test Performed:', 'Expected Secure Result:', 'Observed Result:', 'What This Means:', 'Target:', 'Detection Time:', 'Header Validation Evidence'];
+            const keys = [
+                'Finding Title:', 'Finding Category:', 'Finding Reference:',
+                'Test Performed:', 'Test Method:', 'Request Method:', 'Request URL:', 'Parameter Tested:', 'Injected Payload:',
+                'Expected Secure Result:', 'Expected Result:', 'Expected Protocols:', 'Expected Secure Value:',
+                'Observed Result:', 'Observed Scheme:', 'Handshake Status:', 'Handshake Completed:', 'Validation Error:', 'Error:',
+                'What This Means:', 'Status:', 'Classification:', 'Weak Pattern Matched:',
+                'Target:', 'Target URL:', 'Target Hostname:', 'Resolved Hostname:', 'Resolved IP:', 'Port:', 'Target Port:',
+                'Detection Time:', 'Timestamp (EAT):', 'Current Date (EAT):',
+                'Header Validation Evidence', 'Missing Security Headers:', 'Response Status:', 'Content-Type:'
+            ];
             keys.forEach(function (k) {
                 const re = new RegExp('([^\\n])\\s*' + escapeRegExp(k), 'g');
                 s = s.replace(re, '$1\n' + k);
@@ -1241,23 +1253,80 @@ if (!empty($profile_photo)) {
             const map = {};
             const EVIDENCE_KNOWN_KEYS = [
                 'Header Validation Evidence',
+                'Expected Result',
                 'Expected Secure Result',
+                'Expected Protocols',
+                'Expected Secure Value',
+                'Observed Scheme',
                 'Observed Result',
+                'Handshake Status',
+                'Handshake Completed',
+                'Validation Error',
+                'Error',
                 'What This Means',
+                'Status',
+                'Classification',
+                'Weak Pattern Matched',
                 'Finding Reference',
                 'Finding Category',
                 'Finding Title',
                 'Test Performed',
+                'Test Method',
+                'Request Method',
+                'Request URL',
+                'Parameter Tested',
+                'Injected Payload',
                 'Detection Time',
+                'Timestamp (EAT)',
+                'Current Date (EAT)',
                 'Target'
+                , 'Target URL',
+                'Target Hostname',
+                'Resolved Hostname',
+                'Resolved IP',
+                'Port',
+                'Target Port',
+                'Response Status',
+                'Content-Type',
+                'Missing Security Headers'
             ];
             EVIDENCE_KNOWN_KEYS.sort(function (a, b) { return b.length - a.length; });
+            const ALIASES = {
+                'target url': 'Target',
+                'target hostname': 'Target',
+                'resolved hostname': 'Target',
+                'resolved ip': 'Target',
+                'port': 'Target',
+                'target port': 'Target',
+                'timestamp (eat)': 'Detection Time',
+                'current date (eat)': 'Detection Time',
+                'test method': 'Test Performed',
+                'request method': 'Test Performed',
+                'request url': 'Test Performed',
+                'parameter tested': 'Test Performed',
+                'injected payload': 'Test Performed',
+                'expected result': 'Expected Secure Result',
+                'expected secure value': 'Expected Secure Result',
+                'expected protocols': 'Expected Secure Result',
+                'observed scheme': 'Observed Result',
+                'handshake status': 'Observed Result',
+                'handshake completed': 'Observed Result',
+                'validation error': 'Observed Result',
+                'error': 'Observed Result',
+                'response status': 'Observed Result',
+                'content-type': 'Observed Result',
+                'missing security headers': 'Observed Result',
+                'status': 'What This Means',
+                'classification': 'What This Means',
+                'weak pattern matched': 'What This Means'
+            };
             function tryMatchKey(trimmed) {
                 for (let ki = 0; ki < EVIDENCE_KNOWN_KEYS.length; ki++) {
                     const key = EVIDENCE_KNOWN_KEYS[ki];
                     const prefix = key + ':';
                     if (trimmed.length >= prefix.length && trimmed.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()) {
-                        return { key: key, rest: trimmed.slice(prefix.length).trim() };
+                        const canonical = ALIASES[key.toLowerCase()] || key;
+                        return { key: canonical, rest: trimmed.slice(prefix.length).trim() };
                     }
                 }
                 return null;
@@ -1324,13 +1393,13 @@ if (!empty($profile_photo)) {
 
             buckets.test = tested
                 ? tested.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
-                : pickLines([/^Test Method\s*:/i, /^Request Method\s*:/i, /^Request URL\s*:/i, /^Header Checked\s*:/i, /^Parameter Tested\s*:/i], 3);
+                : pickLines([/^Test Method\s*:/i, /^Test Performed\s*:/i, /^Request Method\s*:/i, /^Request URL\s*:/i, /^Header Checked\s*:/i, /^Parameter Tested\s*:/i, /^Injected Payload\s*:/i], 4);
             buckets.expected = expected
                 ? expected.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
-                : pickLines([/^Expected Secure Result\s*:/i, /^Expected Secure Value\s*:/i], 2);
+                : pickLines([/^Expected Secure Result\s*:/i, /^Expected Secure Value\s*:/i, /^Expected Result\s*:/i, /^Expected Protocols\s*:/i], 3);
             buckets.observed = observed
                 ? observed.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
-                : pickLines([/^Observed Result\s*:/i, /^Handshake Result\s*:/i, /^Error\s*:/i, /^Response Status\s*:/i, /^Validation Error\s*:/i, /^Missing Security Headers\s*:/i], 4);
+                : pickLines([/^Observed Result\s*:/i, /^Observed Scheme\s*:/i, /^Handshake Result\s*:/i, /^Handshake Status\s*:/i, /^Handshake Completed\s*:/i, /^Error\s*:/i, /^Response Status\s*:/i, /^Validation Error\s*:/i, /^Missing Security Headers\s*:/i], 5);
             if (target) buckets.meta.push('Target: ' + target);
             if (detTime) buckets.meta.push('Detection Time: ' + detTime);
 
@@ -1356,13 +1425,34 @@ if (!empty($profile_photo)) {
             if (!text) return '<div class="evidence-empty">No evidence available.</div>';
             const lines = text.split(/\r?\n/);
             const kv = {};
+            const KV_ALIASES = {
+                'target url': 'Target',
+                'target hostname': 'Target',
+                'resolved hostname': 'Target',
+                'resolved ip': 'Resolved IP',
+                'target port': 'Port',
+                'timestamp (eat)': 'Detection Time',
+                'current date (eat)': 'Detection Time',
+                'test method': 'Test Performed',
+                'request method': 'Request Method',
+                'request url': 'Request URL',
+                'expected result': 'Expected Secure Result',
+                'expected secure value': 'Expected Secure Result',
+                'expected protocols': 'Expected Secure Result',
+                'observed scheme': 'Observed Result',
+                'handshake status': 'Observed Result',
+                'handshake completed': 'Observed Result',
+                'validation error': 'Observed Result',
+                'error': 'Observed Result'
+            };
             let currentKey = null;
             lines.forEach(raw => {
                 const trimmed = raw.trim();
                 if (!trimmed) return;
                 const m = trimmed.match(/^([A-Za-z][A-Za-z0-9 \-\/()]{2,40})\s*:\s*(.*)$/);
                 if (m) {
-                    currentKey = m[1].trim();
+                    const detected = m[1].trim();
+                    currentKey = KV_ALIASES[detected.toLowerCase()] || detected;
                     kv[currentKey] = (kv[currentKey] ? kv[currentKey] + '\n' : '') + m[2].trim();
                 } else if (currentKey) {
                     kv[currentKey] = (kv[currentKey] || '') + '\n' + trimmed;
@@ -3026,16 +3116,38 @@ if (!empty($profile_photo)) {
             alert('Enter a target URL to scan for:\n\n• SQL Injection (error-based + blind time-based)\n• Cross-Site Scripting (reflected + DOM XSS sinks)\n• CORS misconfiguration\n• Open redirect vulnerabilities\n• Exposed sensitive files (.env, .git, backups, admin panels)\n• Missing security headers (CSP, HSTS, X-Frame-Options…)\n• SSL/TLS certificate and cipher issues\n• Mixed content (HTTP resources on HTTPS pages)\n• Exposed secrets (AWS keys, Stripe keys, passwords)\n• Cookie security flags (Secure, HttpOnly, SameSite)\n• Open ports and exposed services (Redis, MongoDB, Telnet…)\n\nEnsure you have permission to scan the target.');
         });
 
-        // Back to top
+        // Floating scroll controls
         (function () {
-            const btn = document.getElementById('backToTopBtn');
-            if (!btn) return;
+            const topBtn = document.getElementById('backToTopBtn');
+            const bottomBtn = document.getElementById('scrollToBottomBtn');
+            const resultsEl = document.getElementById('results');
+            if (!topBtn || !bottomBtn) return;
+            const show = (el, on) => { el.style.display = on ? 'inline-flex' : 'none'; };
+            const hasLoadedReport = () => !!(resultsEl && resultsEl.classList.contains('active'));
+            const nearBottom = () => {
+                const doc = document.documentElement;
+                return (window.scrollY + window.innerHeight) >= (doc.scrollHeight - 24);
+            };
             function sync() {
-                btn.style.display = (window.scrollY > 400) ? 'inline-flex' : 'none';
+                if (!hasLoadedReport()) {
+                    show(topBtn, false);
+                    show(bottomBtn, false);
+                    return;
+                }
+                show(topBtn, window.scrollY > 400);
+                show(bottomBtn, !nearBottom());
             }
             window.addEventListener('scroll', sync, { passive: true });
+            window.addEventListener('resize', sync);
             sync();
-            btn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+            topBtn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+            bottomBtn.addEventListener('click', () => {
+                window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+            });
+            if (resultsEl && window.MutationObserver) {
+                const mo = new MutationObserver(sync);
+                mo.observe(resultsEl, { attributes: true, attributeFilter: ['class'] });
+            }
         })();
 
         // Report generation helpers
@@ -4900,6 +5012,61 @@ ${headHtml}
 
         .results-tabs .results-tabs-row-bottom {
             justify-content: space-between;
+        }
+
+        #backToTopBtn,
+        #scrollToBottomBtn {
+            position: fixed;
+            right: 22px;
+            width: 46px;
+            height: 46px;
+            border-radius: 999px;
+            color: #fff;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10018;
+            cursor: pointer;
+            transition: transform .16s ease, box-shadow .2s ease, opacity .2s ease;
+        }
+        #backToTopBtn { bottom: 76px; }
+        #scrollToBottomBtn { bottom: 22px; }
+        /* Light mode colors */
+        #backToTopBtn {
+            border: 1px solid rgba(22, 163, 74, 0.35);
+            background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+            box-shadow: 0 12px 28px rgba(22, 163, 74, 0.35);
+        }
+        #scrollToBottomBtn {
+            border: 1px solid rgba(8, 145, 178, 0.35);
+            background: linear-gradient(180deg, #06b6d4 0%, #0891b2 100%);
+            box-shadow: 0 12px 28px rgba(8, 145, 178, 0.32);
+        }
+        /* Keep distinct colors in dark mode too */
+        body.dark #backToTopBtn {
+            border-color: rgba(74, 222, 128, 0.4);
+            background: linear-gradient(180deg, #22c55e 0%, #15803d 100%);
+            box-shadow: 0 12px 28px rgba(21, 128, 61, 0.45);
+        }
+        body.dark #scrollToBottomBtn {
+            border-color: rgba(34, 211, 238, 0.4);
+            background: linear-gradient(180deg, #06b6d4 0%, #0e7490 100%);
+            box-shadow: 0 12px 28px rgba(14, 116, 144, 0.45);
+        }
+        #backToTopBtn:hover,
+        #scrollToBottomBtn:hover {
+            transform: translateY(-2px);
+        }
+        #backToTopBtn:hover { box-shadow: 0 16px 32px rgba(22, 163, 74, 0.42); }
+        #scrollToBottomBtn:hover { box-shadow: 0 16px 32px rgba(8, 145, 178, 0.42); }
+        #backToTopBtn:active,
+        #scrollToBottomBtn:active {
+            transform: translateY(0);
+        }
+        #backToTopBtn:focus-visible,
+        #scrollToBottomBtn:focus-visible {
+            outline: 3px solid rgba(147, 197, 253, 0.9);
+            outline-offset: 2px;
         }
 
         .results-tabs .report-actions {
