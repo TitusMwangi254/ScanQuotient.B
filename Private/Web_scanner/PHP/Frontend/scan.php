@@ -3039,6 +3039,27 @@ if (!empty($profile_photo)) {
         })();
 
         // Report generation helpers
+        function deriveKeySignal(vuln) {
+            const clean = (value) => String(value || '')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .replace(/[.;,\s]+$/g, '');
+            const tested = clean(vuln?.what_we_tested);
+            const indicates = clean(vuln?.indicates);
+            let sentence = '';
+            if (tested && indicates) {
+                sentence = `Testing ${tested} indicates ${indicates}.`;
+            } else if (indicates) {
+                sentence = `The observed signal indicates ${indicates}.`;
+            } else if (tested) {
+                sentence = `Testing focused on ${tested}.`;
+            } else {
+                sentence = 'Scanner identified a security-relevant signal requiring review.';
+            }
+            if (sentence.length > 220) sentence = `${sentence.slice(0, 217).trimEnd()}...`;
+            return sentence;
+        }
+
         function buildCsvReport(data) {
             const lines = [];
             lines.push(`Target,${data.target}`);
@@ -3047,14 +3068,14 @@ if (!empty($profile_photo)) {
             lines.push(`Risk Level,${data.summary.risk_level}`);
             lines.push(`Risk Score,${data.summary.risk_score}`);
             lines.push('');
-            lines.push('Severity,Name,Description,Evidence,Remediation');
+            lines.push('Severity,Name,Description,Key Indicator,Remediation');
 
             (data.vulnerabilities || []).forEach(v => {
                 const row = [
                     v.severity || '',
                     (v.name || '').replace(/"/g, '""'),
                     (v.description || '').replace(/"/g, '""'),
-                    (v.evidence || '').replace(/"/g, '""'),
+                    deriveKeySignal(v).replace(/"/g, '""'),
                     (v.remediation || '').replace(/"/g, '""'),
                 ].map(value => `"${value}"`);
                 lines.push(row.join(','));
@@ -3072,6 +3093,7 @@ if (!empty($profile_photo)) {
             const missingNames = headers.missing_names || [];
             const vulns = Array.isArray(data.vulnerabilities) ? data.vulnerabilities : [];
             const safeRisk = String(summary.risk_level || 'Secure').toLowerCase();
+            const riskClass = String(summary.risk_level || 'Secure').toLowerCase().replace(/[^a-z]/g, '');
 
             const sevCount = { critical: 0, high: 0, medium: 0, low: 0, info: 0, secure: 0 };
             vulns.forEach(v => {
@@ -3102,8 +3124,8 @@ if (!empty($profile_photo)) {
                         <div><div class="label">Potential Exploitation</div><div>${escapeHtml(v.how_exploited || '-')}</div></div>
                     </div>
                     <div class="finding-block">
-                        <div class="label">Evidence Snapshot</div>
-                        <pre>${escapeHtml(v.evidence || '-')}</pre>
+                        <div class="label">Key Indicator</div>
+                        <div>${escapeHtml(deriveKeySignal(v))}</div>
                     </div>
                     <div class="finding-block">
                         <div class="label">Recommended Remediation</div>
@@ -3124,17 +3146,19 @@ if (!empty($profile_photo)) {
         :root { --ink:#0f172a; --muted:#475569; --line:#e2e8f0; --surface:#ffffff; --bg:#f8fafc; --brand:#3b82f6; }
         * { box-sizing: border-box; }
         body { margin:0; background:var(--bg); color:var(--ink); font-family: "Inter", "Segoe UI", Arial, sans-serif; line-height:1.45; }
-        .wrap { max-width: 980px; margin: 20px auto; padding: 0 16px 28px; }
+        .wrap { max-width: 1100px; margin: 22px auto; padding: 0 16px 28px; }
         .sheet { background:var(--surface); border:1px solid var(--line); border-radius:16px; box-shadow:0 16px 34px rgba(15,23,42,.08); overflow:hidden; }
-        .cover { padding:26px 28px; background: linear-gradient(140deg,#e0e7ff 0%, #eef2ff 45%, #ffffff 100%); border-bottom:1px solid var(--line); }
+        .cover { padding:24px 26px; background: linear-gradient(140deg,#e0e7ff 0%, #eef2ff 45%, #ffffff 100%); border-bottom:1px solid var(--line); }
         .brand { display:inline-flex; gap:8px; align-items:center; font-size:12px; font-weight:700; color:#3730a3; background:rgba(79,70,229,.12); border:1px solid rgba(99,102,241,.25); padding:6px 10px; border-radius:999px; }
         .title { margin:12px 0 8px; font-size:30px; line-height:1.15; }
         .subtitle { margin:0; color:#334155; font-size:14px; }
+        .meta { margin-top:8px; color:#334155; font-size:13px; }
         .risk-chip { margin-top:12px; display:inline-block; padding:8px 12px; border-radius:999px; font-weight:700; font-size:12px; }
         .risk-chip.secure, .risk-chip.low { background:#dcfce7; color:#166534; }
         .risk-chip.medium { background:#fef3c7; color:#92400e; }
         .risk-chip.high, .risk-chip.critical { background:#fee2e2; color:#991b1b; }
-        .section { padding:18px 28px; border-top:1px solid var(--line); }
+        .risk-chip.info { background:#dcfce7; color:#166534; }
+        .section { padding:18px 26px; border-top:1px solid var(--line); }
         h2 { margin:0 0 12px; font-size:18px; }
         .meta-grid { display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:10px; }
         .kpi { border:1px solid var(--line); border-radius:12px; background:#fff; padding:12px; }
@@ -3151,7 +3175,7 @@ if (!empty($profile_photo)) {
         .sev.info { background:#f8fafc; color:#334155; }
         .sev.secure { background:#f0fdf4; color:#166534; }
         .two-col { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
-        .panel { border:1px solid var(--line); border-radius:12px; padding:12px; }
+        .panel { border:1px solid var(--line); border-radius:12px; padding:12px; background:#fff; }
         .panel h3 { margin:0 0 8px; font-size:14px; }
         .pill { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:4px 9px; margin:2px 6px 0 0; font-size:11px; color:#334155; background:#fff; }
         ul { margin:8px 0 0 18px; padding:0; }
@@ -3187,16 +3211,17 @@ if (!empty($profile_photo)) {
             <div class="brand">ScanQuotient <span>Web Security Assessment</span></div>
             <h1 class="title">Security Assessment Report</h1>
             <p class="subtitle">Prepared for <strong>${escapeHtml(data.target || '-')}</strong></p>
-            <div class="risk-chip ${safeRisk}">${escapeHtml(summary.risk_level || 'Secure')} Risk • Score ${escapeHtml(String(summary.risk_score || 0))}</div>
+            <div class="meta"><strong>Scanned:</strong> ${escapeHtml(formatTimestamp(data.timestamp) || '-')} &nbsp; <strong>Duration:</strong> ${escapeHtml(String(data.scan_duration || 0))}s</div>
+            <div class="risk-chip ${riskClass}">${escapeHtml(summary.risk_level || 'Secure')} Risk • Score ${escapeHtml(String(summary.risk_score || 0))}</div>
         </section>
 
         <section class="section">
             <h2>Scan Overview</h2>
             <div class="meta-grid">
                 <div class="kpi"><div class="k">Target</div><div class="v">${escapeHtml(data.target || '-')}</div></div>
-                <div class="kpi"><div class="k">Scanned At</div><div class="v">${escapeHtml(formatTimestamp(data.timestamp) || '-')}</div></div>
-                <div class="kpi"><div class="k">Duration</div><div class="v">${escapeHtml(String(data.scan_duration || 0))}s</div></div>
-                <div class="kpi"><div class="k">Total Findings</div><div class="v">${vulns.length}</div><div class="s">Detected security issues</div></div>
+                <div class="kpi"><div class="k">HTTPS Enabled</div><div class="v">${ssl.https ? 'Yes' : 'No'}</div></div>
+                <div class="kpi"><div class="k">TLS Grade</div><div class="v">${escapeHtml(ssl.grade || 'N/A')}</div></div>
+                <div class="kpi"><div class="k">Header Score</div><div class="v">${escapeHtml(String(headers.score || 0))}%</div></div>
             </div>
             <div class="sev-row">
                 <div class="sev critical">Critical<strong>${sevCount.critical}</strong></div>
@@ -3215,7 +3240,7 @@ if (!empty($profile_photo)) {
         </section>
 
         <section class="section">
-            <h2>Transport & Header Posture</h2>
+            <h2>Security Posture Details</h2>
             <div class="two-col">
                 <div class="panel">
                     <h3>TLS / HTTPS</h3>
@@ -3268,7 +3293,7 @@ if (!empty($profile_photo)) {
 
             const findingsHtml = vulns.map((v, i) => {
                 const sev = String(v.severity || 'info').toLowerCase();
-                const assessmentSignal = String(v.indicates || v.description || 'Scanner identified behavior that deviates from expected secure configuration.');
+                const assessmentSignal = deriveKeySignal(v);
                 return `
                 <section class="finding">
                     <div class="finding-head">
@@ -3572,7 +3597,8 @@ ${headHtml}
             try {
                 if (!window.jspdf || !window.jspdf.jsPDF || typeof html2canvas !== 'function') return null;
                 const { jsPDF } = window.jspdf;
-                const scale = (typeof renderScale === 'number' && renderScale > 0) ? renderScale : 1.25;
+                const baseScale = Math.max(2, Math.min(3, Number(window.devicePixelRatio || 1)));
+                const scale = (typeof renderScale === 'number' && renderScale > 0) ? renderScale : baseScale;
 
                 tmp = document.createElement('div');
                 tmp.style.position = 'absolute';
@@ -3594,11 +3620,12 @@ ${headHtml}
                 const canvas = await html2canvas(tmp, {
                     scale: scale,
                     useCORS: true,
-                    backgroundColor: '#ffffff'
+                    backgroundColor: '#ffffff',
+                    imageTimeout: 15000
                 });
                 if (!canvas || canvas.width < 10 || canvas.height < 10) return null;
 
-                const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+                const doc = new jsPDF({ unit: 'pt', format: 'a4', compress: false, precision: 16 });
                 const pageWidth = doc.internal.pageSize.getWidth();
                 const pageHeight = doc.internal.pageSize.getHeight();
                 const margin = 20;
@@ -3615,13 +3642,17 @@ ${headHtml}
                     sliceCanvas.height = currentSlicePx;
                     const ctx = sliceCanvas.getContext('2d');
                     if (!ctx) break;
+                    ctx.imageSmoothingEnabled = true;
+                    if ('imageSmoothingQuality' in ctx) {
+                        ctx.imageSmoothingQuality = 'high';
+                    }
                     ctx.fillStyle = '#ffffff';
                     ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
                     ctx.drawImage(canvas, 0, srcY, canvas.width, currentSlicePx, 0, 0, canvas.width, currentSlicePx);
                     const imgData = sliceCanvas.toDataURL('image/png');
                     const renderedHeight = (currentSlicePx * contentWidth) / canvas.width;
                     if (pageIndex > 0) doc.addPage();
-                    doc.addImage(imgData, 'JPEG', margin, margin, contentWidth, renderedHeight);
+                    doc.addImage(imgData, 'PNG', margin, margin, contentWidth, renderedHeight);
                     srcY += currentSlicePx;
                     pageIndex += 1;
                 }
@@ -3629,8 +3660,9 @@ ${headHtml}
                 const ab = doc.output('arraybuffer');
                 if (!ab || ab.byteLength < 8000) return null;
                 const dataUri = doc.output('datauristring');
-                if (dataUri && dataUri.length > 6500000 && scale > 0.85) {
-                    return await generateAndUploadPdf(scanId, scanData, 0.85);
+                // If the PDF becomes too large, reduce gently to preserve readability.
+                if (dataUri && dataUri.length > 6500000 && scale > 1.35) {
+                    return await generateAndUploadPdf(scanId, scanData, scale - 0.35);
                 }
 
                 const r = await fetch('../Backend/upload_pdf.php', {

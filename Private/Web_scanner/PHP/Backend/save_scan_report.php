@@ -509,6 +509,35 @@ function generate_detailed_report_via_openai(array $scan): string
 
 // ── Report builders ──────────────────────────────────────────────────────────
 
+function build_key_signal(array $v): string
+{
+    $tested = trim((string)($v['what_we_tested'] ?? ''));
+    $indicates = trim((string)($v['indicates'] ?? ''));
+
+    $normalize = static function (string $text): string {
+        $text = preg_replace('/\s+/', ' ', $text) ?? '';
+        return trim($text, " \t\n\r\0\x0B.;,");
+    };
+
+    $tested = $normalize($tested);
+    $indicates = $normalize($indicates);
+
+    if ($tested !== '' && $indicates !== '') {
+        $sentence = "Testing {$tested} indicates {$indicates}.";
+    } elseif ($indicates !== '') {
+        $sentence = "The observed signal indicates {$indicates}.";
+    } elseif ($tested !== '') {
+        $sentence = "Testing focused on {$tested}.";
+    } else {
+        $sentence = "Scanner identified a security-relevant signal requiring review.";
+    }
+
+    if (strlen($sentence) > 220) {
+        $sentence = rtrim(substr($sentence, 0, 217)) . '...';
+    }
+    return $sentence;
+}
+
 function build_csv_report(array $d): string
 {
     $lines = [];
@@ -518,16 +547,17 @@ function build_csv_report(array $d): string
     $lines[] = 'Risk Level,' . ($d['summary']['risk_level'] ?? '');
     $lines[] = 'Risk Score,' . ($d['summary']['risk_score'] ?? 0);
     $lines[] = '';
-    $lines[] = 'Severity,Name,Description,What We Tested,This Indicates,How Exploited,Evidence,Remediation';
+    $lines[] = 'Severity,Name,Description,What We Tested,This Indicates,Key Indicator,How Exploited,Remediation';
     foreach ($d['vulnerabilities'] ?? [] as $v) {
+        $keySignal = build_key_signal($v);
         $row = [
             $v['severity'] ?? '',
             str_replace('"', '""', $v['name'] ?? ''),
             str_replace('"', '""', $v['description'] ?? ''),
             str_replace('"', '""', $v['what_we_tested'] ?? ''),
             str_replace('"', '""', $v['indicates'] ?? ''),
+            str_replace('"', '""', $keySignal),
             str_replace('"', '""', $v['how_exploited'] ?? ''),
-            str_replace('"', '""', $v['evidence'] ?? ''),
             str_replace('"', '""', $v['remediation'] ?? ''),
         ];
         $lines[] = '"' . implode('","', $row) . '"';
@@ -545,17 +575,19 @@ function build_html_report(array $d, string $reportText): string
     $duration = $d['scan_duration'] ?? 0;
     $riskLevel = $summary['risk_level'] ?? 'Secure';
     $riskScore = $summary['risk_score'] ?? 0;
+    $riskClass = strtolower(preg_replace('/[^a-z]/i', '', (string) $riskLevel));
 
     $rows = '';
     foreach ($d['vulnerabilities'] ?? [] as $v) {
+        $keySignal = build_key_signal($v);
         $rows .= '<tr>'
             . '<td>' . htmlspecialchars($v['severity'] ?? '') . '</td>'
             . '<td>' . htmlspecialchars($v['name'] ?? '') . '</td>'
             . '<td>' . htmlspecialchars($v['description'] ?? '') . '</td>'
             . '<td>' . htmlspecialchars($v['what_we_tested'] ?? '') . '</td>'
             . '<td>' . htmlspecialchars($v['indicates'] ?? '') . '</td>'
+            . '<td>' . htmlspecialchars($keySignal) . '</td>'
             . '<td>' . htmlspecialchars($v['how_exploited'] ?? '') . '</td>'
-            . '<td>' . htmlspecialchars($v['evidence'] ?? '') . '</td>'
             . '<td>' . htmlspecialchars($v['remediation'] ?? '') . '</td>'
             . '</tr>';
     }
@@ -615,35 +647,100 @@ function build_html_report(array $d, string $reportText): string
 <meta charset="UTF-8"/>
 <title>ScanQuotient Security Report</title>
 <style>
-body{font-family:Arial,sans-serif;color:#111827;margin:20px;}
-h1,h2,h3{color:#111827;}
-.report-block{margin:1em 0;padding:1em;background:#f3f4f6;border-radius:8px;}
-.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;}
-.badge-critical,.badge-high{background:#fee2e2;color:#b91c1c;}
+*{box-sizing:border-box;}
+body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#0f172a;margin:0;background:#f8fafc;line-height:1.45;}
+.wrap{max-width:1100px;margin:22px auto;padding:0 16px 28px;}
+.sheet{background:#fff;border:1px solid #e2e8f0;border-radius:16px;box-shadow:0 16px 34px rgba(15,23,42,.08);overflow:hidden;}
+.cover{padding:24px 26px;background:linear-gradient(140deg,#e0e7ff 0%,#eef2ff 45%,#ffffff 100%);border-bottom:1px solid #e2e8f0;}
+.brand{display:inline-flex;gap:8px;align-items:center;font-size:12px;font-weight:700;color:#3730a3;background:rgba(79,70,229,.12);border:1px solid rgba(99,102,241,.25);padding:6px 10px;border-radius:999px;}
+h1{margin:12px 0 8px;font-size:30px;line-height:1.15;}
+h2{margin:0 0 12px;font-size:18px;}
+.subtitle{margin:0;color:#334155;font-size:14px;}
+.meta{margin-top:8px;color:#334155;font-size:13px;}
+.section{padding:18px 26px;border-top:1px solid #e2e8f0;}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;}
+.kpi{border:1px solid #e2e8f0;border-radius:12px;background:#fff;padding:12px;}
+.kpi .k{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px;font-weight:700;}
+.kpi .v{font-size:18px;font-weight:800;color:#0f172a;}
+.report-block{margin:10px 0 0;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;color:#1e293b;}
+.badge{display:inline-block;padding:8px 12px;border-radius:999px;font-size:12px;font-weight:700;}
+.badge-critical,.badge-high{background:#fee2e2;color:#991b1b;}
 .badge-medium{background:#fef3c7;color:#92400e;}
-.badge-low{background:#e0f2fe;color:#0369a1;}
-.badge-secure{background:#dcfce7;color:#16a34a;}
-table{border-collapse:collapse;width:100%;margin-top:10px;}
-th,td{border:1px solid #e5e7eb;padding:8px;font-size:13px;}
-th{background:#f9fafb;}
+.badge-low{background:#dbeafe;color:#1d4ed8;}
+.badge-secure,.badge-info{background:#dcfce7;color:#166534;}
+.panel{border:1px solid #e2e8f0;border-radius:12px;padding:12px;background:#fff;}
+.panel + .panel{margin-top:10px;}
+.panel p{margin:0 0 8px;}
+.finding-wrap{overflow:auto;border:1px solid #e2e8f0;border-radius:12px;}
+table{border-collapse:collapse;width:100%;background:#fff;table-layout:fixed;}
+th,td{border-bottom:1px solid #e5e7eb;padding:8px 6px;font-size:12px;vertical-align:top;word-break:break-word;overflow-wrap:anywhere;white-space:normal;}
+th{background:#f8fafc;color:#334155;text-transform:uppercase;letter-spacing:.35px;font-size:11px;position:sticky;top:0;}
+tbody tr:nth-child(even){background:#fcfdff;}
+td:first-child{font-weight:700;white-space:nowrap;}
+ul{margin:8px 0 0 18px;padding:0;}
+li{margin:4px 0;}
+@media (max-width:960px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media print{
+  body{background:#fff;}
+  .wrap{max-width:none;margin:0;padding:0;}
+  .sheet{border:none;box-shadow:none;border-radius:0;}
+  .cover,.section{break-inside:avoid;}
+  th{position:static;}
+  table{table-layout:fixed;}
+  th,td{font-size:10px;padding:5px 4px;word-break:break-word;overflow-wrap:anywhere;}
+  th:nth-child(1),td:nth-child(1){width:8%;}
+  th:nth-child(2),td:nth-child(2){width:12%;}
+  th:nth-child(3),td:nth-child(3){width:14%;}
+  th:nth-child(4),td:nth-child(4){width:14%;}
+  th:nth-child(5),td:nth-child(5){width:14%;}
+  th:nth-child(6),td:nth-child(6){width:16%;}
+  th:nth-child(7),td:nth-child(7){width:10%;}
+  th:nth-child(8),td:nth-child(8){width:12%;}
+}
 </style>
 </head>
 <body>
-<h1>ScanQuotient Security Report</h1>
-<div class="meta"><strong>Target:</strong> {$target} &nbsp; <strong>Scanned:</strong> {$ts} &nbsp; <strong>Duration:</strong> {$duration}s</div>
-<h2>Overall Risk</h2>
-<p><span class="badge badge-{$riskLevel}">{$riskLevel} (Score: {$riskScore})</span></p>
-{$reportBlock}
-<h2>HTTPS &amp; Headers</h2>
-<p>HTTPS: {$httpsYesNo} &nbsp; SSL grade: {$sslGrade} &nbsp; Headers score: {$headersScore}%</p>
-{$headersDetail}
-{$serverBlock}
-{$crawlerBlock}
-<h2>Detailed Issues</h2>
-<table>
-<thead><tr><th>Severity</th><th>Name</th><th>Description</th><th>What We Tested</th><th>This Indicates</th><th>How Exploited</th><th>Evidence</th><th>Remediation</th></tr></thead>
-<tbody>{$rows}</tbody>
-</table>
+<div class="wrap">
+  <div class="sheet">
+    <section class="cover">
+      <div class="brand">ScanQuotient <span>Web Security Assessment</span></div>
+      <h1>Security Assessment Report</h1>
+      <p class="subtitle">Prepared for <strong>{$target}</strong></p>
+      <div class="meta"><strong>Scanned:</strong> {$ts} &nbsp; <strong>Duration:</strong> {$duration}s</div>
+      <p style="margin:12px 0 0;"><span class="badge badge-{$riskClass}">{$riskLevel} Risk • Score {$riskScore}</span></p>
+    </section>
+
+    <section class="section">
+      <h2>Scan Overview</h2>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="k">Target</div><div class="v">{$target}</div></div>
+        <div class="kpi"><div class="k">HTTPS Enabled</div><div class="v">{$httpsYesNo}</div></div>
+        <div class="kpi"><div class="k">TLS Grade</div><div class="v">{$sslGrade}</div></div>
+        <div class="kpi"><div class="k">Header Score</div><div class="v">{$headersScore}%</div></div>
+      </div>
+      {$reportBlock}
+    </section>
+
+    <section class="section">
+      <h2>Security Posture Details</h2>
+      <div class="panel">
+        {$headersDetail}
+      </div>
+      {$serverBlock}
+      {$crawlerBlock}
+    </section>
+
+    <section class="section">
+      <h2>Detailed Issues</h2>
+      <div class="finding-wrap">
+        <table>
+          <thead><tr><th>Severity</th><th>Name</th><th>Description</th><th>What We Tested</th><th>This Indicates</th><th>Key Indicator</th><th>How Exploited</th><th>Remediation</th></tr></thead>
+          <tbody>{$rows}</tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div>
 </body>
 </html>
 HTML;
@@ -675,7 +772,8 @@ function save_pdf_from_html(string $htmlPath, string $pdfPath): bool
 
         $dompdf = new \Dompdf\Dompdf($options);
         $dompdf->loadHtml($htmlContent, 'UTF-8');
-        $dompdf->setPaper('A4', 'portrait');
+        // Landscape ensures wide findings tables (incl. Key Indicator) fully fit.
+        $dompdf->setPaper('A4', 'landscape');
         $dompdf->render();
 
         $output = $dompdf->output();
