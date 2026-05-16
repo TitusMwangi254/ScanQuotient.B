@@ -219,34 +219,15 @@ try {
         $hasCerts = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch();
         $hasAccept = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
         if ($hasCerts && $hasAccept) {
-            $pendingCertStmt = $pdo->prepare("
-                SELECT c.id
-                FROM security_certificates c
-                WHERE c.is_active = 'yes'
-                  AND (
-                        c.target_type = 'everyone'
-                        OR (c.target_type = 'role' AND c.target_value = :role)
-                        OR (c.target_type = 'user_id' AND c.target_value = :uid)
-                        OR (c.target_type = 'username' AND c.target_value = :uname)
-                  )
-                  AND NOT EXISTS (
-                        SELECT 1
-                        FROM security_certificate_acceptances a
-                        WHERE a.certificate_id = c.id AND a.user_id = :uid_check
-                  )
-                ORDER BY c.created_at DESC
-                LIMIT 1
-            ");
-            $pendingCertStmt->execute([
-                ':uid' => $_SESSION['2fa_user_id'],
-                ':uid_check' => $_SESSION['2fa_user_id'],
-                ':role' => $_SESSION['2fa_role'],
-                ':uname' => $_SESSION['2fa_username']
+            require_once __DIR__ . '/../../../../Private/Site_security/PHP/Backend/certificate_target_helpers.php';
+            $pendingCertId = sq_certificate_find_pending_id($pdo, [
+                'user_id' => (string) ($_SESSION['2fa_user_id'] ?? ''),
+                'role' => (string) ($_SESSION['2fa_role'] ?? ''),
+                'user_name' => (string) ($_SESSION['2fa_username'] ?? ''),
             ]);
-            $pendingCert = $pendingCertStmt->fetch(PDO::FETCH_ASSOC);
-            if ($pendingCert) {
+            if ($pendingCertId) {
                 $_SESSION['auth_mode'] = 'certificate_agreement';
-                $_SESSION['cert_id'] = (int) $pendingCert['id'];
+                $_SESSION['cert_id'] = $pendingCertId;
                 $_SESSION['cert_user_id'] = $_SESSION['2fa_user_id'];
                 $_SESSION['cert_role'] = $_SESSION['2fa_role'];
                 $_SESSION['cert_username'] = $_SESSION['2fa_username'];

@@ -12,32 +12,30 @@
         crossorigin="anonymous" referrerpolicy="no-referrer" />
 
     <link rel="stylesheet" href="../../CSS/terms_of_service.css">
+    <link rel="stylesheet" href="../../CSS/legal-pages-header.css">
+    <link rel="stylesheet" href="../../CSS/page-scroll-controls.css">
 </head>
 
 <body>
 
-    <div class="top-left-brand">
-        <div class="main-title">ScanQuotient</div>
-        <div class="tagline">Quantifying Risk.Strengthening Security.</div>
-    </div>
-
-    <div class="top-right-nav">
-
-        <div class="theme-switch-wrapper">
-            <button class="theme-icon-btn" id="themeToggle" aria-label="Toggle Theme">
+    <header class="legal-header" id="legalHeader">
+        <div class="legal-header-brand">
+            <a href="homepage.php" class="legal-header-title">ScanQuotient</a>
+            <span class="legal-header-tagline">Quantifying Risk. Strengthening Security.</span>
+        </div>
+        <div class="legal-header-actions">
+            <button type="button" id="themeToggle" class="legal-header-btn" aria-label="Toggle Theme" title="Toggle Theme">
                 <i class="fas fa-moon" id="themeIcon"></i>
             </button>
+            <a href="../../../Help_center/PHP/Frontend/Help_center.php" class="legal-header-btn" title="Support"
+                aria-label="Support">
+                <i class="fas fa-question-circle"></i>
+            </a>
+            <a href="homepage.php" class="legal-header-btn" title="Back to Home" aria-label="Back to Home">
+                <i class="fas fa-home"></i>
+            </a>
         </div>
-
-        <a href="../../../Help_center/PHP/Frontend/Help_center.php" title="Support">
-            <i class="fas fa-question-circle"></i>
-        </a>
-
-        <a href="homepage.php" title="Back to Home">
-            <i class="fas fa-home"></i>
-        </a>
-
-    </div>
+    </header>
 
     <div class="policy-content">
 
@@ -113,9 +111,6 @@
         Back to Home Page
     </a>
 
-    <button id="scrollToTopBtn" title="Go to top">
-        <i class="fas fa-arrow-up"></i>
-    </button>
     <footer>
         <div class="container">
             <div class="footer-content">
@@ -165,12 +160,23 @@
                     </p>
                 </div>
             </div>
-            <div class="footer-bottom">
-                <p>&copy; 2026 ScanQuotient. All rights reserved.</p>
-            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 ScanQuotient. All rights reserved.</p>
         </div>
     </footer>
+
+    <div class="page-scroll-controls" aria-label="Page navigation">
+        <button type="button" id="scrollDownBtn" title="Scroll down" aria-label="Scroll down">
+            <i class="fas fa-arrow-down" aria-hidden="true"></i>
+        </button>
+        <button type="button" id="scrollToTopBtn" title="Back to top" aria-label="Back to top">
+            <i class="fas fa-arrow-up" aria-hidden="true"></i>
+        </button>
+    </div>
+
     <script src="../../Javascript/terms_of_service.js"></script>
+    <script src="../../Javascript/page-scroll-controls.js"></script>
 
 </body>
 

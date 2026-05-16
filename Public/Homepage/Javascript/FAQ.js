@@ -21,23 +21,6 @@
                 });
             });
 
-            // Dynamically create and append the back-to-top button
-            const backToTopButton = document.createElement('div');
-            backToTopButton.id = 'back-to-top';
-            backToTopButton.innerHTML = '<i class="fas fa-arrow-up"></i>';
-            backToTopButton.onclick = () => window.scrollTo({top: 0, behavior: 'smooth'});
-            document.body.appendChild(backToTopButton);
-
-            // Back to Top Button Visibility on scroll
-            window.addEventListener('scroll', () => {
-                if (window.scrollY > 300) {
-                    backToTopButton.style.display = 'flex'; /* Use flex to center icon */
-                } else {
-                    backToTopButton.style.display = 'none';
-                }
-            });
-            backToTopButton.style.display = 'none'; // Initially hidden
-
             // --- Theme Toggle Functionality ---
             const themeToggleBtn = document.getElementById('theme-toggle');
             const body = document.body;

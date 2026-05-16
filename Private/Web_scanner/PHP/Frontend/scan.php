@@ -51,7 +51,7 @@ if (!empty($profile_photo)) {
                 <span id="current-date"></span> |
                 <span id="current-time"></span>
             </span>
-            <button id="helpBtn" class="icon-btn" title="Help"><i class="fas fa-question-circle"></i></button>
+            <button type="button" id="helpBtn" class="icon-btn" title="Help" aria-label="Open scan help"><i class="fas fa-question-circle"></i></button>
             <button id="notificationsBtn" class="icon-btn notifications-btn" title="Notifications" aria-label="Open notifications">
                 <i class="fas fa-bell"></i>
                 <span id="notificationsBadge" class="notifications-badge" style="display:none;">0</span>
@@ -3111,11 +3111,6 @@ if (!empty($profile_photo)) {
             document.getElementById('scanTimelinePreviewClose')?.addEventListener('click', closeScanTimelinePreviewModal);
         })();
 
-        // Help button popup
-        document.getElementById('helpBtn').addEventListener('click', () => {
-            alert('Enter a target URL to scan for:\n\n• SQL Injection (error-based + blind time-based)\n• Cross-Site Scripting (reflected + DOM XSS sinks)\n• CORS misconfiguration\n• Open redirect vulnerabilities\n• Exposed sensitive files (.env, .git, backups, admin panels)\n• Missing security headers (CSP, HSTS, X-Frame-Options…)\n• SSL/TLS certificate and cipher issues\n• Mixed content (HTTP resources on HTTPS pages)\n• Exposed secrets (AWS keys, Stripe keys, passwords)\n• Cookie security flags (Secure, HttpOnly, SameSite)\n• Open ports and exposed services (Redis, MongoDB, Telnet…)\n\nEnsure you have permission to scan the target.');
-        });
-
         // Floating scroll controls
         (function () {
             const topBtn = document.getElementById('backToTopBtn');
@@ -4192,9 +4187,47 @@ ${headHtml}
                 ensureShareEmailRows();
             }
         }
+        const shareSubmitBtnEl = document.getElementById('shareSubmitBtn');
+        const shareSubmitDefaultHtml = shareSubmitBtnEl ? shareSubmitBtnEl.innerHTML : 'Send';
+
+        function setShareModalControlsDisabled(isLoading) {
+            const modal = getShareModal();
+            if (!modal) return;
+            modal.classList.toggle('sq-share-modal--busy', isLoading);
+            modal.querySelectorAll('input, button, select, textarea').forEach((el) => {
+                if (isLoading) {
+                    if (el.dataset.sqPrevDisabled === undefined) {
+                        el.dataset.sqPrevDisabled = el.disabled ? '1' : '0';
+                    }
+                    el.disabled = true;
+                } else if (el.dataset.sqPrevDisabled !== undefined) {
+                    el.disabled = el.dataset.sqPrevDisabled === '1';
+                    delete el.dataset.sqPrevDisabled;
+                }
+            });
+        }
+
+        function setShareSubmitLoading(isLoading) {
+            setShareModalControlsDisabled(isLoading);
+            const btn = document.getElementById('shareSubmitBtn');
+            if (!btn) return;
+            if (isLoading) {
+                btn.disabled = true;
+                btn.setAttribute('aria-busy', 'true');
+                btn.classList.add('sq-share-submit-btn--loading');
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Sending...';
+            } else {
+                btn.disabled = false;
+                btn.removeAttribute('aria-busy');
+                btn.classList.remove('sq-share-submit-btn--loading');
+                btn.innerHTML = shareSubmitDefaultHtml;
+            }
+        }
+
         function closeShareModal() {
             const shareModal = getShareModal();
             if (shareModal) { shareModal.classList.remove('active'); shareModal.style.display = 'none'; }
+            setShareSubmitLoading(false);
         }
         document.getElementById('shareModalClose')?.addEventListener('click', closeShareModal);
         document.getElementById('notificationsBtn')?.addEventListener('click', function () {
@@ -4354,6 +4387,11 @@ ${headHtml}
                 return;
             }
 
+            const shareBtn = document.getElementById('shareSubmitBtn');
+            if (shareBtn && shareBtn.disabled) return;
+
+            setShareSubmitLoading(true);
+
             // If PDF selected but server-side PDF is missing, generate/upload first
             // so share can include PDF consistently even without Dompdf.
             if (artefacts.includes('pdf') && (!lastDownloadUrls || !lastDownloadUrls.pdf) && lastScanId && lastScanData) {
@@ -4363,7 +4401,6 @@ ${headHtml}
                     showToast('PDF note', 'PDF will be automatically generated when available. Sending selected available files now.', 'info');
                 }
             }
-            document.getElementById('shareSubmitBtn').disabled = true;
 
             try {
                 const res = await fetch('../Backend/share_scan.php', {
@@ -4391,7 +4428,7 @@ ${headHtml}
             } catch (e) {
                 showToast('Share failed', (e && e.message) ? e.message : 'Email sharing is unavailable.', 'error');
             } finally {
-                document.getElementById('shareSubmitBtn').disabled = false;
+                setShareSubmitLoading(false);
             }
         }
         document.getElementById('shareSubmitBtn')?.addEventListener('click', submitShareScan);
@@ -4951,6 +4988,94 @@ ${headHtml}
         });
     </script>
 
+    <div id="scanHelpModal" class="modal-overlay scan-help-modal-overlay"
+        style="display:none; position:fixed; inset:0; background:rgba(2, 6, 23, 0.65); z-index:10018; align-items:center; justify-content:center; padding:20px;"
+        aria-hidden="true">
+        <div class="modal scan-help-modal" role="dialog" aria-modal="true" aria-labelledby="scanHelpModalTitle">
+            <div class="scan-help-modal-head">
+                <div class="scan-help-modal-head-main">
+                    <div class="scan-help-modal-icon" aria-hidden="true">
+                        <i class="fas fa-circle-question"></i>
+                    </div>
+                    <div>
+                        <h3 id="scanHelpModalTitle">Security scan help</h3>
+                        <p class="scan-help-modal-subtitle">What this scanner checks on your target URL</p>
+                    </div>
+                </div>
+                <button type="button" id="scanHelpModalClose" class="icon-btn scan-help-close-btn" title="Close" aria-label="Close help">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="scan-help-modal-body">
+                <p class="scan-help-intro">Enter a target URL to run checks for common web security issues, including:</p>
+                <ul class="scan-help-checks">
+                    <li><i class="fas fa-database"></i><span>SQL Injection (error-based and blind time-based)</span></li>
+                    <li><i class="fas fa-code"></i><span>Cross-Site Scripting (reflected and DOM XSS sinks)</span></li>
+                    <li><i class="fas fa-globe"></i><span>CORS misconfiguration</span></li>
+                    <li><i class="fas fa-arrow-right-arrow-left"></i><span>Open redirect vulnerabilities</span></li>
+                    <li><i class="fas fa-folder-open"></i><span>Exposed sensitive files (.env, .git, backups, admin panels)</span></li>
+                    <li><i class="fas fa-shield-halved"></i><span>Missing security headers (CSP, HSTS, X-Frame-Options, and more)</span></li>
+                    <li><i class="fas fa-lock"></i><span>SSL/TLS certificate and cipher issues</span></li>
+                    <li><i class="fas fa-triangle-exclamation"></i><span>Mixed content (HTTP resources on HTTPS pages)</span></li>
+                    <li><i class="fas fa-key"></i><span>Exposed secrets (AWS keys, Stripe keys, passwords)</span></li>
+                    <li><i class="fas fa-cookie-bite"></i><span>Cookie security flags (Secure, HttpOnly, SameSite)</span></li>
+                    <li><i class="fas fa-network-wired"></i><span>Open ports and exposed services (Redis, MongoDB, Telnet, and more)</span></li>
+                </ul>
+                <div class="scan-help-notice">
+                    <i class="fas fa-user-shield" aria-hidden="true"></i>
+                    <p><strong>Important:</strong> Only scan targets you own or are explicitly authorized to test. Unauthorized scanning may violate laws and policies.</p>
+                </div>
+            </div>
+            <div class="scan-help-modal-footer">
+                <a href="/ScanQuotient.v2/ScanQuotient.B/Public/Help_center/PHP/Frontend/Help_center.php" class="modal-btn secondary">
+                    <i class="fas fa-headset"></i> Help Center
+                </a>
+                <button type="button" id="scanHelpModalGotIt" class="modal-btn primary">Got it</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            function getScanHelpModal() {
+                return document.getElementById('scanHelpModal');
+            }
+
+            function openScanHelpModal() {
+                const modal = getScanHelpModal();
+                if (!modal) return;
+                modal.style.display = 'flex';
+                modal.classList.add('active');
+                modal.setAttribute('aria-hidden', 'false');
+                document.body.style.overflow = 'hidden';
+            }
+
+            function closeScanHelpModal() {
+                const modal = getScanHelpModal();
+                if (!modal) return;
+                modal.style.display = 'none';
+                modal.classList.remove('active');
+                modal.setAttribute('aria-hidden', 'true');
+                document.body.style.overflow = '';
+            }
+
+            document.getElementById('helpBtn')?.addEventListener('click', function (e) {
+                e.preventDefault();
+                openScanHelpModal();
+            });
+            document.getElementById('scanHelpModalClose')?.addEventListener('click', closeScanHelpModal);
+            document.getElementById('scanHelpModalGotIt')?.addEventListener('click', closeScanHelpModal);
+            getScanHelpModal()?.addEventListener('click', function (e) {
+                if (e.target === getScanHelpModal()) closeScanHelpModal();
+            });
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && getScanHelpModal()?.classList.contains('active')) {
+                    closeScanHelpModal();
+                }
+            });
+        })();
+    </script>
+
     <div id="notificationsModal" class="modal-overlay notifications-modal-overlay"
         style="display:none; position:fixed; inset:0; background:rgba(2, 6, 23, 0.65); z-index:10019; align-items:center; justify-content:center;">
         <div class="modal notifications-modal">
@@ -5258,11 +5383,21 @@ ${headHtml}
             filter: brightness(1.05);
         }
 
-        #shareModal #shareSubmitBtn.modal-btn:disabled {
-            opacity: .6;
+        #shareModal #shareSubmitBtn.modal-btn:disabled,
+        #shareModal #shareSubmitBtn.modal-btn.sq-share-submit-btn--loading {
+            opacity: .85;
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
+            pointer-events: none;
+        }
+
+        #shareModal #shareSubmitBtn.modal-btn.sq-share-submit-btn--loading {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-width: 6.5rem;
         }
 
         #shareModal .modal {

@@ -20,6 +20,8 @@ if ($userRole !== 'admin' && $userRole !== 'super_admin') {
     exit();
 }
 
+require_once __DIR__ . '/../Backend/certificate_target_helpers.php';
+
 // Database configuration
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'scanquotient.a1');
@@ -91,7 +93,7 @@ try {
             id INT AUTO_INCREMENT PRIMARY KEY,
             title VARCHAR(255) NOT NULL,
             body TEXT NOT NULL,
-            target_type ENUM('everyone','role','user_id','username') NOT NULL DEFAULT 'everyone',
+            target_type ENUM('everyone','admins','users','role','user_id','username') NOT NULL DEFAULT 'everyone',
             target_value VARCHAR(255) NULL,
             is_active ENUM('yes','no') NOT NULL DEFAULT 'yes',
             created_by VARCHAR(255) NULL,
@@ -111,6 +113,7 @@ try {
     try { $pdo->exec("ALTER TABLE security_certificates ADD COLUMN updated_by VARCHAR(255) NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE security_certificates ADD COLUMN deleted_at DATETIME NULL"); } catch (Exception $e) {}
     try { $pdo->exec("ALTER TABLE security_certificates ADD COLUMN deleted_by VARCHAR(255) NULL"); } catch (Exception $e) {}
+    sq_certificate_migrate_target_schema($pdo);
 
     // Avoid FK constraints to prevent schema drift issues.
     $pdo->exec("
@@ -202,22 +205,22 @@ try {
 
         // Create certificate
         if (($_POST['action'] ?? '') === 'create_certificate') {
-            $title = trim((string)($_POST['title'] ?? ''));
-            $body = trim((string)($_POST['body'] ?? ''));
-            $targetType = $_POST['target_type'] ?? 'everyone';
-            $targetValue = trim((string)($_POST['target_value'] ?? ''));
             $isActive = (($_POST['is_active'] ?? 'yes') === 'no') ? 'no' : 'yes';
+            [$title, $body] = sq_certificate_sanitize_text_fields(
+                (string) ($_POST['title'] ?? ''),
+                (string) ($_POST['body'] ?? '')
+            );
+            $textError = sq_certificate_validate_text_fields($title, $body);
+            [$targetType, $targetValue, $targetError] = sq_certificate_resolve_target(
+                (string) ($_POST['target_type'] ?? 'everyone'),
+                (string) ($_POST['target_value'] ?? ''),
+                $pdo
+            );
 
-            $validTargetTypes = ['everyone', 'role', 'user_id', 'username'];
-            if (!in_array($targetType, $validTargetTypes, true)) {
-                $targetType = 'everyone';
-            }
-            if ($targetType === 'everyone') {
-                $targetValue = '';
-            }
-
-            if ($title === '' || $body === '') {
-                $errorMessage = 'Certificate title and body are required.';
+            if ($textError !== null) {
+                $errorMessage = $textError;
+            } elseif ($targetError !== null) {
+                $errorMessage = $targetError;
             } else {
                 $stmt = $pdo->prepare("
                     INSERT INTO security_certificates (title, body, target_type, target_value, is_active, created_by)
@@ -278,22 +281,24 @@ try {
         // Edit certificate (and force re-acceptance by clearing acceptances)
         if (($_POST['action'] ?? '') === 'update_certificate') {
             $certId = (int)($_POST['certificate_id'] ?? 0);
-            $title = trim((string)($_POST['title'] ?? ''));
-            $body = trim((string)($_POST['body'] ?? ''));
-            $targetType = $_POST['target_type'] ?? 'everyone';
-            $targetValue = trim((string)($_POST['target_value'] ?? ''));
             $isActive = (($_POST['is_active'] ?? 'yes') === 'no') ? 'no' : 'yes';
+            [$title, $body] = sq_certificate_sanitize_text_fields(
+                (string) ($_POST['title'] ?? ''),
+                (string) ($_POST['body'] ?? '')
+            );
+            $textError = sq_certificate_validate_text_fields($title, $body);
+            [$targetType, $targetValue, $targetError] = sq_certificate_resolve_target(
+                (string) ($_POST['target_type'] ?? 'everyone'),
+                (string) ($_POST['target_value'] ?? ''),
+                $pdo
+            );
 
-            $validTargetTypes = ['everyone', 'role', 'user_id', 'username'];
-            if (!in_array($targetType, $validTargetTypes, true)) {
-                $targetType = 'everyone';
-            }
-            if ($targetType === 'everyone') {
-                $targetValue = '';
-            }
-
-            if ($certId <= 0 || $title === '' || $body === '') {
+            if ($certId <= 0) {
                 $errorMessage = 'Invalid certificate update request.';
+            } elseif ($textError !== null) {
+                $errorMessage = $textError;
+            } elseif ($targetError !== null) {
+                $errorMessage = $targetError;
             } else {
                 $stmt = $pdo->prepare("
                     UPDATE security_certificates
@@ -2993,33 +2998,36 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
                             Create a new certificate/acknowledgement that users must agree to during login before they can access their dashboard.
                         </div>
 
-                        <form method="POST">
+                        <form method="POST" id="sqCreateCertForm">
                             <input type="hidden" name="action" value="create_certificate">
                             <div class="sq-form-row">
                                 <div class="sq-filter-group" style="grid-column: 1 / -1;">
                                     <label class="sq-filter-label">Certificate title</label>
-                                    <input type="text" name="title" class="sq-filter-input" placeholder="e.g. 2026 Acceptable Use Certificate" required>
+                                    <input type="text" name="title" id="sqCreateCertTitle" class="sq-filter-input"
+                                        placeholder="e.g. 2026 Acceptable Use Certificate" required maxlength="255">
                                 </div>
 
                                 <div class="sq-filter-group" style="grid-column: 1 / -1;">
                                     <label class="sq-filter-label">Certificate details</label>
-                                    <textarea name="body" class="sq-filter-input" rows="8" placeholder="Enter the certificate text users must agree to..." required></textarea>
+                                    <textarea name="body" id="sqCreateCertBody" class="sq-filter-input" rows="8"
+                                        placeholder="Enter the certificate text users must agree to..." required></textarea>
                                 </div>
 
                                 <div class="sq-filter-group">
                                     <label class="sq-filter-label">Applies to</label>
                                     <select name="target_type" class="sq-filter-select" id="sqCertTargetType" onchange="sqToggleCertTargetValue()" required>
                                         <option value="everyone">Everyone</option>
-                                        <option value="role">Role (user/admin)</option>
-                                        <option value="user_id">Specific user id</option>
+                                        <option value="admins">Admins</option>
+                                        <option value="users">Normal users</option>
+                                        <option value="user_id">Specific user ID</option>
                                         <option value="username">Specific username</option>
                                     </select>
                                 </div>
 
                                 <div class="sq-filter-group">
                                     <label class="sq-filter-label">Target value</label>
-                                    <input type="text" name="target_value" class="sq-filter-input" id="sqCertTargetValue" placeholder="e.g. user or UIDWRB3O1P or johndoe" disabled>
-                                    <div class="sq-help-text">Only required for role / specific user targeting.</div>
+                                    <input type="text" name="target_value" class="sq-filter-input" id="sqCertTargetValue" placeholder="e.g. UIDWRB3O1P or johndoe" disabled>
+                                    <div class="sq-help-text">Only required for specific user ID or username.</div>
                                 </div>
 
                                 <div class="sq-filter-group">
@@ -3123,8 +3131,7 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
                                             <td>
                                                 <span class="sq-badge">
                                                     <i class="fas fa-bullseye"></i>
-                                                    <?php echo htmlspecialchars($c['target_type']); ?>
-                                                    <?php echo !empty($c['target_value']) ? (': ' . htmlspecialchars($c['target_value'])) : ''; ?>
+                                                    <?php echo htmlspecialchars(sq_certificate_format_target_label((string) $c['target_type'], $c['target_value'] ?? null)); ?>
                                                 </span>
                                             </td>
                                             <td>
@@ -3295,7 +3302,7 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
                         <div class="sq-form-row">
                             <div class="sq-filter-group" style="grid-column: 1 / -1;">
                                 <label class="sq-filter-label">Certificate title</label>
-                                <input type="text" name="title" class="sq-filter-input" id="sqEditCertTitle" required>
+                                <input type="text" name="title" class="sq-filter-input" id="sqEditCertTitle" required maxlength="255">
                             </div>
 
                             <div class="sq-filter-group" style="grid-column: 1 / -1;">
@@ -3308,15 +3315,17 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
                                 <label class="sq-filter-label">Applies to</label>
                                 <select name="target_type" class="sq-filter-select" id="sqEditCertTargetType" onchange="sqToggleEditCertTargetValue()" required>
                                     <option value="everyone">Everyone</option>
-                                    <option value="role">Role (user/admin)</option>
-                                    <option value="user_id">Specific user id</option>
+                                    <option value="admins">Admins</option>
+                                    <option value="users">Normal users</option>
+                                    <option value="user_id">Specific user ID</option>
                                     <option value="username">Specific username</option>
                                 </select>
                             </div>
 
                             <div class="sq-filter-group">
                                 <label class="sq-filter-label">Target value</label>
-                                <input type="text" name="target_value" class="sq-filter-input" id="sqEditCertTargetValue" disabled>
+                                <input type="text" name="target_value" class="sq-filter-input" id="sqEditCertTargetValue" placeholder="e.g. UIDWRB3O1P or johndoe" disabled>
+                                <div class="sq-help-text">Only required for specific user ID or username.</div>
                             </div>
 
                             <div class="sq-filter-group">
@@ -3345,7 +3354,7 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
             <p>ScanQuotient Security Platform • Quantifying Risk. Strengthening Security.</p>
             <p style="margin-top: 8px; font-size: 12px;">
                 Logged in as <?php echo htmlspecialchars($adminName); ?> •
-                <a href="/ScanQuotient/ScanQuotient/Publicpages/Login_Page/PHP/Backend/logout_from_the_system.php"
+                <a href="../../../../Public/Login_page/PHP/Frontend/Login_page_site.php"
                     style="color: var(--sq-brand); text-decoration: none;">Logout</a>
             </p>
         </footer>
@@ -3577,19 +3586,131 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
                 if (!form || !isSubmit) return;
 
                 e.preventDefault();
+
+                if (!form.reportValidity()) {
+                    form.reportValidity();
+                    return;
+                }
+
+                const certFormError = sqValidateCertificateForm(form);
+                if (certFormError) {
+                    return;
+                }
+
                 const message = btn.getAttribute('data-sq-confirm') || 'Are you sure you want to continue?';
-                open(message, () => form.submit());
+                open(message, () => {
+                    if (typeof form.requestSubmit === 'function') {
+                        form.requestSubmit(btn);
+                    } else {
+                        form.submit();
+                    }
+                });
             });
         })();
 
+        function sqApplyCertTargetValueField(typeSelect, valueInput) {
+            if (!typeSelect || !valueInput) return;
+            const type = typeSelect.value;
+            const needsValue = ['user_id', 'username'].includes(type);
+            valueInput.disabled = !needsValue;
+            valueInput.required = needsValue;
+            valueInput.removeAttribute('pattern');
+            valueInput.removeAttribute('title');
+            valueInput.removeAttribute('maxlength');
+            if (!needsValue) {
+                valueInput.value = '';
+                return;
+            }
+            if (type === 'user_id') {
+                valueInput.placeholder = 'e.g. UIDWRB3O1P';
+                valueInput.pattern = 'UID[A-Za-z0-9]{7}';
+                valueInput.title = 'Format: UID plus 7 letters or digits';
+                valueInput.maxLength = 10;
+            } else {
+                valueInput.placeholder = 'e.g. johndoe';
+                valueInput.pattern = '[a-z0-9_]{2,64}';
+                valueInput.title = 'Lowercase letters, numbers, or underscores (2–64 characters)';
+                valueInput.maxLength = 64;
+            }
+        }
+
+        function sqReportFieldValidity(field, message) {
+            if (!field) return;
+            field.setCustomValidity(message);
+            field.reportValidity();
+            field.setCustomValidity('');
+        }
+
+        function sqValidateCertificateForm(form) {
+            const isCertForm = form && (form.id === 'sqCreateCertForm' || form.id === 'sqEditCertForm');
+            if (!isCertForm) return null;
+
+            const titleEl = form.querySelector('[name="title"]');
+            const bodyEl = form.querySelector('[name="body"]');
+
+            if (titleEl) {
+                const title = (titleEl.value || '').replace(/\s+/g, ' ').trim();
+                if (title === '') {
+                    sqReportFieldValidity(titleEl, 'Certificate title cannot be blank.');
+                    return 'title';
+                }
+                titleEl.value = title;
+            }
+
+            if (bodyEl) {
+                const body = (bodyEl.value || '').trim();
+                if (body === '') {
+                    sqReportFieldValidity(bodyEl, 'Certificate details cannot be blank.');
+                    return 'body';
+                }
+            }
+
+            const targetError = sqValidateCertificateTargetForm(form);
+            if (targetError) {
+                sqReportFieldValidity(form.querySelector('[name="target_value"]'), targetError);
+                return 'target';
+            }
+
+            return null;
+        }
+
+        function sqValidateCertificateTargetForm(form) {
+            const typeEl = form.querySelector('[name="target_type"]');
+            const valueEl = form.querySelector('[name="target_value"]');
+            if (!typeEl || !valueEl) return null;
+            const type = typeEl.value;
+            if (!['user_id', 'username'].includes(type)) return null;
+
+            const raw = (valueEl.value || '').trim();
+            if (raw === '') {
+                return type === 'user_id'
+                    ? 'Enter a user ID (e.g. UIDWRB3O1P) before continuing.'
+                    : 'Enter a username before continuing.';
+            }
+
+            if (type === 'user_id') {
+                const normalized = raw.replace(/\s+/g, '').toUpperCase();
+                if (!/^UID[A-Z0-9]{7}$/.test(normalized)) {
+                    return 'User ID must be UID followed by 7 letters or digits (e.g. UIDWRB3O1P).';
+                }
+                valueEl.value = normalized;
+            } else {
+                const normalized = raw.replace(/\s+/g, '').toLowerCase();
+                if (!/^[a-z0-9_]{2,64}$/.test(normalized)) {
+                    return 'Username must be 2–64 lowercase letters, numbers, or underscores.';
+                }
+                valueEl.value = normalized;
+            }
+
+            return null;
+        }
+
         // Certificate targeting
         function sqToggleCertTargetValue() {
-            const type = document.getElementById('sqCertTargetType');
-            const value = document.getElementById('sqCertTargetValue');
-            if (!type || !value) return;
-            const needsValue = ['role', 'user_id', 'username'].includes(type.value);
-            value.disabled = !needsValue;
-            if (!needsValue) value.value = '';
+            sqApplyCertTargetValueField(
+                document.getElementById('sqCertTargetType'),
+                document.getElementById('sqCertTargetValue')
+            );
         }
         sqToggleCertTargetValue();
 
@@ -3600,8 +3721,20 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
             document.getElementById('sqEditCertId').value = cert.id || '';
             document.getElementById('sqEditCertTitle').value = cert.title || '';
             document.getElementById('sqEditCertBody').value = cert.body || '';
-            document.getElementById('sqEditCertTargetType').value = cert.target_type || 'everyone';
-            document.getElementById('sqEditCertTargetValue').value = cert.target_value || '';
+            let editTargetType = cert.target_type || 'everyone';
+            let editTargetValue = cert.target_value || '';
+            if (editTargetType === 'role') {
+                const roleVal = String(editTargetValue || '').toLowerCase();
+                if (roleVal === 'user') {
+                    editTargetType = 'users';
+                    editTargetValue = '';
+                } else if (roleVal === 'admin' || roleVal === 'super_admin') {
+                    editTargetType = 'admins';
+                    editTargetValue = '';
+                }
+            }
+            document.getElementById('sqEditCertTargetType').value = editTargetType;
+            document.getElementById('sqEditCertTargetValue').value = editTargetValue;
             document.getElementById('sqEditCertActive').value = cert.is_active || 'yes';
             sqToggleEditCertTargetValue();
 
@@ -3618,12 +3751,10 @@ function adminLogSecurityEvent(PDO $pdo, string $adminUsername, string $eventTyp
         }
 
         function sqToggleEditCertTargetValue() {
-            const type = document.getElementById('sqEditCertTargetType');
-            const value = document.getElementById('sqEditCertTargetValue');
-            if (!type || !value) return;
-            const needsValue = ['role', 'user_id', 'username'].includes(type.value);
-            value.disabled = !needsValue;
-            if (!needsValue) value.value = '';
+            sqApplyCertTargetValueField(
+                document.getElementById('sqEditCertTargetType'),
+                document.getElementById('sqEditCertTargetValue')
+            );
         }
 
         sqCertEditModal?.addEventListener('click', (e) => {

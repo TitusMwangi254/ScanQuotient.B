@@ -34,6 +34,147 @@ $metrics = [
         'Unknown' => 0,
     ],
 ];
+$allowedChartPeriods = [
+    '7d' => 'Last 7 days',
+    '14d' => 'Last 14 days',
+    '30d' => 'Last 30 days',
+    '90d' => 'Last 90 days',
+    '365d' => 'Last year',
+    'all' => 'All time',
+];
+$scansUsageLabels = [];
+$scansUsageCounts = [];
+$aiChartLabels = [];
+$aiChartCounts = [];
+
+function sq_admin_normalize_chart_period(string $period): string
+{
+    global $allowedChartPeriods;
+    return isset($allowedChartPeriods[$period]) ? $period : '30d';
+}
+
+function sq_admin_chart_period_days(string $period): ?int
+{
+    $map = ['7d' => 7, '14d' => 14, '30d' => 30, '90d' => 90, '365d' => 365];
+    return $map[$period] ?? null;
+}
+
+function sq_admin_period_sql_clause(string $period, string $column = 'created_at'): array
+{
+    $days = sq_admin_chart_period_days($period);
+    if ($days === null) {
+        return ['', []];
+    }
+    return [" AND {$column} >= (NOW() - INTERVAL {$days} DAY)", []];
+}
+
+function sq_admin_show_soft_delete(string $statusFilter, $deletedAt): bool
+{
+    return empty($deletedAt);
+}
+
+function sq_admin_show_deleted_actions(string $statusFilter, $deletedAt): bool
+{
+    if (!empty($deletedAt)) {
+        return true;
+    }
+    return $statusFilter === 'deleted';
+}
+
+function sq_admin_normalize_date_input(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+    $dt = DateTime::createFromFormat('Y-m-d', $value);
+    return ($dt && $dt->format('Y-m-d') === $value) ? $value : '';
+}
+
+/**
+ * @return array{0: array<int, string>, 1: array<int, string>}
+ */
+function sq_admin_date_range_where_parts(string $column, string $from, string $to): array
+{
+    $parts = [];
+    $params = [];
+    $fromNorm = sq_admin_normalize_date_input($from);
+    $toNorm = sq_admin_normalize_date_input($to);
+    if ($fromNorm !== '' && $toNorm !== '' && $fromNorm > $toNorm) {
+        [$fromNorm, $toNorm] = [$toNorm, $fromNorm];
+    }
+    if ($fromNorm !== '') {
+        $parts[] = "DATE({$column}) >= ?";
+        $params[] = $fromNorm;
+    }
+    if ($toNorm !== '') {
+        $parts[] = "DATE({$column}) <= ?";
+        $params[] = $toNorm;
+    }
+    return [$parts, $params];
+}
+
+function sq_admin_append_date_to_query(string &$query, string $fromKey, string $fromVal, string $toKey, string $toVal): void
+{
+    if ($fromVal !== '') {
+        $query .= '&' . $fromKey . '=' . urlencode($fromVal);
+    }
+    if ($toVal !== '') {
+        $query .= '&' . $toKey . '=' . urlencode($toVal);
+    }
+}
+
+function sq_admin_render_date_range_filters(string $prefix, string $fromVal, string $toVal): void
+{
+    $fromName = $prefix . '_date_from';
+    $toName = $prefix . '_date_to';
+    ?>
+    <div class="sq-filter-dates">
+        <label class="sq-filter-field">
+            <span class="sq-filter-field-label">From</span>
+            <input type="date" name="<?php echo htmlspecialchars($fromName); ?>" class="sq-filter-control sq-filter-date"
+                value="<?php echo htmlspecialchars($fromVal); ?>" />
+        </label>
+        <label class="sq-filter-field">
+            <span class="sq-filter-field-label">To</span>
+            <input type="date" name="<?php echo htmlspecialchars($toName); ?>" class="sq-filter-control sq-filter-date"
+                value="<?php echo htmlspecialchars($toVal); ?>" />
+        </label>
+    </div>
+    <?php
+}
+
+function sq_admin_render_filter_actions(string $resetHref): void
+{
+    ?>
+    <div class="sq-filter-actions">
+        <button type="submit" class="sq-filter-submit sq-filter-control">
+            <i class="fas fa-filter"></i> Apply
+        </button>
+        <a href="<?php echo htmlspecialchars($resetHref); ?>" class="sq-filter-reset sq-filter-control">
+            <i class="fas fa-rotate-left"></i> Reset
+        </a>
+    </div>
+    <?php
+}
+
+function sq_admin_format_event_type(string $eventType): string
+{
+    static $labels = [
+        'all' => 'All event types',
+        'ask_submitted' => 'Question asked',
+        'ask_success' => 'Answer generated',
+        'ask_error' => 'Question failed',
+        'clear_chat' => 'Chat cleared',
+        'page_view' => 'Page viewed',
+    ];
+    $key = strtolower(trim($eventType));
+    if (isset($labels[$key])) {
+        return $labels[$key];
+    }
+    $pretty = trim(str_replace('_', ' ', $key));
+    return $pretty !== '' ? ucwords($pretty) : 'Unknown event';
+}
 
 define('DEFAULT_PER_PAGE', 10);
 $page = max(1, intval($_GET['page'] ?? 1));
@@ -53,6 +194,10 @@ $scansStatusFilter = trim((string) ($_GET['scans_status'] ?? 'active'));
 if (!in_array($scansStatusFilter, ['active', 'deleted', 'all'], true)) {
     $scansStatusFilter = 'active';
 }
+$scansRiskPeriod = sq_admin_normalize_chart_period((string) ($_GET['scans_risk_period'] ?? '30d'));
+$scansUsagePeriod = sq_admin_normalize_chart_period((string) ($_GET['scans_usage_period'] ?? '30d'));
+$scansDateFrom = sq_admin_normalize_date_input((string) ($_GET['scans_date_from'] ?? ''));
+$scansDateTo = sq_admin_normalize_date_input((string) ($_GET['scans_date_to'] ?? ''));
 
 $aiSearch = trim((string) ($_GET['ai_search'] ?? ''));
 $aiEventTypeFilter = trim((string) ($_GET['ai_event_type'] ?? 'all'));
@@ -64,6 +209,9 @@ $aiStatusFilter = trim((string) ($_GET['ai_status'] ?? 'active'));
 if (!in_array($aiStatusFilter, ['active', 'deleted', 'all'], true)) {
     $aiStatusFilter = 'active';
 }
+$aiChartPeriod = sq_admin_normalize_chart_period((string) ($_GET['ai_chart_period'] ?? '30d'));
+$aiDateFrom = sq_admin_normalize_date_input((string) ($_GET['ai_date_from'] ?? ''));
+$aiDateTo = sq_admin_normalize_date_input((string) ($_GET['ai_date_to'] ?? ''));
 $aiPage = max(1, (int) ($_GET['ai_page'] ?? 1));
 $aiPerPageParam = (string) ($_GET['ai_per_page'] ?? (string) DEFAULT_PER_PAGE);
 if (!in_array($aiPerPageParam, $allowedPerPage, true)) {
@@ -89,6 +237,9 @@ $logStatusFilter = trim((string) ($_GET['log_status'] ?? 'active'));
 if (!in_array($logStatusFilter, ['active', 'deleted', 'all'], true)) {
     $logStatusFilter = 'active';
 }
+$logChartPeriod = sq_admin_normalize_chart_period((string) ($_GET['log_chart_period'] ?? '30d'));
+$logDateFrom = sq_admin_normalize_date_input((string) ($_GET['log_date_from'] ?? ''));
+$logDateTo = sq_admin_normalize_date_input((string) ($_GET['log_date_to'] ?? ''));
 $logPage = max(1, (int) ($_GET['log_page'] ?? 1));
 $logPerPageParam = (string) ($_GET['log_per_page'] ?? (string) DEFAULT_PER_PAGE);
 if (!in_array($logPerPageParam, $allowedPerPage, true)) {
@@ -117,6 +268,10 @@ $serverLogMetrics = [
 $serverLogsTimelineLabels = [];
 $serverLogsTimelineErrors = [];
 $serverLogsTimelineWarnings = [];
+$serverLogsTimelineInfo = [];
+$logChartPeriodTotals = ['info' => 0, 'warning' => 0, 'error' => 0];
+$aiChartLabelsDisplay = [];
+$aiChartBarColors = [];
 $aiMetrics = [
     'total_events' => 0,
     'unique_users' => 0,
@@ -180,27 +335,17 @@ try {
         exit;
     }
 
-    // 1) Metrics + charts: keep using the most recent 200 rows (fast, stable)
+    // 1) Scan risk chart metrics (period-filtered)
+    [$riskPeriodSql, $riskPeriodParams] = sq_admin_period_sql_clause($scansRiskPeriod, 's.created_at');
     $metricsSql = "
-        SELECT s.id,
-               s.user_id,
-               s.target_url,
-               s.scan_json,
-               s.created_at,
-               s.deleted_at,
-               s.pdf_path,
-               s.doc_path,
-               s.html_path,
-               s.csv_path,
-               u.email,
-               u.user_name
+        SELECT s.id, s.user_id, s.scan_json, s.created_at
         FROM scan_results s
-        LEFT JOIN users u ON u.user_id = s.user_id
         WHERE s.deleted_at IS NULL
+        {$riskPeriodSql}
         ORDER BY s.created_at DESC
-        LIMIT 200
     ";
-    $metricStmt = $pdo->query($metricsSql);
+    $metricStmt = $pdo->prepare($metricsSql);
+    $metricStmt->execute($riskPeriodParams);
     $metricRows = $metricStmt->fetchAll() ?: [];
 
     $userIds = [];
@@ -217,17 +362,65 @@ try {
     $metrics['total_scans'] = count($metricRows);
     $metrics['unique_users'] = count($userIds);
 
+    // Scan usage line chart (counts by day within selected period)
+    [$usagePeriodSql, $usagePeriodParams] = sq_admin_period_sql_clause($scansUsagePeriod, 'created_at');
+    $usageDays = sq_admin_chart_period_days($scansUsagePeriod);
+    $usageSpanDays = $usageDays ?? 365;
+    if ($usageSpanDays > 365) {
+        $usageSpanDays = 365;
+    }
+    $usageStmt = $pdo->prepare("
+        SELECT DATE(created_at) AS day_key, COUNT(*) AS scan_count
+        FROM scan_results
+        WHERE deleted_at IS NULL
+        {$usagePeriodSql}
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at) ASC
+    ");
+    $usageStmt->execute($usagePeriodParams);
+    $usageRows = $usageStmt->fetchAll() ?: [];
+    $usageMap = [];
+    foreach ($usageRows as $ur) {
+        $k = (string) ($ur['day_key'] ?? '');
+        if ($k !== '') {
+            $usageMap[$k] = (int) ($ur['scan_count'] ?? 0);
+        }
+    }
+    if ($scansUsagePeriod === 'all') {
+        if (!empty($usageMap)) {
+            $keys = array_keys($usageMap);
+            sort($keys);
+            $start = strtotime($keys[0]);
+            $end = strtotime($keys[count($keys) - 1]);
+            for ($t = $start; $t <= $end; $t += 86400) {
+                $dayKey = date('Y-m-d', $t);
+                $scansUsageLabels[] = date('M j', $t);
+                $scansUsageCounts[] = (int) ($usageMap[$dayKey] ?? 0);
+            }
+        }
+    } else {
+        for ($i = $usageSpanDays - 1; $i >= 0; $i--) {
+            $dayKey = date('Y-m-d', strtotime("-{$i} day"));
+            $scansUsageLabels[] = date('M j', strtotime($dayKey));
+            $scansUsageCounts[] = (int) ($usageMap[$dayKey] ?? 0);
+        }
+    }
+
     // 2) Table: full pagination across all scan_results
     // Global search across all non-system columns in this table.
     // (We treat internal system identifiers as non-searchable.)
     $searchableExprs = [
+        'CAST(s.id AS CHAR)' => 'id',
         's.target_url' => 'target_url',
+        's.scan_json' => 'scan_json',
         's.pdf_path' => 'pdf_path',
         's.doc_path' => 'doc_path',
         's.html_path' => 'html_path',
         's.csv_path' => 'csv_path',
         'u.email' => 'email',
         'u.user_name' => 'user_name',
+        'u.first_name' => 'first_name',
+        'u.surname' => 'surname',
     ];
 
     if ($scansStatusFilter === 'deleted') {
@@ -252,11 +445,16 @@ try {
         $whereSql .= " AND $riskClause";
         $whereParams[] = '%"risk_level":"' . $scansRiskFilter . '"%';
     }
+    [$scansDateParts, $scansDateParams] = sq_admin_date_range_where_parts('s.created_at', $scansDateFrom, $scansDateTo);
+    if (!empty($scansDateParts)) {
+        $whereSql .= ' AND ' . implode(' AND ', $scansDateParts);
+        $whereParams = array_merge($whereParams, $scansDateParams);
+    }
 
     $countSql = "
         SELECT COUNT(*)
         FROM scan_results s
-        LEFT JOIN users u ON u.user_id = s.user_id
+        LEFT JOIN users u ON (u.user_id = s.user_id OR CAST(u.id AS CHAR) = CAST(s.user_id AS CHAR))
         $whereSql
     ";
     $countStmt = $pdo->prepare($countSql);
@@ -282,7 +480,7 @@ try {
                u.email,
                u.user_name
         FROM scan_results s
-        LEFT JOIN users u ON u.user_id = s.user_id
+        LEFT JOIN users u ON (u.user_id = s.user_id OR CAST(u.id AS CHAR) = CAST(s.user_id AS CHAR))
         ORDER BY s.created_at DESC
     ";
 
@@ -323,8 +521,8 @@ try {
     $aiWhereParams = [];
     if ($aiSearch !== '') {
         $term = '%' . $aiSearch . '%';
-        $aiWhereParts[] = "(CAST(e.user_id AS CHAR) LIKE ? OR CAST(e.event_type AS CHAR) LIKE ? OR CAST(e.meta_json AS CHAR) LIKE ? OR CAST(e.ip_address AS CHAR) LIKE ? OR CAST(u.user_name AS CHAR) LIKE ? OR CAST(u.email AS CHAR) LIKE ?)";
-        array_push($aiWhereParams, $term, $term, $term, $term, $term, $term);
+        $aiWhereParts[] = "(CAST(e.id AS CHAR) LIKE ? OR CAST(e.scan_id AS CHAR) LIKE ? OR CAST(e.user_id AS CHAR) LIKE ? OR CAST(e.event_type AS CHAR) LIKE ? OR CAST(e.meta_json AS CHAR) LIKE ? OR CAST(e.ip_address AS CHAR) LIKE ? OR CAST(u.user_name AS CHAR) LIKE ? OR CAST(u.email AS CHAR) LIKE ?)";
+        array_push($aiWhereParams, $term, $term, $term, $term, $term, $term, $term, $term);
     }
     if ($aiEventTypeFilter !== 'all') {
         $aiWhereParts[] = "e.event_type = ?";
@@ -335,12 +533,17 @@ try {
     } elseif ($aiStatusFilter !== 'all') {
         $aiWhereParts[] = "e.deleted_at IS NULL";
     }
+    [$aiDateParts, $aiDateParams] = sq_admin_date_range_where_parts('e.created_at', $aiDateFrom, $aiDateTo);
+    foreach ($aiDateParts as $part) {
+        $aiWhereParts[] = $part;
+    }
+    $aiWhereParams = array_merge($aiWhereParams, $aiDateParams);
     $aiWhereSql = empty($aiWhereParts) ? '' : ('WHERE ' . implode(' AND ', $aiWhereParts));
 
     $aiEventTotalStmt = $pdo->prepare("
         SELECT COUNT(*)
         FROM enterprise_ai_usage_events e
-        LEFT JOIN users u ON u.user_id = e.user_id
+        LEFT JOIN users u ON (u.user_id = e.user_id OR CAST(u.id AS CHAR) = CAST(e.user_id AS CHAR))
         $aiWhereSql
     ");
     $aiEventTotalStmt->execute($aiWhereParams);
@@ -356,7 +559,7 @@ try {
     $aiSql = "
         SELECT e.id, e.user_id, e.scan_id, e.event_type, e.meta_json, e.ip_address, e.created_at, e.deleted_at, u.user_name, u.email
         FROM enterprise_ai_usage_events e
-        LEFT JOIN users u ON u.user_id = e.user_id
+        LEFT JOIN users u ON (u.user_id = e.user_id OR CAST(u.id AS CHAR) = CAST(e.user_id AS CHAR))
         $aiWhereSql
         ORDER BY e.created_at DESC
     ";
@@ -366,21 +569,47 @@ try {
     $aiStmt = $pdo->prepare($aiSql);
     $aiStmt->execute($aiWhereParams);
     $aiEventRows = $aiStmt->fetchAll() ?: [];
-    $aiMetrics['total_events'] = count($aiEventRows);
-    $seenAiUsers = [];
-    foreach ($aiEventRows as $ev) {
-        $uid = (string) ($ev['user_id'] ?? '');
-        if ($uid !== '') {
-            $seenAiUsers[$uid] = true;
-        }
-        $evType = strtolower((string) ($ev['event_type'] ?? ''));
-        if ($evType === 'ask_submitted') {
-            $aiMetrics['ask_submitted']++;
-        } elseif ($evType === 'ask_success') {
-            $aiMetrics['ask_success']++;
-        }
+
+    $aiKpiStmt = $pdo->prepare("
+        SELECT
+            COUNT(*) AS total_events,
+            COUNT(DISTINCT NULLIF(e.user_id, '')) AS unique_users,
+            SUM(CASE WHEN e.event_type = 'ask_submitted' THEN 1 ELSE 0 END) AS ask_submitted,
+            SUM(CASE WHEN e.event_type = 'ask_success' THEN 1 ELSE 0 END) AS ask_success
+        FROM enterprise_ai_usage_events e
+        LEFT JOIN users u ON (u.user_id = e.user_id OR CAST(u.id AS CHAR) = CAST(e.user_id AS CHAR))
+        $aiWhereSql
+    ");
+    $aiKpiStmt->execute($aiWhereParams);
+    $aiKpiRow = $aiKpiStmt->fetch() ?: [];
+    $aiMetrics['total_events'] = (int) ($aiKpiRow['total_events'] ?? 0);
+    $aiMetrics['unique_users'] = (int) ($aiKpiRow['unique_users'] ?? 0);
+    $aiMetrics['ask_submitted'] = (int) ($aiKpiRow['ask_submitted'] ?? 0);
+    $aiMetrics['ask_success'] = (int) ($aiKpiRow['ask_success'] ?? 0);
+
+    [$aiChartPeriodSql, $aiChartPeriodParams] = sq_admin_period_sql_clause($aiChartPeriod, 'e.created_at');
+    $aiChartWhereParts = ["e.deleted_at IS NULL{$aiChartPeriodSql}"];
+    $aiChartStmt = $pdo->prepare("
+        SELECT e.event_type, COUNT(*) AS event_count
+        FROM enterprise_ai_usage_events e
+        WHERE " . implode(' AND ', $aiChartWhereParts) . "
+        GROUP BY e.event_type
+        ORDER BY event_count DESC
+    ");
+    $aiChartStmt->execute($aiChartPeriodParams);
+    $aiPalette = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b'];
+    foreach ($aiChartStmt->fetchAll() ?: [] as $aiChartRow) {
+        $rawType = (string) ($aiChartRow['event_type'] ?? 'unknown');
+        $aiChartLabels[] = $rawType;
+        $aiChartLabelsDisplay[] = sq_admin_format_event_type($rawType);
+        $aiChartCounts[] = (int) ($aiChartRow['event_count'] ?? 0);
+        $aiChartBarColors[] = $aiPalette[count($aiChartBarColors) % count($aiPalette)];
     }
-    $aiMetrics['unique_users'] = count($seenAiUsers);
+    if (empty($aiChartLabelsDisplay)) {
+        $aiChartLabelsDisplay = ['No events'];
+        $aiChartCounts = [0];
+        $aiChartBarColors = ['#94a3b8'];
+    }
 
     // 4) Server logs (security-safe operational visibility for admins)
     $pdo->exec("CREATE TABLE IF NOT EXISTS system_server_logs (
@@ -410,8 +639,8 @@ try {
     $logWhereParams = [];
     if ($logSearch !== '') {
         $term = '%' . $logSearch . '%';
-        $logWhereParts[] = "(CAST(event_key AS CHAR) LIKE ? OR CAST(source AS CHAR) LIKE ? OR CAST(message AS CHAR) LIKE ? OR CAST(user_id AS CHAR) LIKE ? OR CAST(request_ip AS CHAR) LIKE ? OR CAST(request_uri AS CHAR) LIKE ?)";
-        array_push($logWhereParams, $term, $term, $term, $term, $term, $term);
+        $logWhereParts[] = "(CAST(id AS CHAR) LIKE ? OR CAST(event_key AS CHAR) LIKE ? OR CAST(level AS CHAR) LIKE ? OR CAST(source AS CHAR) LIKE ? OR CAST(message AS CHAR) LIKE ? OR CAST(detail_json AS CHAR) LIKE ? OR CAST(user_id AS CHAR) LIKE ? OR CAST(request_ip AS CHAR) LIKE ? OR CAST(request_uri AS CHAR) LIKE ?)";
+        array_push($logWhereParams, $term, $term, $term, $term, $term, $term, $term, $term, $term);
     }
     if ($logLevelFilter !== 'all') {
         $logWhereParts[] = "level = ?";
@@ -430,6 +659,11 @@ try {
     } elseif ($logStatusFilter !== 'all') {
         $logWhereParts[] = "deleted_at IS NULL";
     }
+    [$logDateParts, $logDateParams] = sq_admin_date_range_where_parts('created_at', $logDateFrom, $logDateTo);
+    foreach ($logDateParts as $part) {
+        $logWhereParts[] = $part;
+    }
+    $logWhereParams = array_merge($logWhereParams, $logDateParams);
     $logWhereSql = empty($logWhereParts) ? '' : ('WHERE ' . implode(' AND ', $logWhereParts));
 
     $serverLogTotalStmt = $pdo->prepare("SELECT COUNT(*) FROM system_server_logs $logWhereSql");
@@ -471,32 +705,74 @@ try {
     $serverLogMetrics['unique_users_24h'] = (int) ($serverLogMetricRow['unique_users_24h'] ?? 0);
     $serverLogMetrics['scanner_related_24h'] = (int) ($serverLogMetricRow['scanner_related_24h'] ?? 0);
 
-    // 7-day timeline for server log chart (errors/warnings by day).
-    $timelineStmt = $pdo->query("
-        SELECT DATE(created_at) AS day_key,
-               SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error_count,
-               SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END) AS warning_count
+    // Server log timeline chart (errors/warnings by day, period-filtered)
+    [$logChartPeriodSql, $logChartPeriodParams] = sq_admin_period_sql_clause($logChartPeriod, 'created_at');
+    $logChartSpanDays = sq_admin_chart_period_days($logChartPeriod) ?? 365;
+    if ($logChartSpanDays > 365) {
+        $logChartSpanDays = 365;
+    }
+    $logPeriodTotalsStmt = $pdo->prepare("
+        SELECT
+            SUM(CASE WHEN level = 'info' THEN 1 ELSE 0 END) AS info_count,
+            SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END) AS warning_count,
+            SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error_count
         FROM system_server_logs
-        WHERE created_at >= (CURDATE() - INTERVAL 6 DAY)
-          AND deleted_at IS NULL
+        WHERE deleted_at IS NULL
+        {$logChartPeriodSql}
+    ");
+    $logPeriodTotalsStmt->execute($logChartPeriodParams);
+    $logPeriodRow = $logPeriodTotalsStmt->fetch() ?: [];
+    $logChartPeriodTotals['info'] = (int) ($logPeriodRow['info_count'] ?? 0);
+    $logChartPeriodTotals['warning'] = (int) ($logPeriodRow['warning_count'] ?? 0);
+    $logChartPeriodTotals['error'] = (int) ($logPeriodRow['error_count'] ?? 0);
+
+    $timelineStmt = $pdo->prepare("
+        SELECT DATE(created_at) AS day_key,
+               SUM(CASE WHEN level = 'info' THEN 1 ELSE 0 END) AS info_count,
+               SUM(CASE WHEN level = 'warning' THEN 1 ELSE 0 END) AS warning_count,
+               SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error_count
+        FROM system_server_logs
+        WHERE deleted_at IS NULL
+        {$logChartPeriodSql}
         GROUP BY DATE(created_at)
         ORDER BY DATE(created_at) ASC
     ");
+    $timelineStmt->execute($logChartPeriodParams);
     $timelineRows = $timelineStmt->fetchAll() ?: [];
     $timelineMap = [];
     foreach ($timelineRows as $tr) {
         $k = (string) ($tr['day_key'] ?? '');
-        if ($k === '') continue;
+        if ($k === '') {
+            continue;
+        }
         $timelineMap[$k] = [
+            'info' => (int) ($tr['info_count'] ?? 0),
             'error' => (int) ($tr['error_count'] ?? 0),
             'warning' => (int) ($tr['warning_count'] ?? 0),
         ];
     }
-    for ($i = 6; $i >= 0; $i--) {
-        $dayKey = date('Y-m-d', strtotime("-{$i} day"));
-        $serverLogsTimelineLabels[] = date('M j', strtotime($dayKey));
-        $serverLogsTimelineErrors[] = (int) (($timelineMap[$dayKey]['error'] ?? 0));
-        $serverLogsTimelineWarnings[] = (int) (($timelineMap[$dayKey]['warning'] ?? 0));
+    if ($logChartPeriod === 'all') {
+        if (!empty($timelineMap)) {
+            $keys = array_keys($timelineMap);
+            sort($keys);
+            $start = strtotime($keys[0]);
+            $end = strtotime($keys[count($keys) - 1]);
+            for ($t = $start; $t <= $end; $t += 86400) {
+                $dayKey = date('Y-m-d', $t);
+                $serverLogsTimelineLabels[] = date('M j', $t);
+                $serverLogsTimelineInfo[] = (int) ($timelineMap[$dayKey]['info'] ?? 0);
+                $serverLogsTimelineErrors[] = (int) ($timelineMap[$dayKey]['error'] ?? 0);
+                $serverLogsTimelineWarnings[] = (int) ($timelineMap[$dayKey]['warning'] ?? 0);
+            }
+        }
+    } else {
+        for ($i = $logChartSpanDays - 1; $i >= 0; $i--) {
+            $dayKey = date('Y-m-d', strtotime("-{$i} day"));
+            $serverLogsTimelineLabels[] = date('M j', strtotime($dayKey));
+            $serverLogsTimelineInfo[] = (int) ($timelineMap[$dayKey]['info'] ?? 0);
+            $serverLogsTimelineErrors[] = (int) ($timelineMap[$dayKey]['error'] ?? 0);
+            $serverLogsTimelineWarnings[] = (int) ($timelineMap[$dayKey]['warning'] ?? 0);
+        }
     }
 } catch (Exception $e) {
     $adminError = 'Unable to load scan data right now.';
@@ -1107,6 +1383,268 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         .chart-actions {
             display: flex;
             gap: 8px;
+        }
+
+        .sq-chart-period-select {
+            padding: 8px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 13px;
+            font-weight: 600;
+            min-width: 140px;
+            cursor: pointer;
+        }
+
+        .sq-filter-toolbar {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 10px;
+            width: 100%;
+        }
+
+        .sq-filter-toolbar-controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            justify-content: flex-end;
+            gap: 10px;
+            width: 100%;
+        }
+
+        .sq-filter-field {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            flex: 0 0 auto;
+            min-width: 0;
+        }
+
+        .sq-filter-field-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .sq-filter-control {
+            box-sizing: border-box;
+            height: 42px;
+            min-height: 42px;
+            font-size: 13px;
+            border-radius: 10px;
+        }
+
+        .sq-filter-dates {
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: flex-end;
+            gap: 10px;
+            flex: 0 0 auto;
+        }
+
+        .sq-filter-actions {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: nowrap;
+            align-items: center;
+            gap: 8px;
+            flex: 0 0 auto;
+        }
+
+        .sq-filter-search {
+            position: relative;
+            width: 100%;
+            max-width: none;
+            flex: 1 1 auto;
+        }
+
+        .sq-filter-search__icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--brand-color);
+            font-size: 14px;
+            pointer-events: none;
+            opacity: 0.9;
+        }
+
+        .sq-filter-search__input {
+            width: 100%;
+            height: 42px;
+            min-height: 42px;
+            box-sizing: border-box;
+            padding: 0 14px 0 42px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 14px;
+            transition: border-color 0.15s ease, box-shadow 0.2s ease;
+        }
+
+        .sq-filter-search__input:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, 0.55);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+        }
+
+        .sq-filter-search__input::placeholder {
+            color: var(--text-light);
+        }
+
+        .sq-filter-select {
+            padding: 0 12px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-main);
+            min-width: 150px;
+            width: 100%;
+        }
+
+        .sq-filter-submit {
+            padding: 0 16px;
+            border: 1px solid var(--brand-color);
+            background: var(--brand-color);
+            color: #fff;
+            font-weight: 700;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            white-space: nowrap;
+        }
+
+        .sq-filter-submit:hover {
+            filter: brightness(1.05);
+        }
+
+        .sq-filter-reset {
+            padding: 10px 16px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-size: 13px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .sq-filter-reset:hover {
+            border-color: var(--brand-color);
+            color: var(--brand-color);
+        }
+
+        .sq-filter-date {
+            padding: 0 10px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-main);
+            min-width: 148px;
+            width: 148px;
+        }
+
+        .sq-filter-control:focus,
+        .sq-filter-select:focus,
+        .sq-filter-date:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, 0.55);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+        }
+
+        .sq-chart-note {
+            margin: 12px 0 0;
+            font-size: 12px;
+            line-height: 1.55;
+            color: var(--text-light);
+        }
+
+        .sq-chart-note strong {
+            color: var(--text-main);
+        }
+
+        .sq-record-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .action-btn.sq-btn-restore {
+            background: rgba(16, 185, 129, 0.14);
+            color: #059669;
+            border-color: rgba(16, 185, 129, 0.4);
+        }
+
+        .action-btn.sq-btn-restore:hover {
+            background: #10b981;
+            color: #fff;
+            border-color: #10b981;
+        }
+
+        .action-btn.sq-btn-delete {
+            background: rgba(245, 158, 11, 0.14);
+            color: #b45309;
+            border-color: rgba(245, 158, 11, 0.45);
+        }
+
+        .action-btn.sq-btn-delete:hover {
+            background: #f59e0b;
+            color: #fff;
+            border-color: #f59e0b;
+        }
+
+        .action-btn.sq-btn-delete-permanent {
+            background: rgba(239, 68, 68, 0.14);
+            color: #dc2626;
+            border-color: rgba(239, 68, 68, 0.45);
+        }
+
+        .action-btn.sq-btn-delete-permanent:hover {
+            background: #ef4444;
+            color: #fff;
+            border-color: #ef4444;
+        }
+
+        .action-btn.sq-btn-clear-chat {
+            background: rgba(139, 92, 246, 0.14);
+            color: #7c3aed;
+            border-color: rgba(139, 92, 246, 0.45);
+        }
+
+        .action-btn.sq-btn-clear-chat:hover {
+            background: #8b5cf6;
+            color: #fff;
+            border-color: #8b5cf6;
+        }
+
+        .quality-header {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 14px;
+        }
+
+        .quality-header .sq-filter-toolbar {
+            order: 2;
+        }
+
+        .quality-header-count {
+            font-size: 13px;
+            color: var(--text-light);
+            white-space: nowrap;
         }
 
         .chart-btn {
@@ -1966,45 +2504,71 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                             <div class="kpi-value"><?php echo (int) $metrics['by_risk']['Secure']; ?></div>
                         </div>
                     </div>
-                    <div class="chart-card" style="margin-bottom:18px;">
-                        <div class="chart-header">
-                            <div class="chart-title"><i class="fas fa-chart-pie"></i> Scan Risk Distribution</div>
+                    <div class="chart-grid" style="margin-bottom:18px;">
+                        <div class="chart-card">
+                            <div class="chart-header">
+                                <div class="chart-title"><i class="fas fa-chart-pie"></i> Scan Risk Distribution</div>
+                                <select class="sq-chart-period-select" aria-label="Risk chart period"
+                                    onchange="sqSetChartPeriod('scans_risk_period', this.value)">
+                                    <?php foreach ($allowedChartPeriods as $pKey => $pLabel): ?>
+                                        <option value="<?php echo htmlspecialchars($pKey); ?>" <?php echo $scansRiskPeriod === $pKey ? 'selected' : ''; ?>><?php echo htmlspecialchars($pLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="chart-container"><canvas id="scansRiskChart"></canvas></div>
                         </div>
-                        <div class="chart-container"><canvas id="scansRiskChart"></canvas></div>
+                        <div class="chart-card">
+                            <div class="chart-header">
+                                <div class="chart-title"><i class="fas fa-chart-line"></i> Scan Usage</div>
+                                <select class="sq-chart-period-select" aria-label="Usage chart period"
+                                    onchange="sqSetChartPeriod('scans_usage_period', this.value)">
+                                    <?php foreach ($allowedChartPeriods as $pKey => $pLabel): ?>
+                                        <option value="<?php echo htmlspecialchars($pKey); ?>" <?php echo $scansUsagePeriod === $pKey ? 'selected' : ''; ?>><?php echo htmlspecialchars($pLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="chart-container"><canvas id="scansUsageChart"></canvas></div>
+                        </div>
                     </div>
 
                     <div class="card quality-card">
                         <div class="quality-header">
                             <span class="quality-title">All Scan Results</span>
-                            <form method="GET" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <form id="scansFilterForm" class="sq-filter-toolbar" method="GET">
                                 <input type="hidden" name="view" value="scans" />
                                 <input type="hidden" name="page" value="1" />
-                                <input type="hidden" name="per_page"
-                                    value="<?php echo htmlspecialchars((string) $perPageParam); ?>" />
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <i class="fas fa-search" style="color: var(--text-light);"></i>
-                                    <input type="text" name="scans_search" placeholder="Search scans..."
-                                        value="<?php echo htmlspecialchars($scansSearch); ?>"
-                                        style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 260px;" />
+                                <input type="hidden" name="per_page" value="<?php echo htmlspecialchars((string) $perPageParam); ?>" />
+                                <input type="hidden" name="scans_risk_period" value="<?php echo htmlspecialchars($scansRiskPeriod); ?>" />
+                                <input type="hidden" name="scans_usage_period" value="<?php echo htmlspecialchars($scansUsagePeriod); ?>" />
+                                <label class="sq-filter-search">
+                                    <i class="fas fa-search sq-filter-search__icon" aria-hidden="true"></i>
+                                    <input type="search" name="scans_search" id="scansSearchInput" class="sq-filter-search__input"
+                                        placeholder="Search by URL, user, scan ID..."
+                                        value="<?php echo htmlspecialchars($scansSearch); ?>" autocomplete="off" />
+                                </label>
+                                <div class="sq-filter-toolbar-controls">
+                                    <label class="sq-filter-field">
+                                        <span class="sq-filter-field-label">Risk</span>
+                                        <select name="scans_risk" class="sq-filter-select sq-filter-control">
+                                            <?php foreach ($allowedScanRisks as $riskOpt): ?>
+                                                <option value="<?php echo htmlspecialchars($riskOpt); ?>"
+                                                    <?php echo $scansRiskFilter === $riskOpt ? 'selected' : ''; ?>>
+                                                    <?php echo $riskOpt === 'all' ? 'All Risks' : $riskOpt; ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </label>
+                                    <label class="sq-filter-field">
+                                        <span class="sq-filter-field-label">Status</span>
+                                        <select name="scans_status" class="sq-filter-select sq-filter-control">
+                                            <option value="active" <?php echo $scansStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
+                                            <option value="deleted" <?php echo $scansStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
+                                            <option value="all" <?php echo $scansStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
+                                        </select>
+                                    </label>
+                                    <?php sq_admin_render_date_range_filters('scans', $scansDateFrom, $scansDateTo); ?>
+                                    <?php sq_admin_render_filter_actions('admin_data_management.php?view=scans'); ?>
                                 </div>
-                                <select name="scans_risk"
-                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 170px;">
-                                    <?php foreach ($allowedScanRisks as $riskOpt): ?>
-                                        <option value="<?php echo htmlspecialchars($riskOpt); ?>"
-                                            <?php echo $scansRiskFilter === $riskOpt ? 'selected' : ''; ?>>
-                                            <?php echo $riskOpt === 'all' ? 'All Risks' : $riskOpt; ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <select name="scans_status"
-                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 150px;">
-                                    <option value="active" <?php echo $scansStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
-                                    <option value="deleted" <?php echo $scansStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
-                                    <option value="all" <?php echo $scansStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
-                                </select>
-                                <button type="submit" class="action-btn" style="padding: 10px 14px; text-decoration:none;">
-                                    <i class="fas fa-filter"></i> Filter
-                                </button>
                             </form>
                             <?php if ($adminError): ?>
                                 <span style="color:#fecaca;font-size:13px;"><?php echo htmlspecialchars($adminError); ?></span>
@@ -2016,7 +2580,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                 <thead>
                                     <tr>
                                         <th>User</th>
-                                        <th>Target (masked)</th>
+                                        <th>Target URL</th>
                                         <th>Risk</th>
                                         <th>Score</th>
                                         <th>Total Issues</th>
@@ -2043,23 +2607,19 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                             $createdAt = $row['created_at'] ?? '';
                                             $targetUrl = $row['target_url'] ?? ($data['target'] ?? '');
                                             $userLabel = $row['user_name'] ?: ($row['email'] ?: $row['user_id']);
-                                            $parsed = parse_url($targetUrl);
-                                            $host = $parsed['host'] ?? '';
-                                            if ($host !== '') {
-                                                $parts = explode('.', $host);
-                                                $tld = array_pop($parts);
-                                                $base = implode('.', $parts);
-                                                $maskedHost = substr($base, 0, 3) . '***.' . $tld;
-                                                $maskedTarget = ($parsed['scheme'] ?? 'https') . '://' . $maskedHost;
-                                            } else {
-                                                $maskedTarget = 'masked-target';
-                                            }
+                                            $displayTarget = $targetUrl !== '' ? $targetUrl : '—';
                                             $badgeClass = strtolower($riskLevel);
                                             $matchedInStr = '-';
                                             if ($scansSearch !== '') {
                                                 $matchedCols = [];
-                                                foreach (['target_url', 'pdf_path', 'doc_path', 'html_path', 'csv_path', 'email', 'user_name'] as $key) {
-                                                    $val = $row[$key] ?? '';
+                                                foreach (['id', 'target_url', 'scan_json', 'pdf_path', 'doc_path', 'html_path', 'csv_path', 'email', 'user_name', 'first_name', 'surname'] as $key) {
+                                                    if ($key === 'id') {
+                                                        $val = (string) ($row['id'] ?? '');
+                                                    } elseif ($key === 'scan_json') {
+                                                        $val = $row['scan_json'] ?? '';
+                                                    } else {
+                                                        $val = $row[$key] ?? '';
+                                                    }
                                                     if ($val === null)
                                                         continue;
                                                     if (stripos((string) $val, $scansSearch) !== false) {
@@ -2079,7 +2639,7 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                                         <span><?php echo htmlspecialchars($userLabel ?: 'N/A'); ?></span>
                                                     </div>
                                                 </td>
-                                                <td><?php echo htmlspecialchars($maskedTarget); ?></td>
+                                                <td style="max-width:280px; word-break:break-all;"><?php echo htmlspecialchars($displayTarget); ?></td>
                                                 <td>
                                                     <span
                                                         class="risk-pill <?php echo htmlspecialchars(strtolower($badgeClass)); ?>">
@@ -2096,6 +2656,9 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                                     <button type="button" class="action-btn js-open-scan-actions"
                                                         data-scan-id="<?php echo (int) $row['id']; ?>"
                                                         data-has-pdf="<?php echo !empty($row['pdf_path']) ? '1' : '0'; ?>"
+                                                        data-has-doc="<?php echo !empty($row['doc_path']) ? '1' : '0'; ?>"
+                                                        data-has-html="<?php echo !empty($row['html_path']) ? '1' : '0'; ?>"
+                                                        data-has-csv="<?php echo !empty($row['csv_path']) ? '1' : '0'; ?>"
                                                         data-deleted="<?php echo !empty($row['deleted_at']) ? '1' : '0'; ?>">
                                                         <i class="fas fa-ellipsis-h"></i> Actions
                                                     </button>
@@ -2144,6 +2707,9 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                     if ($scansStatusFilter !== 'active') {
                                         $queryParams .= "&scans_status=" . urlencode($scansStatusFilter);
                                     }
+                                    $queryParams .= "&scans_risk_period=" . urlencode($scansRiskPeriod);
+                                    $queryParams .= "&scans_usage_period=" . urlencode($scansUsagePeriod);
+                                    sq_admin_append_date_to_query($queryParams, 'scans_date_from', $scansDateFrom, 'scans_date_to', $scansDateTo);
                                     $startPage = max(1, $page - 2);
                                     $endPage = min((int) $totalPages, $page + 2);
                                     ?>
@@ -2232,41 +2798,56 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                     <div class="chart-card" style="margin-bottom:18px;">
                         <div class="chart-header">
                             <div class="chart-title"><i class="fas fa-chart-bar"></i> Enterprise AI Event Types</div>
+                            <select class="sq-chart-period-select" aria-label="AI chart period"
+                                onchange="sqSetChartPeriod('ai_chart_period', this.value)">
+                                <?php foreach ($allowedChartPeriods as $pKey => $pLabel): ?>
+                                    <option value="<?php echo htmlspecialchars($pKey); ?>" <?php echo $aiChartPeriod === $pKey ? 'selected' : ''; ?>><?php echo htmlspecialchars($pLabel); ?></option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                         <div class="chart-container"><canvas id="aiEventsChart"></canvas></div>
+                        <p class="sq-chart-note">Each bar is an event type in the selected period. Legend matches bar colors below.</p>
                     </div>
 
                     <div class="card quality-card">
                         <div class="quality-header">
                             <span class="quality-title">Enterprise AI Usage Events</span>
-                            <form method="GET" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <form id="aiFilterForm" class="sq-filter-toolbar" method="GET">
                                 <input type="hidden" name="view" value="ai" />
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <i class="fas fa-search" style="color: var(--text-light);"></i>
-                                    <input type="text" name="ai_search" placeholder="Search AI events..."
-                                        value="<?php echo htmlspecialchars($aiSearch); ?>"
-                                        style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 240px;" />
+                                <input type="hidden" name="ai_page" value="1" />
+                                <input type="hidden" name="ai_per_page" value="<?php echo htmlspecialchars($aiPerPageParam); ?>" />
+                                <input type="hidden" name="ai_chart_period" value="<?php echo htmlspecialchars($aiChartPeriod); ?>" />
+                                <label class="sq-filter-search">
+                                    <i class="fas fa-search sq-filter-search__icon" aria-hidden="true"></i>
+                                    <input type="search" name="ai_search" id="aiSearchInput" class="sq-filter-search__input"
+                                        placeholder="Search by user, scan ID, event..."
+                                        value="<?php echo htmlspecialchars($aiSearch); ?>" autocomplete="off" />
+                                </label>
+                                <div class="sq-filter-toolbar-controls">
+                                    <label class="sq-filter-field">
+                                        <span class="sq-filter-field-label">Event</span>
+                                        <select name="ai_event_type" class="sq-filter-select sq-filter-control">
+                                            <?php foreach ($allowedAiEventTypes as $eventOpt): ?>
+                                                <option value="<?php echo htmlspecialchars($eventOpt); ?>"
+                                                    <?php echo $aiEventTypeFilter === $eventOpt ? 'selected' : ''; ?>>
+                                                    <?php echo htmlspecialchars(sq_admin_format_event_type($eventOpt)); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </label>
+                                    <label class="sq-filter-field">
+                                        <span class="sq-filter-field-label">Status</span>
+                                        <select name="ai_status" class="sq-filter-select sq-filter-control">
+                                            <option value="active" <?php echo $aiStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
+                                            <option value="deleted" <?php echo $aiStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
+                                            <option value="all" <?php echo $aiStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
+                                        </select>
+                                    </label>
+                                    <?php sq_admin_render_date_range_filters('ai', $aiDateFrom, $aiDateTo); ?>
+                                    <?php sq_admin_render_filter_actions('admin_data_management.php?view=ai'); ?>
                                 </div>
-                                <select name="ai_event_type"
-                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 170px;">
-                                    <?php foreach ($allowedAiEventTypes as $eventOpt): ?>
-                                        <option value="<?php echo htmlspecialchars($eventOpt); ?>"
-                                            <?php echo $aiEventTypeFilter === $eventOpt ? 'selected' : ''; ?>>
-                                            <?php echo $eventOpt === 'all' ? 'All Event Types' : $eventOpt; ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <select name="ai_status"
-                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 150px;">
-                                    <option value="active" <?php echo $aiStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
-                                    <option value="deleted" <?php echo $aiStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
-                                    <option value="all" <?php echo $aiStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
-                                </select>
-                                <button type="submit" class="action-btn" style="padding: 10px 14px; text-decoration:none;">
-                                    <i class="fas fa-filter"></i> Filter
-                                </button>
                             </form>
-                            <span style="font-size: 13px; color: var(--text-light);">
+                            <span class="quality-header-count">
                                 Showing <?php echo number_format((int) count($aiEventRows)); ?> / Total
                                 <?php echo number_format((int) $aiEventTotal); ?>
                             </span>
@@ -2314,37 +2895,39 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                                 <td><?php echo htmlspecialchars((string) ($ev['ip_address'] ?? '-')); ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($ev['created_at'] ?? '')); ?></td>
                                                 <td>
+                                                    <div class="sq-record-actions">
                                                     <?php if ($evScanId > 0): ?>
                                                         <a class="action-btn html"
                                                             href="/ScanQuotient.v2/ScanQuotient.B/Private/Web_scanner/PHP/Frontend/enterprise_ai_overview.php?scan_id=<?php echo $evScanId; ?>">
                                                             <i class="fas fa-up-right-from-square"></i> Open AI Page
                                                         </a>
                                                     <?php endif; ?>
-                                                    <form method="POST" action="admin_data_management.php" style="display:inline;">
-                                                        <input type="hidden" name="record_action" value="clear_chat">
-                                                        <input type="hidden" name="record_type" value="ai">
-                                                        <input type="hidden" name="record_id" value="<?php echo (int) $ev['id']; ?>">
-                                                        <button type="submit" class="action-btn" title="Clear chat"><i class="fas fa-eraser"></i></button>
-                                                    </form>
-                                                    <?php if (!empty($ev['deleted_at'])): ?>
+                                                    <button type="button" class="action-btn sq-btn-clear-chat js-record-action" title="Clear chat"
+                                                        data-record-action="clear_chat"
+                                                        data-record-type="ai"
+                                                        data-record-id="<?php echo (int) $ev['id']; ?>">
+                                                        <i class="fas fa-eraser"></i> Clear chat
+                                                    </button>
+                                                    <?php if (sq_admin_show_deleted_actions($aiStatusFilter, $ev['deleted_at'] ?? null)): ?>
                                                         <form method="POST" action="admin_data_management.php" style="display:inline;">
                                                             <input type="hidden" name="record_action" value="restore">
                                                             <input type="hidden" name="record_type" value="ai">
                                                             <input type="hidden" name="record_id" value="<?php echo (int) $ev['id']; ?>">
-                                                            <button type="submit" class="action-btn" title="Restore"><i class="fas fa-rotate-left"></i></button>
+                                                            <button type="submit" class="action-btn sq-btn-restore" title="Restore"><i class="fas fa-rotate-left"></i> Restore</button>
                                                         </form>
-                                                    <?php else: ?>
-                                                        <button type="button" class="action-btn delete js-record-action" title="Delete"
+                                                        <button type="button" class="action-btn sq-btn-delete-permanent js-record-action" title="Delete permanently"
+                                                            data-record-action="hard_delete" data-record-type="ai"
+                                                            data-record-id="<?php echo (int) $ev['id']; ?>">
+                                                            <i class="fas fa-ban"></i> Delete forever
+                                                        </button>
+                                                    <?php elseif (sq_admin_show_soft_delete($aiStatusFilter, $ev['deleted_at'] ?? null)): ?>
+                                                        <button type="button" class="action-btn sq-btn-delete js-record-action" title="Delete"
                                                             data-record-action="soft_delete" data-record-type="ai"
                                                             data-record-id="<?php echo (int) $ev['id']; ?>">
-                                                            <i class="fas fa-trash"></i>
+                                                            <i class="fas fa-trash"></i> Delete
                                                         </button>
                                                     <?php endif; ?>
-                                                    <button type="button" class="action-btn delete js-record-action" title="Delete forever"
-                                                        data-record-action="hard_delete" data-record-type="ai"
-                                                        data-record-id="<?php echo (int) $ev['id']; ?>">
-                                                        <i class="fas fa-ban"></i>
-                                                    </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -2374,7 +2957,8 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                         <?php if ($aiTotalPages > 1): ?>
                             <div class="sq-admin-pagination">
                                 <?php
-                                $aiParams = 'view=ai&ai_per_page=' . urlencode($aiPerPageParam) . '&ai_search=' . urlencode($aiSearch) . '&ai_event_type=' . urlencode($aiEventTypeFilter) . '&ai_status=' . urlencode($aiStatusFilter);
+                                $aiParams = 'view=ai&ai_per_page=' . urlencode($aiPerPageParam) . '&ai_search=' . urlencode($aiSearch) . '&ai_event_type=' . urlencode($aiEventTypeFilter) . '&ai_status=' . urlencode($aiStatusFilter) . '&ai_chart_period=' . urlencode($aiChartPeriod);
+                                sq_admin_append_date_to_query($aiParams, 'ai_date_from', $aiDateFrom, 'ai_date_to', $aiDateTo);
                                 ?>
                                 <?php if ($aiPage > 1): ?>
                                     <a class="sq-admin-page-btn" href="admin_data_management.php?<?php echo $aiParams; ?>&ai_page=<?php echo $aiPage - 1; ?>"><i class="fas fa-chevron-left"></i></a>
@@ -2426,7 +3010,13 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                     </div>
                     <div class="chart-card" style="margin-bottom:18px;">
                         <div class="chart-header">
-                            <div class="chart-title"><i class="fas fa-chart-column"></i> Server Log Levels (24h)</div>
+                            <div class="chart-title"><i class="fas fa-chart-line"></i> Server Log Activity</div>
+                            <select class="sq-chart-period-select" aria-label="Log chart period"
+                                onchange="sqSetChartPeriod('log_chart_period', this.value)">
+                                <?php foreach ($allowedChartPeriods as $pKey => $pLabel): ?>
+                                    <option value="<?php echo htmlspecialchars($pKey); ?>" <?php echo $logChartPeriod === $pKey ? 'selected' : ''; ?>><?php echo htmlspecialchars($pLabel); ?></option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                         <div class="chart-container"><canvas id="serverLogLevelsChart"></canvas></div>
                     </div>
@@ -2434,39 +3024,49 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                     <div class="card quality-card">
                         <div class="quality-header">
                             <span class="quality-title">System Server Logs</span>
-                            <form method="GET" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <form id="logFilterForm" class="sq-filter-toolbar" method="GET">
                                 <input type="hidden" name="view" value="server_logs" />
-                                <div style="display:flex; align-items:center; gap:8px;">
-                                    <i class="fas fa-search" style="color: var(--text-light);"></i>
-                                    <input type="text" name="log_search" placeholder="Search logs..."
-                                        value="<?php echo htmlspecialchars($logSearch); ?>"
-                                        style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 220px;" />
+                                <input type="hidden" name="log_page" value="1" />
+                                <input type="hidden" name="log_per_page" value="<?php echo htmlspecialchars($logPerPageParam); ?>" />
+                                <input type="hidden" name="log_chart_period" value="<?php echo htmlspecialchars($logChartPeriod); ?>" />
+                                <label class="sq-filter-search">
+                                    <i class="fas fa-search sq-filter-search__icon" aria-hidden="true"></i>
+                                    <input type="search" name="log_search" id="logSearchInput" class="sq-filter-search__input"
+                                        placeholder="Search logs by message, source, IP..."
+                                        value="<?php echo htmlspecialchars($logSearch); ?>" autocomplete="off" />
+                                </label>
+                                <div class="sq-filter-toolbar-controls">
+                                    <label class="sq-filter-field">
+                                        <span class="sq-filter-field-label">Level</span>
+                                        <select name="log_level" class="sq-filter-select sq-filter-control">
+                                            <option value="all" <?php echo $logLevelFilter === 'all' ? 'selected' : ''; ?>>All Levels</option>
+                                            <option value="info" <?php echo $logLevelFilter === 'info' ? 'selected' : ''; ?>>Normal (Info)</option>
+                                            <option value="warning" <?php echo $logLevelFilter === 'warning' ? 'selected' : ''; ?>>Warning</option>
+                                            <option value="error" <?php echo $logLevelFilter === 'error' ? 'selected' : ''; ?>>Error</option>
+                                        </select>
+                                    </label>
+                                    <label class="sq-filter-field">
+                                        <span class="sq-filter-field-label">Source</span>
+                                        <select name="log_source" class="sq-filter-select sq-filter-control">
+                                            <option value="all" <?php echo $logSourceFilter === 'all' ? 'selected' : ''; ?>>All Sources</option>
+                                            <option value="web_scanner.scan_proxy" <?php echo $logSourceFilter === 'web_scanner.scan_proxy' ? 'selected' : ''; ?>>Scanner Proxy</option>
+                                            <option value="enterprise_ai_api" <?php echo $logSourceFilter === 'enterprise_ai_api' ? 'selected' : ''; ?>>Enterprise AI API</option>
+                                            <option value="system" <?php echo $logSourceFilter === 'system' ? 'selected' : ''; ?>>System (Other)</option>
+                                        </select>
+                                    </label>
+                                    <label class="sq-filter-field">
+                                        <span class="sq-filter-field-label">Status</span>
+                                        <select name="log_status" class="sq-filter-select sq-filter-control">
+                                            <option value="active" <?php echo $logStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
+                                            <option value="deleted" <?php echo $logStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
+                                            <option value="all" <?php echo $logStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
+                                        </select>
+                                    </label>
+                                    <?php sq_admin_render_date_range_filters('log', $logDateFrom, $logDateTo); ?>
+                                    <?php sq_admin_render_filter_actions('admin_data_management.php?view=server_logs'); ?>
                                 </div>
-                                <select name="log_level"
-                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 120px;">
-                                    <option value="all" <?php echo $logLevelFilter === 'all' ? 'selected' : ''; ?>>All Levels</option>
-                                    <option value="info" <?php echo $logLevelFilter === 'info' ? 'selected' : ''; ?>>Info</option>
-                                    <option value="warning" <?php echo $logLevelFilter === 'warning' ? 'selected' : ''; ?>>Warning</option>
-                                    <option value="error" <?php echo $logLevelFilter === 'error' ? 'selected' : ''; ?>>Error</option>
-                                </select>
-                                <select name="log_source"
-                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 180px;">
-                                    <option value="all" <?php echo $logSourceFilter === 'all' ? 'selected' : ''; ?>>All Sources</option>
-                                    <option value="web_scanner.scan_proxy" <?php echo $logSourceFilter === 'web_scanner.scan_proxy' ? 'selected' : ''; ?>>Scanner Proxy</option>
-                                    <option value="enterprise_ai_api" <?php echo $logSourceFilter === 'enterprise_ai_api' ? 'selected' : ''; ?>>Enterprise AI API</option>
-                                    <option value="system" <?php echo $logSourceFilter === 'system' ? 'selected' : ''; ?>>System (Other)</option>
-                                </select>
-                                <select name="log_status"
-                                    style="padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main); min-width: 150px;">
-                                    <option value="active" <?php echo $logStatusFilter === 'active' ? 'selected' : ''; ?>>Active only</option>
-                                    <option value="deleted" <?php echo $logStatusFilter === 'deleted' ? 'selected' : ''; ?>>Deleted only</option>
-                                    <option value="all" <?php echo $logStatusFilter === 'all' ? 'selected' : ''; ?>>All records</option>
-                                </select>
-                                <button type="submit" class="action-btn" style="padding: 10px 14px; text-decoration:none;">
-                                    <i class="fas fa-filter"></i> Filter
-                                </button>
                             </form>
-                            <span style="font-size: 13px; color: var(--text-light);">
+                            <span class="quality-header-count">
                                 Showing <?php echo number_format((int) count($serverLogRows)); ?> / Total
                                 <?php echo number_format((int) $serverLogTotal); ?>
                             </span>
@@ -2511,25 +3111,27 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                                                 <td><?php echo htmlspecialchars((string) ($log['user_id'] ?? '-')); ?></td>
                                                 <td><?php echo htmlspecialchars((string) ($log['request_ip'] ?? '-')); ?></td>
                                                 <td>
-                                                    <?php if (!empty($log['deleted_at'])): ?>
+                                                    <div class="sq-record-actions">
+                                                    <?php if (sq_admin_show_deleted_actions($logStatusFilter, $log['deleted_at'] ?? null)): ?>
                                                         <form method="POST" action="admin_data_management.php" style="display:inline;">
                                                             <input type="hidden" name="record_action" value="restore">
                                                             <input type="hidden" name="record_type" value="server_logs">
                                                             <input type="hidden" name="record_id" value="<?php echo (int) $log['id']; ?>">
-                                                            <button type="submit" class="action-btn" title="Restore"><i class="fas fa-rotate-left"></i></button>
+                                                            <button type="submit" class="action-btn sq-btn-restore" title="Restore"><i class="fas fa-rotate-left"></i> Restore</button>
                                                         </form>
-                                                    <?php else: ?>
-                                                        <button type="button" class="action-btn delete js-record-action" title="Delete"
+                                                        <button type="button" class="action-btn sq-btn-delete-permanent js-record-action" title="Delete permanently"
+                                                            data-record-action="hard_delete" data-record-type="server_logs"
+                                                            data-record-id="<?php echo (int) $log['id']; ?>">
+                                                            <i class="fas fa-ban"></i> Delete forever
+                                                        </button>
+                                                    <?php elseif (sq_admin_show_soft_delete($logStatusFilter, $log['deleted_at'] ?? null)): ?>
+                                                        <button type="button" class="action-btn sq-btn-delete js-record-action" title="Delete"
                                                             data-record-action="soft_delete" data-record-type="server_logs"
                                                             data-record-id="<?php echo (int) $log['id']; ?>">
-                                                            <i class="fas fa-trash"></i>
+                                                            <i class="fas fa-trash"></i> Delete
                                                         </button>
                                                     <?php endif; ?>
-                                                    <button type="button" class="action-btn delete js-record-action" title="Delete forever"
-                                                        data-record-action="hard_delete" data-record-type="server_logs"
-                                                        data-record-id="<?php echo (int) $log['id']; ?>">
-                                                        <i class="fas fa-ban"></i>
-                                                    </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         <?php endforeach; ?>
@@ -2559,7 +3161,8 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                         <?php if ($logTotalPages > 1): ?>
                             <div class="sq-admin-pagination">
                                 <?php
-                                $logParams = 'view=server_logs&log_per_page=' . urlencode($logPerPageParam) . '&log_search=' . urlencode($logSearch) . '&log_level=' . urlencode($logLevelFilter) . '&log_source=' . urlencode($logSourceFilter) . '&log_status=' . urlencode($logStatusFilter);
+                                $logParams = 'view=server_logs&log_per_page=' . urlencode($logPerPageParam) . '&log_search=' . urlencode($logSearch) . '&log_level=' . urlencode($logLevelFilter) . '&log_source=' . urlencode($logSourceFilter) . '&log_status=' . urlencode($logStatusFilter) . '&log_chart_period=' . urlencode($logChartPeriod);
+                                sq_admin_append_date_to_query($logParams, 'log_date_from', $logDateFrom, 'log_date_to', $logDateTo);
                                 ?>
                                 <?php if ($logPage > 1): ?>
                                     <a class="sq-admin-page-btn" href="admin_data_management.php?<?php echo $logParams; ?>&log_page=<?php echo $logPage - 1; ?>"><i class="fas fa-chevron-left"></i></a>
@@ -2601,6 +3204,30 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         </div>
     </div>
 
+    <div class="modal-overlay" id="adminShareModal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="adminShareModalTitle">
+        <div class="modal-card" style="width:min(92vw, 480px);">
+            <div class="modal-head">
+                <span class="warn-icon" style="background:rgba(59,130,246,0.12);color:var(--brand-color);"><i class="fas fa-share-alt"></i></span>
+                <div class="modal-title" id="adminShareModalTitle">Share scan results</div>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="adminShareModalScanId" value="">
+                <p style="margin:0 0 6px;font-weight:600;color:var(--text-main);">Share with</p>
+                <p style="margin:0 0 10px;font-size:12px;">Enter one or more recipient email addresses:</p>
+                <div id="adminShareModalEmailsWrap" class="admin-share-email-stack" style="margin-bottom:14px;"></div>
+                <p style="margin:0 0 8px;font-weight:600;color:var(--text-main);">Attach</p>
+                <label style="display:block;font-weight:600;margin-bottom:6px;"><input type="checkbox" id="adminShareModalAll"> Select all</label>
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><input type="checkbox" id="adminShareModalPdf"> PDF <span id="adminShareModalPdfHint" style="display:none;font-size:12px;color:var(--text-light);">(not available)</span></label>
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><input type="checkbox" id="adminShareModalDoc"> DOC <span id="adminShareModalDocHint" style="display:none;font-size:12px;color:var(--text-light);">(not available)</span></label>
+                <label style="display:flex;align-items:center;gap:8px;margin-bottom:4px;"><input type="checkbox" id="adminShareModalHtml"> HTML <span id="adminShareModalHtmlHint" style="display:none;font-size:12px;color:var(--text-light);">(not available)</span></label>
+                <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="adminShareModalCsv"> CSV <span id="adminShareModalCsvHint" style="display:none;font-size:12px;color:var(--text-light);">(not available)</span></label>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="modal-btn" id="adminShareModalCloseBtn">Cancel</button>
+                <button type="button" class="modal-btn" id="adminShareModalSendBtn" style="background:var(--brand-color);border-color:var(--brand-color);color:#fff;">Send</button>
+            </div>
+        </div>
+    </div>
     <div class="modal-overlay" id="deleteModal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
         <div class="modal-card">
             <div class="modal-head">
@@ -2800,6 +3427,118 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
             border-color: var(--danger-color);
             color: #fff;
         }
+
+        .modal-btn.primary-clear-chat {
+            background: #8b5cf6;
+            border-color: #8b5cf6;
+            color: #fff;
+        }
+
+        .modal-btn.primary-clear-chat:hover {
+            background: #7c3aed;
+            border-color: #7c3aed;
+        }
+
+        #deleteModal.delete-modal--clear-chat .warn-icon {
+            background: rgba(139, 92, 246, 0.14);
+            color: #7c3aed;
+        }
+
+        #adminShareModal {
+            align-items: center;
+            justify-content: center;
+        }
+
+        #adminShareModal.sq-share-modal--busy {
+            cursor: wait;
+        }
+
+        #adminShareModalSendBtn.sq-share-submit-btn--loading,
+        #adminShareModalSendBtn:disabled {
+            opacity: 0.85;
+            cursor: not-allowed;
+        }
+
+        .admin-share-email-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .admin-share-email-stack .share-email-row {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .admin-share-email-stack .share-email-input {
+            width: 100%;
+            min-width: 0;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-size: 14px;
+            transition: border-color 0.15s ease, box-shadow 0.2s ease;
+        }
+
+        .admin-share-email-stack .share-email-input:focus {
+            outline: none;
+            border-color: rgba(59, 130, 246, 0.55);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+        }
+
+        .admin-share-email-stack .share-email-op {
+            width: 34px;
+            height: 34px;
+            min-width: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-main);
+            color: var(--text-main);
+            font-weight: 800;
+            font-size: 18px;
+            line-height: 1;
+            cursor: pointer;
+            transition: filter 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+        }
+
+        .admin-share-email-stack .share-email-op:hover {
+            filter: brightness(0.96);
+        }
+
+        .admin-share-email-stack .share-email-op:focus-visible {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+
+        .admin-share-email-stack .share-email-op--add {
+            color: #0f766e;
+            border-color: rgba(20, 184, 166, 0.35);
+            background: rgba(20, 184, 166, 0.1);
+        }
+
+        .admin-share-email-stack .share-email-op--remove {
+            color: #b91c1c;
+            border-color: rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        body.dark .admin-share-email-stack .share-email-op--add {
+            color: #5eead4;
+            background: rgba(20, 184, 166, 0.18);
+        }
+
+        body.dark .admin-share-email-stack .share-email-op--remove {
+            color: #fca5a5;
+            background: rgba(239, 68, 68, 0.18);
+        }
     </style>
 
     <footer class="page-footer">
@@ -2855,6 +3594,12 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
     </script>
 
     <script>
+        function sqSetChartPeriod(paramName, value) {
+            const url = new URL(window.location.href);
+            url.searchParams.set(paramName, value);
+            window.location.href = url.toString();
+        }
+
         function sqUpdatePerPage(perPageValue) {
             const url = new URL(window.location.href);
             url.searchParams.set('per_page', perPageValue);
@@ -2918,14 +3663,49 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                 container.appendChild(toast);
                 setTimeout(() => { toast.remove(); }, 3400);
             }
+            window.sqAdminShowToast = showToast;
 
-            const actionLabel = { soft_delete: 'delete this record', hard_delete: 'permanently delete this record', restore: 'restore this record' };
+            const deleteTitle = document.getElementById('deleteModalTitle');
+            const deleteWarnIcon = deleteModal?.querySelector('.warn-icon i');
+            const actionLabel = {
+                soft_delete: 'delete this record',
+                hard_delete: 'permanently delete this record',
+                restore: 'restore this record',
+                clear_chat: 'clear chat metadata for this AI event'
+            };
             function openConfirm(action, type, id) {
                 pending = { action, type, id };
-                if (deleteBody) deleteBody.textContent = 'Are you sure you want to ' + (actionLabel[action] || 'continue') + '?';
+                const isClearChat = action === 'clear_chat';
+                if (deleteTitle) {
+                    deleteTitle.textContent = isClearChat ? 'Clear chat' : 'Confirm Action';
+                }
+                if (deleteWarnIcon) {
+                    deleteWarnIcon.className = isClearChat ? 'fas fa-eraser' : 'fas fa-trash-alt';
+                }
+                if (deleteBody) {
+                    deleteBody.textContent = isClearChat
+                        ? 'This will remove stored chat and metadata for this AI usage event. The event record will remain in the log.'
+                        : 'Are you sure you want to ' + (actionLabel[action] || 'continue') + '?';
+                }
+                if (confirmBtn) {
+                    confirmBtn.textContent = isClearChat ? 'Clear chat' : 'Confirm';
+                    confirmBtn.classList.toggle('primary-clear-chat', isClearChat);
+                    confirmBtn.classList.toggle('primary-danger', !isClearChat);
+                }
+                deleteModal?.classList.toggle('delete-modal--clear-chat', isClearChat);
                 deleteModal?.classList.add('active');
             }
-            function closeConfirm() { deleteModal?.classList.remove('active'); pending = null; }
+            function closeConfirm() {
+                deleteModal?.classList.remove('active', 'delete-modal--clear-chat');
+                pending = null;
+                if (confirmBtn) {
+                    confirmBtn.textContent = 'Confirm';
+                    confirmBtn.classList.remove('primary-clear-chat');
+                    confirmBtn.classList.add('primary-danger');
+                }
+                if (deleteTitle) deleteTitle.textContent = 'Confirm Action';
+                if (deleteWarnIcon) deleteWarnIcon.className = 'fas fa-trash-alt';
+            }
 
             document.addEventListener('click', function (e) {
                 const t = e.target;
@@ -2940,6 +3720,9 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                 if (scanBtn) {
                     const id = scanBtn.getAttribute('data-scan-id');
                     const hasPdf = scanBtn.getAttribute('data-has-pdf') === '1';
+                    const hasDoc = scanBtn.getAttribute('data-has-doc') === '1';
+                    const hasHtml = scanBtn.getAttribute('data-has-html') === '1';
+                    const hasCsv = scanBtn.getAttribute('data-has-csv') === '1';
                     const isDeleted = scanBtn.getAttribute('data-deleted') === '1';
                     if (scanActionsList) {
                         scanActionsList.innerHTML =
@@ -2947,12 +3730,27 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
                             '<a class="action-btn csv" href="<?php echo $downloadBaseAdmin; ?>?id=' + id + '&type=csv"><i class="fas fa-file-csv"></i> CSV</a>' +
                             '<a class="action-btn" href="<?php echo $downloadBaseAdmin; ?>?id=' + id + '&type=doc"><i class="fas fa-file-word"></i> DOC</a>' +
                             (hasPdf ? '<a class="action-btn pdf" href="<?php echo $downloadBaseAdmin; ?>?id=' + id + '&type=pdf"><i class="fas fa-file-pdf"></i> PDF</a>' : '<span class="action-btn disabled"><i class="fas fa-file-pdf"></i> PDF</span>') +
+                            '<button type="button" class="action-btn js-admin-open-share" data-scan-id="' + id + '" data-has-pdf="' + (hasPdf ? '1' : '0') + '" data-has-doc="' + (hasDoc ? '1' : '0') + '" data-has-html="' + (hasHtml ? '1' : '0') + '" data-has-csv="' + (hasCsv ? '1' : '0') + '"><i class="fas fa-share-alt"></i> Share</button>' +
                             (isDeleted
-                                ? '<button type="button" class="action-btn js-record-action" data-record-action="restore" data-record-type="scans" data-record-id="' + id + '" title="Restore"><i class="fas fa-rotate-left"></i></button>'
-                                : '<button type="button" class="action-btn delete js-record-action" data-record-action="soft_delete" data-record-type="scans" data-record-id="' + id + '" title="Delete"><i class="fas fa-trash"></i></button>') +
-                            '<button type="button" class="action-btn delete js-record-action" data-record-action="hard_delete" data-record-type="scans" data-record-id="' + id + '" title="Delete forever"><i class="fas fa-ban"></i></button>';
+                                ? '<button type="button" class="action-btn sq-btn-restore js-record-action" data-record-action="restore" data-record-type="scans" data-record-id="' + id + '" title="Restore"><i class="fas fa-rotate-left"></i> Restore</button>'
+                                + '<button type="button" class="action-btn sq-btn-delete-permanent js-record-action" data-record-action="hard_delete" data-record-type="scans" data-record-id="' + id + '" title="Delete permanently"><i class="fas fa-ban"></i> Delete forever</button>'
+                                : '<button type="button" class="action-btn sq-btn-delete js-record-action" data-record-action="soft_delete" data-record-type="scans" data-record-id="' + id + '" title="Delete"><i class="fas fa-trash"></i> Delete</button>');
                     }
                     scanActionsModal?.classList.add('active');
+                    return;
+                }
+                const adminShareBtn = t.closest('.js-admin-open-share');
+                if (adminShareBtn) {
+                    e.preventDefault();
+                    scanActionsModal?.classList.remove('active');
+                    if (typeof window.sqOpenAdminShareModal === 'function') {
+                        window.sqOpenAdminShareModal(adminShareBtn.getAttribute('data-scan-id'), {
+                            hasPdf: adminShareBtn.getAttribute('data-has-pdf') === '1',
+                            hasDoc: adminShareBtn.getAttribute('data-has-doc') === '1',
+                            hasHtml: adminShareBtn.getAttribute('data-has-html') === '1',
+                            hasCsv: adminShareBtn.getAttribute('data-has-csv') === '1'
+                        });
+                    }
                     return;
                 }
             });
@@ -2986,87 +3784,387 @@ $downloadBaseAdmin = '/ScanQuotient.v2/ScanQuotient.B/Private/Admin_dashboard/PH
         })();
 
         (function () {
+            const shareModal = document.getElementById('adminShareModal');
+            const shareSendBtn = document.getElementById('adminShareModalSendBtn');
+            const shareSendDefaultHtml = shareSendBtn ? shareSendBtn.innerHTML : 'Send';
+            const shareBackendUrl = '../../../Web_scanner/PHP/Backend/share_scan.php';
+            let adminShareState = { hasPdf: false, hasDoc: false, hasHtml: false, hasCsv: false };
+
+            function setAdminShareModalBusy(isLoading) {
+                if (!shareModal) return;
+                shareModal.classList.toggle('sq-share-modal--busy', isLoading);
+                shareModal.querySelectorAll('input, button, select, textarea').forEach((el) => {
+                    if (isLoading) {
+                        if (el.dataset.sqPrevDisabled === undefined) {
+                            el.dataset.sqPrevDisabled = el.disabled ? '1' : '0';
+                        }
+                        el.disabled = true;
+                    } else if (el.dataset.sqPrevDisabled !== undefined) {
+                        el.disabled = el.dataset.sqPrevDisabled === '1';
+                        delete el.dataset.sqPrevDisabled;
+                    }
+                });
+            }
+
+            function setAdminShareSendLoading(isLoading) {
+                setAdminShareModalBusy(isLoading);
+                if (!shareSendBtn) return;
+                if (isLoading) {
+                    shareSendBtn.disabled = true;
+                    shareSendBtn.setAttribute('aria-busy', 'true');
+                    shareSendBtn.classList.add('sq-share-submit-btn--loading');
+                    shareSendBtn.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Sending...';
+                } else {
+                    shareSendBtn.disabled = false;
+                    shareSendBtn.removeAttribute('aria-busy');
+                    shareSendBtn.classList.remove('sq-share-submit-btn--loading');
+                    shareSendBtn.innerHTML = shareSendDefaultHtml;
+                }
+            }
+
+            function closeAdminShareModal() {
+                if (shareModal) shareModal.style.display = 'none';
+                setAdminShareSendLoading(false);
+            }
+
+            function createAdminShareEmailRow(value) {
+                const row = document.createElement('div');
+                row.className = 'share-email-row';
+                const input = document.createElement('input');
+                input.type = 'email';
+                input.className = 'share-email-input';
+                input.placeholder = 'email@example.com';
+                input.value = value || '';
+                input.autocomplete = 'email';
+                const add = document.createElement('button');
+                add.type = 'button';
+                add.className = 'share-email-op share-email-op--add';
+                add.title = 'Add another email';
+                add.textContent = '+';
+                const rm = document.createElement('button');
+                rm.type = 'button';
+                rm.className = 'share-email-op share-email-op--remove';
+                rm.title = 'Remove this email';
+                rm.textContent = '-';
+                row.appendChild(input);
+                row.appendChild(add);
+                row.appendChild(rm);
+                return row;
+            }
+
+            function ensureAdminShareEmailRows(seed) {
+                const wrap = document.getElementById('adminShareModalEmailsWrap');
+                if (!wrap) return;
+                const seeds = Array.isArray(seed) ? seed.filter(Boolean) : [];
+                wrap.innerHTML = '';
+                (seeds.length ? seeds : ['']).forEach((v) => wrap.appendChild(createAdminShareEmailRow(v)));
+                syncAdminShareEmailRows();
+            }
+
+            function syncAdminShareEmailRows() {
+                const wrap = document.getElementById('adminShareModalEmailsWrap');
+                if (!wrap) return;
+                const rows = Array.from(wrap.querySelectorAll('.share-email-row'));
+                rows.forEach((row, idx) => {
+                    const add = row.querySelector('.share-email-op--add');
+                    const rm = row.querySelector('.share-email-op--remove');
+                    if (add) add.style.display = (idx === rows.length - 1) ? 'inline-flex' : 'none';
+                    if (rm) {
+                        rm.disabled = rows.length <= 1;
+                        rm.style.display = (idx === 0) ? 'none' : 'inline-flex';
+                    }
+                });
+                const first = wrap.querySelector('.share-email-input');
+                if (first && !first.value) first.focus();
+            }
+
+            function collectAdminShareRecipients() {
+                const wrap = document.getElementById('adminShareModalEmailsWrap');
+                if (!wrap) return [];
+                return Array.from(wrap.querySelectorAll('.share-email-input'))
+                    .map((el) => String(el.value || '').trim())
+                    .filter(Boolean);
+            }
+
+            function syncAdminShareAll() {
+                const all = document.getElementById('adminShareModalAll');
+                const pdf = document.getElementById('adminShareModalPdf');
+                const doc = document.getElementById('adminShareModalDoc');
+                const html = document.getElementById('adminShareModalHtml');
+                const csv = document.getElementById('adminShareModalCsv');
+                if (!all || !pdf || !doc || !html || !csv) return;
+                all.checked = !!(pdf.checked && doc.checked && html.checked && csv.checked);
+            }
+
+            window.sqOpenAdminShareModal = function (scanId, opts) {
+                opts = opts || {};
+                adminShareState = {
+                    hasPdf: !!opts.hasPdf,
+                    hasDoc: !!opts.hasDoc,
+                    hasHtml: !!opts.hasHtml,
+                    hasCsv: !!opts.hasCsv
+                };
+                const scanIdEl = document.getElementById('adminShareModalScanId');
+                if (scanIdEl) scanIdEl.value = scanId || '';
+                const pdf = document.getElementById('adminShareModalPdf');
+                const doc = document.getElementById('adminShareModalDoc');
+                const html = document.getElementById('adminShareModalHtml');
+                const csv = document.getElementById('adminShareModalCsv');
+                const canUsePdf = !!(opts.hasPdf || opts.hasHtml);
+                if (pdf) { pdf.disabled = !canUsePdf; pdf.checked = canUsePdf; }
+                if (doc) { doc.disabled = !opts.hasDoc; doc.checked = !!opts.hasDoc; }
+                if (html) { html.disabled = !opts.hasHtml; html.checked = !!opts.hasHtml; }
+                if (csv) { csv.disabled = !opts.hasCsv; csv.checked = !!opts.hasCsv; }
+                const pdfHint = document.getElementById('adminShareModalPdfHint');
+                const docHint = document.getElementById('adminShareModalDocHint');
+                const htmlHint = document.getElementById('adminShareModalHtmlHint');
+                const csvHint = document.getElementById('adminShareModalCsvHint');
+                if (pdfHint) {
+                    if (opts.hasPdf) pdfHint.style.display = 'none';
+                    else if (opts.hasHtml) { pdfHint.style.display = 'inline'; pdfHint.textContent = '(will be generated if needed)'; }
+                    else { pdfHint.style.display = 'inline'; pdfHint.textContent = '(not available)'; }
+                }
+                if (docHint) docHint.style.display = opts.hasDoc ? 'none' : 'inline';
+                if (htmlHint) htmlHint.style.display = opts.hasHtml ? 'none' : 'inline';
+                if (csvHint) csvHint.style.display = opts.hasCsv ? 'none' : 'inline';
+                const all = document.getElementById('adminShareModalAll');
+                if (all) all.checked = !!((pdf && pdf.checked) && (doc && doc.checked) && (html && html.checked) && (csv && csv.checked));
+                ensureAdminShareEmailRows(['']);
+                if (shareModal) shareModal.style.display = 'flex';
+            };
+
+            document.getElementById('adminShareModalAll')?.addEventListener('change', (e) => {
+                const v = !!e.target.checked;
+                ['adminShareModalPdf', 'adminShareModalDoc', 'adminShareModalHtml', 'adminShareModalCsv'].forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el && !el.disabled) el.checked = v;
+                });
+            });
+            ['adminShareModalPdf', 'adminShareModalDoc', 'adminShareModalHtml', 'adminShareModalCsv'].forEach((id) => {
+                document.getElementById(id)?.addEventListener('change', syncAdminShareAll);
+            });
+
+            document.getElementById('adminShareModalEmailsWrap')?.addEventListener('click', (e) => {
+                const t = e.target;
+                if (!(t instanceof Element)) return;
+                const row = t.closest('.share-email-row');
+                const wrap = document.getElementById('adminShareModalEmailsWrap');
+                if (!row || !wrap) return;
+                if (t.closest('.share-email-op--add')) {
+                    wrap.appendChild(createAdminShareEmailRow(''));
+                    syncAdminShareEmailRows();
+                    return;
+                }
+                if (t.closest('.share-email-op--remove')) {
+                    if (wrap.querySelectorAll('.share-email-row').length <= 1) return;
+                    row.remove();
+                    syncAdminShareEmailRows();
+                }
+            });
+
+            document.getElementById('adminShareModalCloseBtn')?.addEventListener('click', closeAdminShareModal);
+            shareModal?.addEventListener('click', (e) => { if (e.target === shareModal) closeAdminShareModal(); });
+
+            shareSendBtn?.addEventListener('click', async () => {
+                const scanId = parseInt(document.getElementById('adminShareModalScanId')?.value || '0', 10);
+                const artefacts = [];
+                if (document.getElementById('adminShareModalPdf')?.checked) artefacts.push('pdf');
+                if (document.getElementById('adminShareModalDoc')?.checked) artefacts.push('doc');
+                if (document.getElementById('adminShareModalHtml')?.checked) artefacts.push('html');
+                if (document.getElementById('adminShareModalCsv')?.checked) artefacts.push('csv');
+                const recipients = collectAdminShareRecipients();
+                if (!scanId || artefacts.length === 0 || recipients.length === 0) {
+                    (window.sqAdminShowToast || function () {} )('Share', 'Provide recipient email(s) and at least one format (PDF/DOC/HTML/CSV).', 'error');
+                    return;
+                }
+                if (shareSendBtn.disabled) return;
+                setAdminShareSendLoading(true);
+                try {
+                    const res = await fetch(shareBackendUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        credentials: 'same-origin',
+                        body: JSON.stringify({
+                            scan_id: scanId,
+                            artefacts: artefacts,
+                            recipients: recipients,
+                            share_source: 'admin'
+                        })
+                    });
+                    let payload = null;
+                    try { payload = await res.json(); } catch (err) { }
+                    if (!res.ok || !payload || !payload.ok) {
+                        const msg = (payload && payload.error) ? payload.error : ('Share failed (HTTP ' + res.status + ')');
+                        throw new Error(msg);
+                    }
+                    closeAdminShareModal();
+                    (window.sqAdminShowToast || function () {} )('Share sent', payload.message || 'Scan results emailed from the platform.', 'success');
+                } catch (err) {
+                    (window.sqAdminShowToast || function () {} )('Share failed', (err && err.message) ? err.message : 'Email sharing is unavailable.', 'error');
+                } finally {
+                    setAdminShareSendLoading(false);
+                }
+            });
+        })();
+
+        (function () {
+            function wireFilterEnter(formId, inputId) {
+                const form = document.getElementById(formId);
+                const input = document.getElementById(inputId);
+                if (!form || !input) return;
+                input.addEventListener('keydown', function (e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        form.submit();
+                    }
+                });
+            }
+            wireFilterEnter('scansFilterForm', 'scansSearchInput');
+            wireFilterEnter('aiFilterForm', 'aiSearchInput');
+            wireFilterEnter('logFilterForm', 'logSearchInput');
+        })();
+
+        (function () {
             const activeView = <?php echo json_encode($activeView); ?>;
             if (activeView === 'scans') {
-                const el = document.getElementById('scansRiskChart');
-                if (!el) return;
-                new Chart(el, {
-                    type: 'doughnut',
-                    data: {
-                        labels: <?php echo json_encode(array_keys($metrics['by_risk'])); ?>,
-                        datasets: [{
-                            data: <?php echo json_encode(array_values($metrics['by_risk'])); ?>,
-                            backgroundColor: ['#dc2626', '#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#94a3b8']
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { position: 'bottom' } },
-                        cutout: '62%'
-                    }
-                });
+                const riskEl = document.getElementById('scansRiskChart');
+                if (riskEl) {
+                    new Chart(riskEl, {
+                        type: 'doughnut',
+                        data: {
+                            labels: <?php echo json_encode(array_keys($metrics['by_risk'])); ?>,
+                            datasets: [{
+                                data: <?php echo json_encode(array_values($metrics['by_risk'])); ?>,
+                                backgroundColor: ['#dc2626', '#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#94a3b8']
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { position: 'bottom' } },
+                            cutout: '62%'
+                        }
+                    });
+                }
+                const usageEl = document.getElementById('scansUsageChart');
+                if (usageEl) {
+                    new Chart(usageEl, {
+                        type: 'line',
+                        data: {
+                            labels: <?php echo json_encode($scansUsageLabels); ?>,
+                            datasets: [{
+                                label: 'Scans',
+                                data: <?php echo json_encode($scansUsageCounts); ?>,
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                                pointBackgroundColor: '#3b82f6',
+                                pointBorderColor: '#ffffff',
+                                pointRadius: 4,
+                                tension: 0.35,
+                                fill: true
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: false } },
+                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                        }
+                    });
+                }
             } else if (activeView === 'ai') {
                 const el = document.getElementById('aiEventsChart');
-                if (!el) return;
-                new Chart(el, {
-                    type: 'bar',
-                    data: {
-                        labels: ['Submitted', 'Success', 'Other'],
-                        datasets: [{
-                            data: [
-                                <?php echo (int) $aiMetrics['ask_submitted']; ?>,
-                                <?php echo (int) $aiMetrics['ask_success']; ?>,
-                                <?php echo max(0, (int) $aiEventTotal - (int) $aiMetrics['ask_submitted'] - (int) $aiMetrics['ask_success']); ?>
-                            ],
-                            backgroundColor: ['#3b82f6', '#10b981', '#94a3b8']
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
-                        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-                    }
-                });
+                if (el) {
+                    const aiDisplayLabels = <?php echo json_encode($aiChartLabelsDisplay); ?>;
+                    const aiBarColors = <?php echo json_encode($aiChartBarColors); ?>;
+                    new Chart(el, {
+                        type: 'bar',
+                        data: {
+                            labels: aiDisplayLabels,
+                            datasets: [{
+                                label: 'Events',
+                                data: <?php echo json_encode($aiChartCounts); ?>,
+                                backgroundColor: aiBarColors,
+                                borderRadius: 6
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    display: true,
+                                    position: 'bottom',
+                                    labels: {
+                                        generateLabels(chart) {
+                                            const data = chart.data;
+                                            const bg = data.datasets[0].backgroundColor;
+                                            return (data.labels || []).map((label, i) => ({
+                                                text: label,
+                                                fillStyle: Array.isArray(bg) ? bg[i] : bg,
+                                                strokeStyle: '#fff',
+                                                lineWidth: 1,
+                                                hidden: false,
+                                                index: i
+                                            }));
+                                        }
+                                    }
+                                }
+                            },
+                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                        }
+                    });
+                }
             } else if (activeView === 'server_logs') {
                 const el = document.getElementById('serverLogLevelsChart');
-                if (!el) return;
-                new Chart(el, {
-                    type: 'line',
-                    data: {
-                        labels: <?php echo json_encode($serverLogsTimelineLabels); ?>,
-                        datasets: [{
-                            label: 'Errors',
-                            data: <?php echo json_encode($serverLogsTimelineErrors); ?>,
-                            borderColor: '#ef4444',
-                            backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                            pointBackgroundColor: '#ef4444',
-                            pointBorderColor: '#ffffff',
-                            pointRadius: 5,
-                            pointHoverRadius: 6,
-                            tension: 0.35,
-                            fill: true
-                        }, {
-                            label: 'Warnings',
-                            data: <?php echo json_encode($serverLogsTimelineWarnings); ?>,
-                            borderColor: '#f59e0b',
-                            backgroundColor: 'rgba(245, 158, 11, 0.12)',
-                            pointBackgroundColor: '#f59e0b',
-                            pointBorderColor: '#ffffff',
-                            pointRadius: 5,
-                            pointHoverRadius: 6,
-                            tension: 0.35,
-                            fill: true
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: true, position: 'bottom' } },
-                        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-                    }
-                });
+                if (el) {
+                    new Chart(el, {
+                        type: 'line',
+                        data: {
+                            labels: <?php echo json_encode($serverLogsTimelineLabels); ?>,
+                            datasets: [{
+                                label: 'Normal (Info)',
+                                data: <?php echo json_encode($serverLogsTimelineInfo); ?>,
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                                pointBackgroundColor: '#3b82f6',
+                                pointBorderColor: '#ffffff',
+                                pointRadius: 4,
+                                pointHoverRadius: 5,
+                                tension: 0.35,
+                                fill: true
+                            }, {
+                                label: 'Warnings',
+                                data: <?php echo json_encode($serverLogsTimelineWarnings); ?>,
+                                borderColor: '#f59e0b',
+                                backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                                pointBackgroundColor: '#f59e0b',
+                                pointBorderColor: '#ffffff',
+                                pointRadius: 4,
+                                pointHoverRadius: 5,
+                                tension: 0.35,
+                                fill: true
+                            }, {
+                                label: 'Errors',
+                                data: <?php echo json_encode($serverLogsTimelineErrors); ?>,
+                                borderColor: '#ef4444',
+                                backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                                pointBackgroundColor: '#ef4444',
+                                pointBorderColor: '#ffffff',
+                                pointRadius: 4,
+                                pointHoverRadius: 5,
+                                tension: 0.35,
+                                fill: true
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: { legend: { display: true, position: 'bottom' } },
+                            scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+                        }
+                    });
+                }
             }
         })();
     </script>

@@ -3655,3 +3655,248 @@
        line-height: 1.5;
        font-family: ui-monospace, monospace;
    }
+
+   /* Scan help modal (? icon in header) */
+   .scan-help-modal-overlay {
+       position: fixed;
+       inset: 0;
+       z-index: 10018;
+       align-items: center;
+       justify-content: center;
+       padding: 20px;
+       background: rgba(2, 6, 23, 0.65);
+       backdrop-filter: blur(4px);
+       -webkit-backdrop-filter: blur(4px);
+   }
+
+   .scan-help-modal-overlay.active {
+       display: flex !important;
+   }
+
+   .scan-help-modal {
+       width: min(94vw, 640px);
+       max-height: min(88vh, 720px);
+       display: flex;
+       flex-direction: column;
+       background: var(--bg-card);
+       border: 1px solid var(--border-color);
+       border-radius: 18px;
+       box-shadow: 0 24px 48px rgba(2, 6, 23, 0.45);
+       overflow: hidden;
+       animation: scan-help-modal-in 0.32s cubic-bezier(0.175, 0.885, 0.32, 1.2);
+   }
+
+   @keyframes scan-help-modal-in {
+       from {
+           opacity: 0;
+           transform: translateY(16px) scale(0.97);
+       }
+       to {
+           opacity: 1;
+           transform: translateY(0) scale(1);
+       }
+   }
+
+   .scan-help-modal-head {
+       display: flex;
+       align-items: flex-start;
+       justify-content: space-between;
+       gap: 14px;
+       padding: 20px 22px 16px;
+       border-bottom: 1px solid var(--border-color);
+       background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.06));
+   }
+
+   body.dark .scan-help-modal-head {
+       background: linear-gradient(135deg, rgba(139, 92, 246, 0.18), rgba(59, 130, 246, 0.08));
+   }
+
+   .scan-help-modal-head-main {
+       display: flex;
+       align-items: center;
+       gap: 14px;
+       min-width: 0;
+   }
+
+   .scan-help-modal-icon {
+       width: 46px;
+       height: 46px;
+       border-radius: 14px;
+       display: flex;
+       align-items: center;
+       justify-content: center;
+       flex-shrink: 0;
+       background: rgba(59, 130, 246, 0.14);
+       color: var(--brand-color);
+       font-size: 22px;
+       border: 1px solid rgba(59, 130, 246, 0.25);
+   }
+
+   body.dark .scan-help-modal-icon {
+       background: rgba(139, 92, 246, 0.2);
+       color: var(--brand-light);
+       border-color: rgba(167, 139, 250, 0.35);
+   }
+
+   .scan-help-modal-head h3 {
+       margin: 0;
+       font-size: 1.2rem;
+       font-weight: 800;
+       color: var(--text-main);
+       line-height: 1.25;
+   }
+
+   .scan-help-modal-subtitle {
+       margin: 4px 0 0;
+       font-size: 0.82rem;
+       color: var(--text-light);
+       line-height: 1.4;
+   }
+
+   .scan-help-close-btn {
+       flex-shrink: 0;
+   }
+
+   .scan-help-modal-body {
+       padding: 18px 22px;
+       overflow-y: auto;
+       flex: 1;
+       min-height: 0;
+   }
+
+   .scan-help-intro {
+       margin: 0 0 14px;
+       font-size: 0.92rem;
+       color: var(--text-main);
+       line-height: 1.55;
+   }
+
+   .scan-help-checks {
+       list-style: none;
+       margin: 0;
+       padding: 0;
+       display: grid;
+       gap: 8px;
+   }
+
+   .scan-help-checks li {
+       display: flex;
+       align-items: flex-start;
+       gap: 10px;
+       padding: 10px 12px;
+       border-radius: 12px;
+       border: 1px solid var(--border-color);
+       background: var(--bg-main);
+       font-size: 0.86rem;
+       color: var(--text-main);
+       line-height: 1.45;
+   }
+
+   .scan-help-checks li i {
+       width: 18px;
+       margin-top: 2px;
+       flex-shrink: 0;
+       color: var(--brand-color);
+       text-align: center;
+   }
+
+   body.dark .scan-help-checks li i {
+       color: var(--brand-light);
+   }
+
+   .scan-help-notice {
+       display: flex;
+       align-items: flex-start;
+       gap: 12px;
+       margin-top: 16px;
+       padding: 12px 14px;
+       border-radius: 12px;
+       border: 1px solid rgba(245, 158, 11, 0.35);
+       background: rgba(245, 158, 11, 0.1);
+   }
+
+   .scan-help-notice i {
+       color: var(--warning-color);
+       font-size: 1.1rem;
+       margin-top: 2px;
+       flex-shrink: 0;
+   }
+
+   .scan-help-notice p {
+       margin: 0;
+       font-size: 0.84rem;
+       color: var(--text-main);
+       line-height: 1.5;
+   }
+
+   .scan-help-modal-footer {
+       display: flex;
+       flex-wrap: wrap;
+       align-items: center;
+       justify-content: flex-end;
+       gap: 10px;
+       padding: 14px 22px 18px;
+       border-top: 1px solid var(--border-color);
+       background: rgba(148, 163, 184, 0.06);
+   }
+
+   body.dark .scan-help-modal-footer {
+       background: rgba(15, 23, 42, 0.35);
+   }
+
+   .scan-help-modal-footer .modal-btn {
+       display: inline-flex;
+       align-items: center;
+       justify-content: center;
+       gap: 8px;
+       border-radius: 999px;
+       padding: 10px 18px;
+       font-size: 0.88rem;
+       font-weight: 700;
+       border: 1px solid var(--border-color);
+       cursor: pointer;
+       text-decoration: none;
+       transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
+   }
+
+   .scan-help-modal-footer .modal-btn.secondary {
+       background: var(--bg-main);
+       color: var(--text-main);
+   }
+
+   .scan-help-modal-footer .modal-btn.secondary:hover {
+       transform: translateY(-1px);
+       box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+       background: rgba(99, 102, 241, 0.1);
+   }
+
+   .scan-help-modal-footer .modal-btn.primary {
+       background: linear-gradient(135deg, var(--brand-color), var(--accent-color));
+       border-color: transparent;
+       color: #fff;
+       box-shadow: 0 8px 20px rgba(59, 130, 246, 0.35);
+   }
+
+   .scan-help-modal-footer .modal-btn.primary:hover {
+       transform: translateY(-1px);
+       box-shadow: 0 10px 24px rgba(59, 130, 246, 0.45);
+   }
+
+   @media (max-width: 520px) {
+       .scan-help-modal-head {
+           padding: 16px 16px 12px;
+       }
+
+       .scan-help-modal-body {
+           padding: 14px 16px;
+       }
+
+       .scan-help-modal-footer {
+           padding: 12px 16px 16px;
+           flex-direction: column-reverse;
+       }
+
+       .scan-help-modal-footer .modal-btn {
+           width: 100%;
+       }
+   }

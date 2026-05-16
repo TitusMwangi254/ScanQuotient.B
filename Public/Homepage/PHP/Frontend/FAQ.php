@@ -17,29 +17,31 @@
 
 
     <link rel="stylesheet" href="../../CSS/FAQ.css">
+    <link rel="stylesheet" href="../../CSS/legal-pages-header.css">
+    <link rel="stylesheet" href="../../CSS/page-scroll-controls.css">
 </head>
 
 <body>
 
-    <div class="brand-area">
-        <div class="brand-name">ScanQuotient</div>
-        <div class="brand-tagline">Quantifying Risk. Strengthening Security.</div>
-    </div>
-
-    <div class="top-controls">
-        <a href="homepage.php" class="control-btn" title="Go to Home">
-            <i class="fas fa-home"></i>
-        </a>
-
-        <a href="/ScanQuotient/ScanQuotient/Publicpages/Ticket_page/PHP/Frontend/tickets_page_site.php"
-            class="control-btn" title="Get Support">
-            <i class="fas fa-question-circle"></i>
-        </a>
-
-        <button id="theme-toggle" class="control-btn" title="Toggle Theme">
-            <i class="fas fa-moon"></i>
-        </button>
-    </div>
+    <header class="legal-header" id="legalHeader">
+        <div class="legal-header-brand">
+            <a href="homepage.php" class="legal-header-title">ScanQuotient</a>
+            <span class="legal-header-tagline">Quantifying Risk. Strengthening Security.</span>
+        </div>
+        <div class="legal-header-actions">
+            <button type="button" id="theme-toggle" class="legal-header-btn" title="Toggle Theme"
+                aria-label="Toggle Theme">
+                <i class="fas fa-moon"></i>
+            </button>
+            <a href="/ScanQuotient/ScanQuotient/Publicpages/Ticket_page/PHP/Frontend/tickets_page_site.php"
+                class="legal-header-btn" title="Get Support" aria-label="Get Support">
+                <i class="fas fa-question-circle"></i>
+            </a>
+            <a href="homepage.php" class="legal-header-btn" title="Go to Home" aria-label="Go to Home">
+                <i class="fas fa-home"></i>
+            </a>
+        </div>
+    </header>
 
     <main>
 
@@ -227,13 +229,23 @@
                     </p>
                 </div>
             </div>
-            <div class="footer-bottom">
-                <p>&copy; 2026 ScanQuotient. All rights reserved.</p>
-            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 ScanQuotient. All rights reserved.</p>
         </div>
     </footer>
 
+    <div class="page-scroll-controls" aria-label="Page navigation">
+        <button type="button" id="scrollDownBtn" title="Scroll down" aria-label="Scroll down">
+            <i class="fas fa-arrow-down" aria-hidden="true"></i>
+        </button>
+        <button type="button" id="scrollToTopBtn" title="Back to top" aria-label="Back to top">
+            <i class="fas fa-arrow-up" aria-hidden="true"></i>
+        </button>
+    </div>
+
     <script src="../../Javascript/FAQ.js"></script>
+    <script src="../../Javascript/page-scroll-controls.js"></script>
 
 </body>
 

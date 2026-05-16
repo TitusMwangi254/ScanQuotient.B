@@ -71,35 +71,12 @@ try {
         $hasCerts = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch();
         $hasAccept = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
         if ($hasCerts && $hasAccept) {
-            $pendingStmt = $pdo->prepare("
-                SELECT c.id
-                FROM security_certificates c
-                WHERE c.is_active = 'yes'
-                  AND (
-                        c.target_type = 'everyone'
-                        OR (c.target_type = 'role' AND c.target_value = :role)
-                        OR (c.target_type = 'user_id' AND c.target_value = :uid)
-                        OR (c.target_type = 'username' AND c.target_value = :uname)
-                  )
-                  AND NOT EXISTS (
-                        SELECT 1
-                        FROM security_certificate_acceptances a
-                        WHERE a.certificate_id = c.id AND a.user_id = :uid_check
-                  )
-                ORDER BY c.created_at DESC
-                LIMIT 1
-            ");
-            $pendingStmt->execute([
-                ':uid' => $user['user_id'],
-                ':uid_check' => $user['user_id'],
-                ':role' => $user['role'],
-                ':uname' => $user['user_name'],
-            ]);
-            $pending = $pendingStmt->fetch();
-            if ($pending) {
+            require_once __DIR__ . '/../../../../Private/Site_security/PHP/Backend/certificate_target_helpers.php';
+            $nextCertId = sq_certificate_find_pending_id($pdo, $user);
+            if ($nextCertId) {
                 // Stay in certificate flow and load the next certificate
                 $_SESSION['auth_mode'] = 'certificate_agreement';
-                $_SESSION['cert_id'] = (int) $pending['id'];
+                $_SESSION['cert_id'] = $nextCertId;
                 $_SESSION['cert_user_id'] = $user['user_id'];
                 $_SESSION['cert_role'] = $user['role'];
                 $_SESSION['cert_username'] = $user['user_name'];

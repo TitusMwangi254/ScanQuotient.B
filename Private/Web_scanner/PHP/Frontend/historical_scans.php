@@ -1358,6 +1358,25 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             justify-content: flex-end;
         }
 
+        #shareModal.sq-share-modal--busy {
+            cursor: wait;
+        }
+
+        #shareModalSend.sq-share-submit-btn--loading,
+        #shareModalSend:disabled {
+            opacity: 0.85;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        #shareModalSend.sq-share-submit-btn--loading {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            min-width: 6.5rem;
+        }
+
         .modal-btn {
             padding: 12px 24px;
             border-radius: 10px;
@@ -2808,9 +2827,47 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             }).catch(() => alert('Request failed'));
         });
 
+        const shareModalSendBtnEl = document.getElementById('shareModalSend');
+        const shareModalSendDefaultHtml = shareModalSendBtnEl ? shareModalSendBtnEl.innerHTML : 'Send';
+
+        function setHistoryShareModalControlsDisabled(isLoading) {
+            const modal = document.getElementById('shareModal');
+            if (!modal) return;
+            modal.classList.toggle('sq-share-modal--busy', isLoading);
+            modal.querySelectorAll('input, button, select, textarea').forEach((el) => {
+                if (isLoading) {
+                    if (el.dataset.sqPrevDisabled === undefined) {
+                        el.dataset.sqPrevDisabled = el.disabled ? '1' : '0';
+                    }
+                    el.disabled = true;
+                } else if (el.dataset.sqPrevDisabled !== undefined) {
+                    el.disabled = el.dataset.sqPrevDisabled === '1';
+                    delete el.dataset.sqPrevDisabled;
+                }
+            });
+        }
+
+        function setHistoryShareSendLoading(isLoading) {
+            setHistoryShareModalControlsDisabled(isLoading);
+            const btn = document.getElementById('shareModalSend');
+            if (!btn) return;
+            if (isLoading) {
+                btn.disabled = true;
+                btn.setAttribute('aria-busy', 'true');
+                btn.classList.add('sq-share-submit-btn--loading');
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Sending...';
+            } else {
+                btn.disabled = false;
+                btn.removeAttribute('aria-busy');
+                btn.classList.remove('sq-share-submit-btn--loading');
+                btn.innerHTML = shareModalSendDefaultHtml;
+            }
+        }
+
         function closeShareModal() {
             const m = document.getElementById('shareModal');
             if (m) { m.style.display = 'none'; }
+            setHistoryShareSendLoading(false);
         }
         function createHistoryShareEmailRow(value) {
             const row = document.createElement('div');
@@ -2979,7 +3036,12 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                 showToast('Share', 'Provide recipient email(s) and at least one format (PDF/DOC/HTML/CSV).', 'error');
                 return;
             }
-            document.getElementById('shareModalSend').disabled = true;
+
+            const shareSendBtn = document.getElementById('shareModalSend');
+            if (shareSendBtn && shareSendBtn.disabled) return;
+
+            setHistoryShareSendLoading(true);
+
             try {
                 // If user selected PDF but server-side PDF is missing, generate from HTML and upload first.
                 if (
@@ -3017,7 +3079,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             } catch (e) {
                 showToast('Share failed', (e && e.message) ? e.message : 'Email sharing is unavailable.', 'error');
             } finally {
-                document.getElementById('shareModalSend').disabled = false;
+                setHistoryShareSendLoading(false);
             }
         });
         document.getElementById('shareModal')?.addEventListener('click', (e) => { if (e.target.id === 'shareModal') closeShareModal(); });

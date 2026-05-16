@@ -21,6 +21,8 @@ if ($adminRole !== 'admin' && $adminRole !== 'super_admin') {
     exit();
 }
 
+require_once __DIR__ . '/../../Site_security/PHP/Backend/certificate_target_helpers.php';
+
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'scanquotient.a1');
 define('DB_USER', 'root');
@@ -361,6 +363,7 @@ try {
         $userCertificatesAvailable = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificates'")->fetch()
             && (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
         if ($userCertificatesAvailable) {
+            sq_certificate_migrate_target_schema($pdo);
             // Include active, non-trashed certificates only
             $certWhereDeleted = '';
             try {
@@ -387,21 +390,14 @@ try {
                 WHERE c.is_active = 'yes'
                   {$certWhereDeleted}
                   AND (
-                        c.target_type = 'everyone'
-                        OR (c.target_type = 'role' AND c.target_value = :role)
-                        OR (c.target_type = 'user_id' AND c.target_value = :uid2)
-                        OR (c.target_type = 'username' AND c.target_value = :uname)
+                        " . sq_certificate_applies_where_sql() . "
                   )
                 ORDER BY c.created_at DESC
                 LIMIT 100
             ");
-            // Important: separate params for native prepares (no reuse issues)
-            $stmt->execute([
-                ':uid' => $user['user_id'],
-                ':uid2' => $user['user_id'],
-                ':role' => $user['role'],
-                ':uname' => $user['user_name']
-            ]);
+            $certBind = sq_certificate_pending_bind_params($user);
+            $certBind[':uid'] = $user['user_id'];
+            $stmt->execute($certBind);
             $userCertificates = $stmt->fetchAll();
         }
     } catch (Exception $e) {
@@ -665,6 +661,23 @@ If you did not request this reset, contact your administrator immediately.
 
         .sq-profile-image-container:hover .sq-user-avatar-large {
             filter: brightness(0.8);
+        }
+
+        .sq-profile-image-container--locked {
+            cursor: default;
+            pointer-events: none;
+        }
+
+        .sq-profile-image-container--locked .sq-profile-image-overlay {
+            opacity: 0;
+        }
+
+        .sq-profile-image-container--locked:hover .sq-profile-image-overlay {
+            opacity: 0;
+        }
+
+        .sq-profile-image-container--locked:hover .sq-user-avatar-large {
+            filter: none;
         }
 
         .sq-profile-image-icon {
@@ -1057,7 +1070,7 @@ If you did not request this reset, contact your administrator immediately.
                 ?>
 
                 <!-- Profile Image with Hover Effect -->
-                <div class="sq-profile-image-container" onclick="sqOpenUploadModal()" title="Click to change photo">
+                <div class="sq-profile-image-container sq-profile-image-container--locked" id="sqProfileImageContainer" role="button" tabindex="-1" title="Enable Edit to change photo" aria-disabled="true">
                     <img src="<?php echo htmlspecialchars($avatarUrl); ?>" alt="" class="sq-user-avatar-large"
                         id="sqCurrentAvatar"
                         onerror="this.src='https://ui-avatars.com/api/?name=<?php echo urlencode($user['first_name'] . '+' . $user['surname']); ?>&background=8b5cf6&color=fff&size=200'">
@@ -1418,8 +1431,7 @@ If you did not request this reset, contact your administrator immediately.
                                             <td>#<?php echo (int) $c['id']; ?></td>
                                             <td><?php echo htmlspecialchars($c['title']); ?></td>
                                             <td style="color: var(--sq-text-light); font-size: 12px;">
-                                                <?php echo htmlspecialchars($c['target_type']); ?>
-                                                <?php echo !empty($c['target_value']) ? (': ' . htmlspecialchars($c['target_value'])) : ''; ?>
+                                                <?php echo htmlspecialchars(sq_certificate_format_target_label((string) $c['target_type'], $c['target_value'] ?? null)); ?>
                                             </td>
                                             <td>
                                                 <?php if (!empty($c['accepted_at'])): ?>
@@ -1658,6 +1670,7 @@ If you did not request this reset, contact your administrator immediately.
             );
             const editOnlyControls = Array.from(document.querySelectorAll('.sq-requires-edit'));
             const modePill = document.getElementById('sqEditModePill');
+            const photoContainer = document.getElementById('sqProfileImageContainer');
 
             const applyMode = (editable) => {
                 managedForms.forEach((form) => form.classList.toggle('sq-readonly-scope', !editable));
@@ -1686,6 +1699,13 @@ If you did not request this reset, contact your administrator immediately.
                     modePill.innerHTML = editable
                         ? '<i class="fas fa-lock-open"></i><span>Edit mode enabled</span>'
                         : '<i class="fas fa-lock"></i><span>Read-only mode</span>';
+                }
+
+                if (photoContainer) {
+                    photoContainer.classList.toggle('sq-profile-image-container--locked', !editable);
+                    photoContainer.title = editable ? 'Click to change photo' : 'Enable Edit to change photo';
+                    photoContainer.setAttribute('aria-disabled', editable ? 'false' : 'true');
+                    photoContainer.tabIndex = editable ? 0 : -1;
                 }
             };
 
@@ -1727,11 +1747,28 @@ If you did not request this reset, contact your administrator immediately.
         const sqSavePhotoBtn = document.getElementById('sqSavePhotoBtn');
         const sqDropzoneContent = document.getElementById('sqDropzoneContent');
 
+        function sqIsEditModeEnabled() {
+            const editFab = document.getElementById('sqEditFab');
+            return !!(editFab && editFab.title === 'Editing enabled');
+        }
+
         function sqOpenUploadModal() {
+            if (!sqIsEditModeEnabled()) {
+                showToast('Click Edit to enable changes before updating the profile photo.', 'warning');
+                return;
+            }
             sqUploadModal.classList.add('sq-modal--active');
             sqBody.style.overflow = 'hidden';
             resetUpload();
         }
+
+        document.getElementById('sqProfileImageContainer')?.addEventListener('click', sqOpenUploadModal);
+        document.getElementById('sqProfileImageContainer')?.addEventListener('keydown', (e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && sqIsEditModeEnabled()) {
+                e.preventDefault();
+                sqOpenUploadModal();
+            }
+        });
 
         function sqCloseUploadModal() {
             sqUploadModal.classList.remove('sq-modal--active');
@@ -1808,6 +1845,10 @@ If you did not request this reset, contact your administrator immediately.
         }
 
         function sqSavePhoto() {
+            if (!sqIsEditModeEnabled()) {
+                showToast('Click Edit to enable changes before updating the profile photo.', 'warning');
+                return;
+            }
             if (!selectedFile) return;
 
             // Create FormData

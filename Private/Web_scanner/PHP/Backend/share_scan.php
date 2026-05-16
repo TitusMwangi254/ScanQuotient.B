@@ -42,6 +42,71 @@ function load_mail_settings(): array
     return $settings;
 }
 
+/**
+ * @return array{html: string, plain: string, subject: string}
+ */
+function sq_build_share_scan_email_content(
+    string $target,
+    string $artefactList,
+    bool $fromPlatform,
+    string $senderDisplayName
+): array {
+    $targetEsc = htmlspecialchars($target, ENT_QUOTES, 'UTF-8');
+    $senderEsc = htmlspecialchars($senderDisplayName, ENT_QUOTES, 'UTF-8');
+    $artefactsEsc = htmlspecialchars($artefactList, ENT_QUOTES, 'UTF-8');
+    $year = date('Y');
+
+    if ($fromPlatform) {
+        $headline = 'Scan report shared from ScanQuotient';
+        $intro = 'An authorized ScanQuotient administrator has shared a security scan report with you from the platform.';
+        $sharedByLabel = 'Shared from';
+        $sharedByValue = 'ScanQuotient platform (administrative share)';
+        $subject = 'ScanQuotient: Security scan report shared from platform';
+        $plainIntro = 'An authorized ScanQuotient administrator has shared a security scan report with you from the platform.';
+    } else {
+        $headline = 'ScanQuotient – Scan Results Shared With You';
+        $intro = 'You are receiving shared security scan results from ScanQuotient.';
+        $sharedByLabel = 'Shared by';
+        $sharedByValue = $senderDisplayName;
+        $subject = 'ScanQuotient: Scan results shared by ' . $senderDisplayName;
+        $plainIntro = 'You are receiving shared scan results from ScanQuotient.';
+    }
+
+    $htmlBody = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="margin:0;padding:0;font-family:Arial,sans-serif;background:#f4f4f4;">
+        <table role="presentation" style="width:100%;border-collapse:collapse;">
+        <tr><td align="center" style="padding:20px 0;">
+        <table role="presentation" style="width:600px;max-width:100%;border-collapse:collapse;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+        <tr><td style="padding:28px 32px;text-align:center;background:linear-gradient(135deg,#3b82f6 0%,#1d4ed8 100%);border-radius:8px 8px 0 0;">
+        <h1 style="color:#fff;margin:0;font-size:22px;font-weight:bold;">' . htmlspecialchars($headline, ENT_QUOTES, 'UTF-8') . '</h1>
+        </td></tr>
+        <tr><td style="padding:28px 32px;">
+        <p style="color:#333;font-size:16px;line-height:1.6;margin:0 0 16px 0;">Hello,</p>
+        <p style="color:#555;font-size:15px;line-height:1.6;margin:0 0 20px 0;">' . htmlspecialchars($intro, ENT_QUOTES, 'UTF-8') . '</p>
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin:20px 0;">
+        <p style="margin:0 0 8px 0;font-size:13px;color:#64748b;">Scanned website / target</p>
+        <p style="margin:0;font-size:15px;font-weight:600;color:#1e293b;word-break:break-all;">' . $targetEsc . '</p>
+        <p style="margin:16px 0 0 0;font-size:13px;color:#64748b;">' . htmlspecialchars($sharedByLabel, ENT_QUOTES, 'UTF-8') . '</p>
+        <p style="margin:4px 0 0 0;font-size:15px;color:#1e293b;">' . htmlspecialchars($fromPlatform ? $sharedByValue : $senderDisplayName, ENT_QUOTES, 'UTF-8') . '</p>
+        </div>
+        <p style="color:#555;font-size:14px;line-height:1.6;margin:20px 0 8px 0;">The following report files are attached to this email:</p>
+        <p style="margin:0;font-size:14px;font-weight:600;color:#1e293b;">' . $artefactsEsc . '</p>
+        <p style="color:#64748b;font-size:13px;margin:24px 0 0 0;">Open the attachments to view the full security report. If you have questions, contact the person or team who shared this scan with you.</p>
+        </td></tr>
+        <tr><td style="padding:16px 32px;text-align:center;background:#f8f9fa;border-radius:0 0 8px 8px;">
+        <p style="color:#6c757d;font-size:12px;margin:0;">This is an automated message from ScanQuotient. Please do not reply to this email.</p>
+        <p style="color:#adb5bd;font-size:11px;margin:8px 0 0 0;">&copy; ' . $year . ' ScanQuotient. Quantifying Risk. Strengthening Security.</p>
+        </td></tr>
+        </table></td></tr></table></body></html>';
+
+    $plainBody = "Hello,\n\n{$plainIntro}\n\nScanned target: {$target}\n{$sharedByLabel}: {$sharedByValue}\n\nAttached: {$artefactList}.\n\nThis message was sent via ScanQuotient. Do not reply to this email.";
+
+    return [
+        'html' => $htmlBody,
+        'plain' => $plainBody,
+        'subject' => $subject,
+    ];
+}
+
 function sq_load_dompdf_once(): bool
 {
     if (class_exists('\Dompdf\Dompdf')) {
@@ -130,6 +195,9 @@ $artefacts = array_intersect($artefacts, ['pdf', 'doc', 'html', 'csv']);
 $recipients = array_filter(array_map('trim', $recipients), function ($e) {
     return filter_var($e, FILTER_VALIDATE_EMAIL);
 });
+$shareSource = trim((string) ($input['share_source'] ?? ''));
+$isPlatformShare = in_array((string) ($_SESSION['role'] ?? ''), ['admin', 'super_admin'], true)
+    && in_array($shareSource, ['admin', 'platform', 'system'], true);
 
 if ($scan_id <= 0 || empty($artefacts) || empty($recipients)) {
     echo json_encode(['ok' => false, 'error' => 'Provide scan_id, at least one artefact (pdf, doc, html, csv), and valid recipient email(s).']);
@@ -162,7 +230,10 @@ try {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 
-    if ($userPk !== null) {
+    if ($isPlatformShare) {
+        $stmt = $pdo->prepare("SELECT target_url, pdf_path, doc_path, html_path, csv_path FROM scan_results WHERE id = ? LIMIT 1");
+        $stmt->execute([$scan_id]);
+    } elseif ($userPk !== null) {
         $stmt = $pdo->prepare("SELECT target_url, pdf_path, doc_path, html_path, csv_path FROM scan_results WHERE id = ? AND (user_id = ? OR user_id = ?)");
         $stmt->execute([$scan_id, $user_id, $userPk]);
     } else {
@@ -175,12 +246,20 @@ try {
         exit;
     }
 
-    $stmtU = $pdo->prepare("SELECT first_name, surname FROM users WHERE user_id = ? LIMIT 1");
-    $stmtU->execute([$user_id]);
-    $user = $stmtU->fetch();
-    $firstName = $user['first_name'] ?? 'A';
-    $surname = $user['surname'] ?? 'User';
-    $senderName = trim($firstName . ' ' . $surname) ?: 'A ScanQuotient user';
+    $senderName = 'A ScanQuotient user';
+    if ($isPlatformShare) {
+        $adminFirst = trim((string) ($_SESSION['first_name'] ?? ''));
+        $adminLast = trim((string) ($_SESSION['surname'] ?? ''));
+        $adminSessionName = trim((string) ($_SESSION['user_name'] ?? ''));
+        $senderName = trim($adminFirst . ' ' . $adminLast) ?: ($adminSessionName ?: 'ScanQuotient Administrator');
+    } else {
+        $stmtU = $pdo->prepare("SELECT first_name, surname FROM users WHERE user_id = ? LIMIT 1");
+        $stmtU->execute([$user_id]);
+        $user = $stmtU->fetch();
+        $firstName = $user['first_name'] ?? 'A';
+        $surname = $user['surname'] ?? 'User';
+        $senderName = trim($firstName . ' ' . $surname) ?: 'A ScanQuotient user';
+    }
 
     $baseDir = dirname(__DIR__, 4);
     $target = $scan['target_url'] ?? 'Unknown target';
@@ -276,34 +355,14 @@ try {
     }
 
     $artefactList = implode(', ', array_map('strtoupper', array_column($attachments, 'type')));
-    $targetEsc = htmlspecialchars($target);
-    $senderEsc = htmlspecialchars($senderName);
-    $htmlBody = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body style="margin:0;padding:0;font-family:Arial,sans-serif;background:#f4f4f4;">
-        <table role="presentation" style="width:100%;border-collapse:collapse;">
-        <tr><td align="center" style="padding:20px 0;">
-        <table role="presentation" style="width:600px;max-width:100%;border-collapse:collapse;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-        <tr><td style="padding:28px 32px;text-align:center;background:linear-gradient(135deg,#3b82f6 0%,#1d4ed8 100%);border-radius:8px 8px 0 0;">
-        <h1 style="color:#fff;margin:0;font-size:22px;font-weight:bold;">ScanQuotient – Scan Results Shared With You</h1>
-        </td></tr>
-        <tr><td style="padding:28px 32px;">
-        <p style="color:#333;font-size:16px;line-height:1.6;margin:0 0 16px 0;">Hello,</p>
-        <p style="color:#555;font-size:15px;line-height:1.6;margin:0 0 20px 0;">You are receiving shared security scan results from ScanQuotient.</p>
-        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin:20px 0;">
-        <p style="margin:0 0 8px 0;font-size:13px;color:#64748b;">Scan target</p>
-        <p style="margin:0;font-size:15px;font-weight:600;color:#1e293b;word-break:break-all;">' . $targetEsc . '</p>
-        <p style="margin:16px 0 0 0;font-size:13px;color:#64748b;">Shared by</p>
-        <p style="margin:4px 0 0 0;font-size:15px;color:#1e293b;">' . $senderEsc . '</p>
-        </div>
-        <p style="color:#555;font-size:14px;line-height:1.6;margin:20px 0 8px 0;">The following report files are attached to this email:</p>
-        <p style="margin:0;font-size:14px;font-weight:600;color:#1e293b;">' . htmlspecialchars($artefactList) . '</p>
-        <p style="color:#64748b;font-size:13px;margin:24px 0 0 0;">Open the attachments to view the full security report. If you have questions, contact the person who shared this scan with you.</p>
-        </td></tr>
-        <tr><td style="padding:16px 32px;text-align:center;background:#f8f9fa;border-radius:0 0 8px 8px;">
-        <p style="color:#6c757d;font-size:12px;margin:0;">This is an automated message from ScanQuotient. Please do not reply to this email.</p>
-        <p style="color:#adb5bd;font-size:11px;margin:8px 0 0 0;">© ' . date('Y') . ' ScanQuotient. Quantifying Risk. Strengthening Security.</p>
-        </td></tr>
-        </table></td></tr></table></body></html>';
-    $plainBody = "Hello,\n\nYou are receiving shared scan results from ScanQuotient.\n\nScan target: " . $target . "\nShared by: " . $senderName . "\n\nAttached: " . $artefactList . ".\n\nThis message was sent via ScanQuotient. Do not reply to this email.";
+    $emailContent = sq_build_share_scan_email_content(
+        $target,
+        $artefactList,
+        $isPlatformShare,
+        $senderName
+    );
+    $htmlBody = $emailContent['html'];
+    $plainBody = $emailContent['plain'];
 
     $mailSettings = load_mail_settings();
     if (trim($mailSettings['password']) === '') {
@@ -322,7 +381,7 @@ try {
         : \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
     $mail->Port = (int) $mailSettings['port'];
     $mail->setFrom($mailSettings['from_email'], $mailSettings['from_name']);
-    $mail->Subject = 'ScanQuotient: Scan results shared by ' . $senderName;
+    $mail->Subject = $emailContent['subject'];
     $mail->isHTML(true);
     $mail->Body = $htmlBody;
     $mail->AltBody = $plainBody;

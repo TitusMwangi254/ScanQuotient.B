@@ -142,6 +142,34 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 });
 
+// Contact form: disable submit and show spinner while posting
+const contactForm = document.getElementById("contactForm");
+const contactSubmitBtn = document.getElementById("contactSubmitBtn");
+
+if (contactForm && contactSubmitBtn) {
+  const contactBtnDefaultHtml = contactSubmitBtn.innerHTML;
+
+  contactForm.addEventListener("submit", function () {
+    if (contactSubmitBtn.disabled) return;
+
+    contactSubmitBtn.disabled = true;
+    contactSubmitBtn.setAttribute("aria-busy", "true");
+    contactSubmitBtn.classList.add("sq-contact-submit-btn--loading");
+    contactSubmitBtn.innerHTML =
+      '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Sending...';
+  });
+
+  // Restore if user navigates back before reload completes
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted) {
+      contactSubmitBtn.disabled = false;
+      contactSubmitBtn.removeAttribute("aria-busy");
+      contactSubmitBtn.classList.remove("sq-contact-submit-btn--loading");
+      contactSubmitBtn.innerHTML = contactBtnDefaultHtml;
+    }
+  });
+}
+
 // Smooth scroll for anchor links
 document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
   anchor.addEventListener("click", function (e) {

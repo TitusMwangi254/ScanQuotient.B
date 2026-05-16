@@ -1,6 +1,9 @@
 <?php
 session_start();
 
+require_once __DIR__ . '/ticket_attachment_helpers.php';
+require_once __DIR__ . '/ticket_email_templates.php';
+
 // Autoload PHPMailer
 require 'C:/Users/1/vendor/autoload.php';
 
@@ -22,6 +25,7 @@ $options = [
 
 try {
     $pdo = new PDO($dsn, $user, $pass, $options);
+    sq_ticket_apply_db_timezone($pdo);
 } catch (Exception $e) {
     die("DB connection failed: " . $e->getMessage());
 }
@@ -185,6 +189,16 @@ try {
         ':att_path' => $attachmentPathStringForDB,
         ':att_name' => $attachmentNameStringForDB,
     ]);
+
+    $createdStmt = $pdo->prepare('SELECT created_at FROM support_tickets WHERE unique_id = ? LIMIT 1');
+    $createdStmt->execute([$uniqueId]);
+    $createdRow = $createdStmt->fetch();
+    sq_persist_initial_conversation_log_pdo(
+        $pdo,
+        $uniqueId,
+        $message,
+        (string) ($createdRow['created_at'] ?? sq_ticket_now_eat())
+    );
 } catch (Exception $e) {
     die("DB insert failed: " . $e->getMessage());
 }
@@ -212,6 +226,22 @@ function logEmailAttempt($pdo, $ticketId, $recipient, $status, $errorMessage = n
 $adminEmailSent = false;
 $userEmailSent = false;
 
+$ticketEmailData = [
+    'unique_id' => $uniqueId,
+    'name' => $name,
+    'email' => $email,
+    'category' => $category,
+    'priority' => $priority,
+    'subject' => $subject,
+    'message' => $message,
+    'attachment_names' => $attachmentNamesForDB,
+];
+$attachmentNamesPlain = sq_ticket_email_attachment_names_plain($attachmentNamesForDB);
+$attachmentAltSuffix = $attachmentNamesPlain !== '' ? " Attachments: {$attachmentNamesPlain}." : '';
+$trackTicketUrl = sq_ticket_email_base_url()
+    . '/Public/Help_center/PHP/Frontend/user_ticket_tracking.php?id='
+    . urlencode($uniqueId);
+
 try {
     $mail->isSMTP();
     $mail->Host = 'smtp.gmail.com';
@@ -230,19 +260,8 @@ try {
 
         $mail->addAddress('scanquotient@gmail.com', 'Support Desk ScanQuotient');
         $mail->Subject = "New Support Ticket Received: {$uniqueId}";
-        $mail->Body = "
-            <h3>New Ticket Alert</h3>
-            <p>A new support ticket has just been created:</p>
-            <ul>
-              <li><strong>Ticket ID:</strong> {$uniqueId}</li>
-              <li><strong>Submitter:</strong> " . htmlspecialchars($name) . " ({$email})</li>
-              <li><strong>Category:</strong> {$category}</li>
-              <li><strong>Priority:</strong> {$priority}</li>
-              <li><strong>Subject:</strong> " . htmlspecialchars($subject) . "</li>
-              <li><strong>Message:</strong> " . nl2br(htmlspecialchars($message)) . "</li>
-            </ul>
-            <p>Please log in to the admin panel to view and triage this ticket.</p>
-        ";
+        $mail->Body = sq_build_ticket_received_admin_email_html($ticketEmailData);
+        $mail->AltBody = "New ticket {$uniqueId} from {$name} ({$email}). Subject: {$subject}.{$attachmentAltSuffix}";
 
         if (!empty($attachmentPathsForEmail)) {
             foreach ($attachmentPathsForEmail as $filePath) {
@@ -269,13 +288,9 @@ try {
         $mail->clearAttachments();
 
         $mail->addAddress($email, $name);
-        $mail->Subject = "Your Support Ticket {$uniqueId} Has Been Received";
-        $mail->Body = "
-            <p>Hi " . strtoupper(htmlspecialchars($name)) . ",</p>
-            <p>Thanks for contacting us. Your ticket ID is <strong>{$uniqueId}</strong>.</p>
-            <p>We will review it and get back to you soon. You can use this ID to track your ticket's progress at any time.</p>
-            <p>— The Support Desk</p>
-        ";
+        $mail->Subject = "Your support ticket {$uniqueId} has been received";
+        $mail->Body = sq_build_ticket_received_user_email_html($ticketEmailData, $trackTicketUrl);
+        $mail->AltBody = "Hello {$name}, your ticket {$uniqueId} was received. Track it here: {$trackTicketUrl}.{$attachmentAltSuffix}";
 
         $mail->send();
         logEmailAttempt($pdo, $uniqueId, $email, 'success', null);

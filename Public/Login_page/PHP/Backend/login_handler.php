@@ -21,8 +21,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 // Get and sanitize input
-$username = trim($_POST['username'] ?? '');
-$password = trim($_POST['password'] ?? '');
+$username = strtolower(trim($_POST['username'] ?? ''));
+$password = (string) ($_POST['password'] ?? '');
 
 // Validate input presence
 if (empty($username) || empty($password)) {
@@ -112,7 +112,7 @@ try {
     // Fetch user by username (ambiguous error if not found)
     $stmt = $pdo->prepare("
         SELECT * FROM users 
-        WHERE user_name = :username 
+        WHERE LOWER(TRIM(user_name)) = LOWER(TRIM(:username))
         LIMIT 1
     ");
     $stmt->execute([':username' => $username]);
@@ -261,11 +261,14 @@ try {
     }
 
 
-    // CHECK 3: Account Active Status
+    // CHECK 3: Account Active Status (new users complete setup before dashboard access)
     if ($user['account_active'] !== 'yes') {
-        // Set completion mode flag
         $_SESSION['auth_mode'] = 'account_completion';
         $_SESSION['auth_stage'] = 'pending_completion';
+        $_SESSION['user_id'] = $user['user_id'];
+        $_SESSION['user_email'] = $user['email'];
+        $_SESSION['first_name'] = $user['first_name'] ?? '';
+        $_SESSION['surname'] = $user['surname'] ?? '';
 
         logSecurityEvent($pdo, $username, 'INCOMPLETE_ACCOUNT', 'Redirecting to account completion');
         header('Location: /ScanQuotient.v2/ScanQuotient.B/Public/Registration_completion_page/PHP/Frontend/Registration_completion_site.php');
@@ -372,34 +375,11 @@ try {
         $hasAccept = (bool) $pdo->query("SHOW TABLES LIKE 'security_certificate_acceptances'")->fetch();
 
         if ($hasCerts && $hasAccept) {
-            $pendingCertStmt = $pdo->prepare("
-                SELECT c.id
-                FROM security_certificates c
-                WHERE c.is_active = 'yes'
-                  AND (
-                        c.target_type = 'everyone'
-                        OR (c.target_type = 'role' AND c.target_value = :role)
-                        OR (c.target_type = 'user_id' AND c.target_value = :uid)
-                        OR (c.target_type = 'username' AND c.target_value = :uname)
-                  )
-                  AND NOT EXISTS (
-                        SELECT 1
-                        FROM security_certificate_acceptances a
-                        WHERE a.certificate_id = c.id AND a.user_id = :uid_check
-                  )
-                ORDER BY c.created_at DESC
-                LIMIT 1
-            ");
-            $pendingCertStmt->execute([
-                ':uid' => $user['user_id'],
-                ':uid_check' => $user['user_id'],
-                ':role' => $user['role'],
-                ':uname' => $user['user_name']
-            ]);
-            $pendingCert = $pendingCertStmt->fetch(PDO::FETCH_ASSOC);
-            if ($pendingCert) {
+            require_once __DIR__ . '/../../../../Private/Site_security/PHP/Backend/certificate_target_helpers.php';
+            $pendingCertId = sq_certificate_find_pending_id($pdo, $user);
+            if ($pendingCertId) {
                 $_SESSION['auth_mode'] = 'certificate_agreement';
-                $_SESSION['cert_id'] = (int) $pendingCert['id'];
+                $_SESSION['cert_id'] = $pendingCertId;
                 $_SESSION['cert_user_id'] = $user['user_id'];
                 $_SESSION['cert_role'] = $user['role'];
                 $_SESSION['cert_username'] = $user['user_name'];

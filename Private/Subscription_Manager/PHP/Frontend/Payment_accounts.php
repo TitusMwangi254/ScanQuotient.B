@@ -54,6 +54,201 @@ $validPaymentMethods = ['paypal', 'stripe', 'bank_transfer', 'crypto', 'manual']
 $validPackages = ['freemium', 'pro', 'enterprise'];
 $validAccountStatuses = ['active', 'suspended'];
 
+$reopenPaymentModal = null;
+$paymentFormDraft = [];
+
+if (isset($_SESSION['sq_payment_success']) && is_string($_SESSION['sq_payment_success'])) {
+    $successMessage = $_SESSION['sq_payment_success'];
+    unset($_SESSION['sq_payment_success']);
+}
+if (isset($_SESSION['sq_payment_error']) && is_string($_SESSION['sq_payment_error'])) {
+    $errorMessage = $_SESSION['sq_payment_error'];
+    unset($_SESSION['sq_payment_error']);
+}
+if (isset($_SESSION['sq_payment_reopen']) && is_string($_SESSION['sq_payment_reopen'])) {
+    $reopenPaymentModal = $_SESSION['sq_payment_reopen'];
+    unset($_SESSION['sq_payment_reopen']);
+}
+if (isset($_SESSION['sq_payment_form']) && is_array($_SESSION['sq_payment_form'])) {
+    $paymentFormDraft = $_SESSION['sq_payment_form'];
+    unset($_SESSION['sq_payment_form']);
+}
+
+function sq_payment_redirect_url(): string
+{
+    $path = strtok($_SERVER['REQUEST_URI'] ?? '', '?') ?: $_SERVER['PHP_SELF'];
+    $query = $_GET;
+    unset($query['ajax'], $query['days']);
+    $qs = http_build_query($query);
+    return $qs !== '' ? ($path . '?' . $qs) : $path;
+}
+
+function sq_normalize_expires_at(?string $raw): ?string
+{
+    $raw = trim((string) $raw);
+    if ($raw === '') {
+        return null;
+    }
+    $normalized = str_replace('T', ' ', $raw);
+    if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $normalized)) {
+        $normalized .= ':00';
+    }
+    return $normalized;
+}
+
+/**
+ * @return array{ok: true, value: string}|array{ok: false, error: string}
+ */
+function sq_validate_transaction_id(string $raw): array
+{
+    $id = trim($raw);
+    if ($id === '') {
+        return ['ok' => false, 'error' => 'Transaction ID is required'];
+    }
+    if (strlen($id) > 100) {
+        return ['ok' => false, 'error' => 'Transaction ID must be 100 characters or fewer'];
+    }
+    if (preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', $id)) {
+        return ['ok' => false, 'error' => 'Transaction ID contains invalid control characters'];
+    }
+    return ['ok' => true, 'value' => $id];
+}
+
+function sq_parse_payment_form(): array
+{
+    global $validPackages, $validAccountStatuses, $validStatuses, $validPaymentMethods;
+
+    return [
+        'email' => filter_var(trim($_POST['email'] ?? ''), FILTER_SANITIZE_EMAIL),
+        'package' => in_array($_POST['package'] ?? '', $validPackages, true) ? $_POST['package'] : 'freemium',
+        'account_status' => in_array($_POST['account_status'] ?? '', $validAccountStatuses, true) ? $_POST['account_status'] : 'active',
+        'amount' => floatval($_POST['amount'] ?? 0),
+        'transaction_id' => trim((string) ($_POST['transaction_id'] ?? '')),
+        'status' => in_array($_POST['status'] ?? '', $validStatuses, true) ? $_POST['status'] : 'completed',
+        'payment_method' => in_array($_POST['payment_method'] ?? '', $validPaymentMethods, true) ? $_POST['payment_method'] : 'paypal',
+        'expires_at' => sq_normalize_expires_at($_POST['expires_at'] ?? null),
+        'payment_id' => intval($_POST['payment_id'] ?? 0),
+    ];
+}
+
+function sq_payment_form_fail(string $message, string $modalMode, array $form): void
+{
+    $_SESSION['sq_payment_error'] = $message;
+    $_SESSION['sq_payment_reopen'] = $modalMode;
+    $_SESSION['sq_payment_form'] = $form;
+    header('Location: ' . sq_payment_redirect_url());
+    exit();
+}
+
+function sq_escape_like(string $value): string
+{
+    return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+}
+
+/**
+ * @return array{sql: string, fields: array<int, string>}|null
+ */
+function sq_build_payment_search(string $search, array &$params): ?array
+{
+    $search = trim($search);
+    if ($search === '') {
+        return null;
+    }
+
+    $likeTerm = '%' . sq_escape_like($search) . '%';
+    $searchExprMap = [
+        'p.id' => 'id',
+        'p.email' => 'email',
+        'p.transaction_id' => 'transaction_id',
+        'p.package' => 'package',
+        'p.account_status' => 'account_status',
+        'p.amount' => 'amount',
+        'p.status' => 'status',
+        'p.payment_method' => 'payment_method',
+        'p.expires_at' => 'expires_at',
+        'u.first_name' => 'first_name',
+        'u.surname' => 'surname',
+    ];
+
+    $orParts = [];
+    $bindValues = [];
+    foreach ($searchExprMap as $expr => $_key) {
+        $orParts[] = "CAST($expr AS CHAR) LIKE ? ESCAPE '\\\\'";
+        $bindValues[] = $likeTerm;
+    }
+
+    $orParts[] = 'LOWER(TRIM(p.transaction_id)) = LOWER(?)';
+    $bindValues[] = $search;
+
+    if (ctype_digit($search)) {
+        $orParts[] = 'p.id = ?';
+        $bindValues[] = (int) $search;
+    }
+
+    $params = array_merge($params, $bindValues);
+
+    return [
+        'sql' => '(' . implode(' OR ', $orParts) . ')',
+        'fields' => array_values($searchExprMap),
+    ];
+}
+
+function sq_normalize_metrics_days(int $days): int
+{
+    $allowed = [7, 14, 30, 60, 90];
+    return in_array($days, $allowed, true) ? $days : 14;
+}
+
+function sq_build_payments_metrics(PDO $pdo, int $days): array
+{
+    $labels = [];
+    $counts = [];
+    $revenue = [];
+    try {
+        $metricsStmt = $pdo->prepare("
+            SELECT
+                DATE(p.created_at) AS d,
+                COUNT(*) AS cnt,
+                COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount ELSE 0 END), 0) AS revenue
+            FROM payments p
+            WHERE p.deleted_at IS NULL
+              AND p.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+            GROUP BY DATE(p.created_at)
+            ORDER BY d ASC
+        ");
+        $metricsStmt->execute([$days - 1]);
+        $rows = $metricsStmt->fetchAll();
+        $byDay = [];
+        foreach ($rows as $r) {
+            $key = (string) ($r['d'] ?? '');
+            if ($key === '') {
+                continue;
+            }
+            $byDay[$key] = [
+                'cnt' => (int) ($r['cnt'] ?? 0),
+                'revenue' => (float) ($r['revenue'] ?? 0),
+            ];
+        }
+        for ($i = $days - 1; $i >= 0; $i--) {
+            $day = date('Y-m-d', strtotime("-{$i} days"));
+            $labels[] = date('M j', strtotime($day));
+            $counts[] = (int) ($byDay[$day]['cnt'] ?? 0);
+            $revenue[] = (float) ($byDay[$day]['revenue'] ?? 0);
+        }
+    } catch (Exception $e) {
+        $labels = [];
+        $counts = [];
+        $revenue = [];
+    }
+
+    return [
+        'days' => $days,
+        'labels' => $labels,
+        'counts' => $counts,
+        'revenue' => $revenue,
+    ];
+}
+
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
     $pdo = new PDO($dsn, DB_USER, DB_PASS, [
@@ -67,51 +262,78 @@ try {
 
         switch ($action) {
             case 'create':
-                $email = filter_var(trim($_POST['email'] ?? ''), FILTER_SANITIZE_EMAIL);
-                $package = in_array($_POST['package'] ?? '', $validPackages) ? $_POST['package'] : 'freemium';
-                $accountStatus = in_array($_POST['account_status'] ?? '', $validAccountStatuses) ? $_POST['account_status'] : 'active';
-                $amount = floatval($_POST['amount'] ?? 0);
-                $transactionId = trim($_POST['transaction_id'] ?? '') ?: null;
-                $status = in_array($_POST['status'] ?? '', $validStatuses) ? $_POST['status'] : 'completed';
-                $paymentMethod = in_array($_POST['payment_method'] ?? '', $validPaymentMethods) ? $_POST['payment_method'] : 'paypal';
-                $expiresAt = !empty($_POST['expires_at']) ? $_POST['expires_at'] : null;
-
-                if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                    $errorMessage = "Invalid email address";
-                } elseif ($amount < 0) {
-                    $errorMessage = "Amount cannot be negative";
-                } else {
+                $form = sq_parse_payment_form();
+                if (!filter_var($form['email'], FILTER_VALIDATE_EMAIL)) {
+                    sq_payment_form_fail('Invalid email address', 'create', $form);
+                }
+                if ($form['amount'] < 0) {
+                    sq_payment_form_fail('Amount cannot be negative', 'create', $form);
+                }
+                $txCheck = sq_validate_transaction_id($form['transaction_id']);
+                if (!$txCheck['ok']) {
+                    sq_payment_form_fail($txCheck['error'], 'create', $form);
+                }
+                $form['transaction_id'] = $txCheck['value'];
+                try {
                     $stmt = $pdo->prepare("INSERT INTO payments (email, package, account_status, amount, transaction_id, status, payment_method, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())");
-                    $stmt->execute([$email, $package, $accountStatus, $amount, $transactionId, $status, $paymentMethod, $expiresAt]);
-                    $successMessage = "Payment record created successfully";
+                    $stmt->execute([
+                        $form['email'],
+                        $form['package'],
+                        $form['account_status'],
+                        $form['amount'],
+                        $form['transaction_id'],
+                        $form['status'],
+                        $form['payment_method'],
+                        $form['expires_at'],
+                    ]);
+                    $_SESSION['sq_payment_success'] = 'Payment record created successfully';
+                    header('Location: ' . sq_payment_redirect_url());
+                    exit();
+                } catch (PDOException $e) {
+                    error_log('Payment create error: ' . $e->getMessage());
+                    sq_payment_form_fail('Could not create payment record. Please check the details and try again.', 'create', $form);
                 }
                 break;
 
             case 'update':
-                $paymentId = intval($_POST['payment_id'] ?? 0);
-                $email = filter_var(trim($_POST['email'] ?? ''), FILTER_SANITIZE_EMAIL);
-                $package = in_array($_POST['package'] ?? '', $validPackages) ? $_POST['package'] : 'freemium';
-                $accountStatus = in_array($_POST['account_status'] ?? '', $validAccountStatuses) ? $_POST['account_status'] : 'active';
-                $amount = floatval($_POST['amount'] ?? 0);
-                $transactionId = trim($_POST['transaction_id'] ?? '') ?: null;
-                $status = in_array($_POST['status'] ?? '', $validStatuses) ? $_POST['status'] : 'completed';
-                $paymentMethod = in_array($_POST['payment_method'] ?? '', $validPaymentMethods) ? $_POST['payment_method'] : 'paypal';
-                $expiresAt = !empty($_POST['expires_at']) ? $_POST['expires_at'] : null;
-
+                $form = sq_parse_payment_form();
+                $paymentId = (int) $form['payment_id'];
                 if ($paymentId <= 0) {
-                    $errorMessage = "Invalid payment ID";
-                } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                    $errorMessage = "Invalid email address";
-                } elseif ($amount < 0) {
-                    $errorMessage = "Amount cannot be negative";
-                } else {
+                    sq_payment_form_fail('Invalid payment ID', 'update', $form);
+                }
+                if (!filter_var($form['email'], FILTER_VALIDATE_EMAIL)) {
+                    sq_payment_form_fail('Invalid email address', 'update', $form);
+                }
+                if ($form['amount'] < 0) {
+                    sq_payment_form_fail('Amount cannot be negative', 'update', $form);
+                }
+                $txCheck = sq_validate_transaction_id($form['transaction_id']);
+                if (!$txCheck['ok']) {
+                    sq_payment_form_fail($txCheck['error'], 'update', $form);
+                }
+                $form['transaction_id'] = $txCheck['value'];
+                try {
                     $stmt = $pdo->prepare("UPDATE payments SET email = ?, package = ?, account_status = ?, amount = ?, transaction_id = ?, status = ?, payment_method = ?, expires_at = ? WHERE id = ? AND deleted_at IS NULL");
-                    $stmt->execute([$email, $package, $accountStatus, $amount, $transactionId, $status, $paymentMethod, $expiresAt, $paymentId]);
+                    $stmt->execute([
+                        $form['email'],
+                        $form['package'],
+                        $form['account_status'],
+                        $form['amount'],
+                        $form['transaction_id'],
+                        $form['status'],
+                        $form['payment_method'],
+                        $form['expires_at'],
+                        $paymentId,
+                    ]);
                     if ($stmt->rowCount() > 0) {
-                        $successMessage = "Payment record updated successfully";
-                    } else {
-                        $errorMessage = "Payment not found or already deleted";
+                        $_SESSION['sq_payment_success'] = 'Payment record updated successfully';
+                        header('Location: ' . sq_payment_redirect_url());
+                        exit();
                     }
+                    sq_payment_form_fail('Payment not found or already deleted', 'update', $form);
+                } catch (PDOException $e) {
+                    error_log('Payment update error: ' . $e->getMessage());
+                    sq_payment_form_fail('Could not update payment record. Please try again.', 'update', $form);
                 }
                 break;
 
@@ -192,11 +414,17 @@ try {
         }
     }
 
+    if (isset($_GET['ajax']) && $_GET['ajax'] === 'metrics' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(sq_build_payments_metrics($pdo, sq_normalize_metrics_days((int) ($_GET['days'] ?? 14))));
+        exit();
+    }
+
     // Get filter parameters
     $view = $_GET['view'] ?? 'active'; // active, trash, all
     $status = $_GET['status'] ?? 'all';
     $accountStatusFilter = $_GET['account_status'] ?? 'all';
-    $search = $_GET['search'] ?? '';
+    $search = trim((string) ($_GET['search'] ?? ''));
     $page = max(1, intval($_GET['page'] ?? 1));
     $perPageParam = $_GET['per_page'] ?? (string) DEFAULT_PER_PAGE;
     $allowedPerPage = ['5', '10', '20', '50', '100', '200', 'all'];
@@ -226,40 +454,11 @@ try {
         $params[] = $accountStatusFilter;
     }
 
-    if (!empty($search)) {
-        // Global search across all non-system columns (used for both filtering and "Matched In").
-        $systemSearchColumns = ['id', 'created_at', 'updated_at', 'deleted_at', 'deleted_by'];
-
-        $searchExprMap = [];
-        try {
-            $colsMeta = $pdo->query("SHOW COLUMNS FROM payments")->fetchAll(PDO::FETCH_ASSOC);
-            foreach ($colsMeta as $meta) {
-                $col = $meta['Field'] ?? '';
-                if (!$col) continue;
-                if (!preg_match('/^[A-Za-z0-9_]+$/', $col)) continue;
-                if (in_array($col, $systemSearchColumns, true)) continue;
-                $searchExprMap['p.' . $col] = $col;
-            }
-        } catch (Exception $e) {
-            // Fallback: previous fields
-            $searchExprMap = ['p.email' => 'email', 'p.package' => 'package', 'p.transaction_id' => 'transaction_id'];
-        }
-
-        // Include joined user fields as searchable (not system columns).
-        $searchExprMap['u.first_name'] = 'first_name';
-        $searchExprMap['u.surname'] = 'surname';
-
-        $paymentSearchFields = array_values($searchExprMap);
-
-        if (!empty($searchExprMap)) {
-            $searchTerm = "%$search%";
-            $orParts = [];
-            foreach ($searchExprMap as $expr => $_key) {
-                $orParts[] = "CAST($expr AS CHAR) LIKE ?";
-                $params[] = $searchTerm;
-            }
-            $whereConditions[] = "(" . implode(" OR ", $orParts) . ")";
-        }
+    $paymentSearchFields = [];
+    $searchClause = sq_build_payment_search($search, $params);
+    if ($searchClause !== null) {
+        $paymentSearchFields = $searchClause['fields'];
+        $whereConditions[] = $searchClause['sql'];
     }
 
     $whereClause = !empty($whereConditions) ? 'WHERE ' . implode(' AND ', $whereConditions) : '';
@@ -301,45 +500,11 @@ try {
         'trash' => $pdo->query("SELECT COUNT(*) FROM payments WHERE deleted_at IS NOT NULL")->fetchColumn()
     ];
 
-    // Metrics chart: last 14 days payments count + completed revenue
-    $paymentsMetricsLabels = [];
-    $paymentsMetricsCounts = [];
-    $paymentsMetricsRevenue = [];
-    try {
-        $days = 14;
-        $metricsStmt = $pdo->prepare("
-            SELECT
-                DATE(p.created_at) AS d,
-                COUNT(*) AS cnt,
-                COALESCE(SUM(CASE WHEN p.status = 'completed' THEN p.amount ELSE 0 END), 0) AS revenue
-            FROM payments p
-            WHERE p.deleted_at IS NULL
-              AND p.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-            GROUP BY DATE(p.created_at)
-            ORDER BY d ASC
-        ");
-        $metricsStmt->execute([$days - 1]);
-        $rows = $metricsStmt->fetchAll();
-        $byDay = [];
-        foreach ($rows as $r) {
-            $key = (string) ($r['d'] ?? '');
-            if ($key === '') continue;
-            $byDay[$key] = [
-                'cnt' => (int) ($r['cnt'] ?? 0),
-                'revenue' => (float) ($r['revenue'] ?? 0),
-            ];
-        }
-        for ($i = $days - 1; $i >= 0; $i--) {
-            $day = date('Y-m-d', strtotime("-{$i} days"));
-            $paymentsMetricsLabels[] = date('M j', strtotime($day));
-            $paymentsMetricsCounts[] = (int) ($byDay[$day]['cnt'] ?? 0);
-            $paymentsMetricsRevenue[] = (float) ($byDay[$day]['revenue'] ?? 0);
-        }
-    } catch (Exception $e) {
-        $paymentsMetricsLabels = [];
-        $paymentsMetricsCounts = [];
-        $paymentsMetricsRevenue = [];
-    }
+    $paymentsMetricsDays = sq_normalize_metrics_days((int) ($_GET['metrics_days'] ?? 14));
+    $paymentsMetrics = sq_build_payments_metrics($pdo, $paymentsMetricsDays);
+    $paymentsMetricsLabels = $paymentsMetrics['labels'];
+    $paymentsMetricsCounts = $paymentsMetrics['counts'];
+    $paymentsMetricsRevenue = $paymentsMetrics['revenue'];
 
 } catch (Exception $e) {
     error_log("Payments Admin Error: " . $e->getMessage());
@@ -354,6 +519,7 @@ try {
     $recordsStart = 0;
     $recordsEnd = 0;
     $paymentSearchFields = [];
+    $paymentsMetricsDays = 14;
     $paymentsMetricsLabels = [];
     $paymentsMetricsCounts = [];
     $paymentsMetricsRevenue = [];
@@ -619,6 +785,26 @@ function formatCurrency($amount)
         .sq-metrics-canvas-wrap{
             height: 280px;
         }
+        .sq-metrics-period-select {
+            appearance: none;
+            border: 1px solid var(--sq-border, rgba(148, 163, 184, 0.35));
+            border-radius: 10px;
+            padding: 7px 32px 7px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--sq-text-main, #0f172a);
+            background: var(--sq-bg-card, #fff) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M3 5l3 3 3-3'/%3E%3C/svg%3E") no-repeat right 10px center;
+            cursor: pointer;
+            min-width: 130px;
+        }
+        .sq-metrics-period-select:disabled {
+            opacity: 0.65;
+            cursor: wait;
+        }
+        .sq-dark .sq-metrics-period-select {
+            background-color: var(--sq-bg-card, #0f172a);
+            color: var(--sq-text-main, #e2e8f0);
+        }
     </style>
 </head>
 
@@ -728,9 +914,15 @@ function formatCurrency($amount)
                         </div>
 
                         <div class="sq-form-group">
-                            <label class="sq-form-label">Transaction ID</label>
+                            <label class="sq-form-label">Transaction ID <span style="color: var(--sq-danger, #ef4444);">*</span></label>
                             <input type="text" name="transaction_id" id="sqTransactionId" class="sq-form-input"
-                                placeholder="Optional">
+                                required
+                                maxlength="100"
+                                autocomplete="off"
+                                spellcheck="false"
+                                placeholder="e.g. PAY-8xK2_m9.Q#2026 or TXN_001aB+"
+                                aria-required="true"
+                                title="Letters, numbers, and symbols (up to 100 characters)">
                         </div>
 
                         <div class="sq-form-group">
@@ -897,8 +1089,13 @@ function formatCurrency($amount)
                         <i class="fas fa-chart-line" style="color: var(--sq-accent, #8b5cf6);"></i>
                         Payments trend
                     </div>
-                    <div class="sq-metrics-sub">Last 14 days • payments count + completed revenue</div>
+                    <div class="sq-metrics-sub" id="sqPaymentsMetricsSub">Last <?php echo (int) $paymentsMetricsDays; ?> days • payments count + completed revenue</div>
                 </div>
+                <select id="sqPaymentsMetricsPeriod" class="sq-metrics-period-select" aria-label="Metrics period">
+                    <?php foreach ([7, 14, 30, 60, 90] as $opt): ?>
+                        <option value="<?php echo $opt; ?>" <?php echo (int) $paymentsMetricsDays === $opt ? 'selected' : ''; ?>>Last <?php echo $opt; ?> days</option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="sq-metrics-canvas-wrap">
                 <canvas id="sqPaymentsMetricsChart"></canvas>
@@ -945,7 +1142,7 @@ function formatCurrency($amount)
                     <div class="sq-filter-item sq-search-box">
                         <label class="sq-filter-label">Search</label>
                         <input type="text" name="search" class="sq-filter-input sq-search-input"
-                            placeholder="Email, package, transaction..."
+                            placeholder="Transaction ID, email, payment #..."
                             value="<?php echo htmlspecialchars($search); ?>">
                     </div>
 
@@ -1031,10 +1228,22 @@ function formatCurrency($amount)
                                 $matchedInStr = '-';
                                 if (!empty($search) && !empty($paymentSearchFields)) {
                                     $matchedCols = [];
+                                    $searchLower = strtolower($search);
                                     foreach ($paymentSearchFields as $col) {
                                         $val = $payment[$col] ?? null;
-                                        if ($val === null) continue;
-                                        if (stripos((string) $val, $search) !== false) {
+                                        if ($val === null || $val === '') {
+                                            continue;
+                                        }
+                                        $valStr = (string) $val;
+                                        if ($col === 'transaction_id' && strtolower(trim($valStr)) === $searchLower) {
+                                            $matchedCols[] = 'transaction_id';
+                                            continue;
+                                        }
+                                        if ($col === 'id' && ctype_digit($search) && (int) $val === (int) $search) {
+                                            $matchedCols[] = 'id';
+                                            continue;
+                                        }
+                                        if (stripos($valStr, $search) !== false) {
                                             $matchedCols[] = $col;
                                         }
                                     }
@@ -1286,45 +1495,14 @@ function formatCurrency($amount)
         </footer>
     </main>
 
-    <button id="backToTopBtn" class="sq-back-to-top" title="Back to top" aria-label="Back to top" type="button">
-        <i class="fas fa-arrow-up"></i>
-    </button>
-
-    <style>
-        .sq-back-to-top{
-            position: fixed;
-            right: 24px;
-            bottom: 24px;
-            width: 44px;
-            height: 44px;
-            border-radius: 999px;
-            border: none;
-            background: #10b981;
-            color: white;
-            box-shadow: 0 10px 24px rgba(0,0,0,0.15);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease, transform 0.2s ease;
-            z-index: 1000;
-        }
-        body.sq-dark .sq-back-to-top{
-            box-shadow: 0 10px 24px rgba(0,0,0,0.4);
-        }
-        .sq-back-to-top.sq-back-to-top--visible{
-            opacity: 1;
-            pointer-events: auto;
-            transform: translateY(-2px);
-        }
-    </style>
-
-    <!-- Floating Add Button -->
-    <button class="sq-add-btn" onclick="sqOpenCreateModal()" title="Add New Payment">
-        <i class="fas fa-plus"></i>
-    </button>
+    <div class="sq-floating-actions" aria-label="Page actions">
+        <button id="backToTopBtn" class="sq-back-to-top" title="Back to top" aria-label="Back to top" type="button">
+            <i class="fas fa-arrow-up"></i>
+        </button>
+        <button type="button" class="sq-add-btn" id="sqAddPaymentBtn" title="Add New Payment" aria-label="Add New Payment">
+            <i class="fas fa-plus"></i>
+        </button>
+    </div>
 
     <script>
         // Theme Toggle
@@ -1351,11 +1529,40 @@ function formatCurrency($amount)
         const sqFormAction = document.getElementById('sqFormAction');
         const sqPaymentId = document.getElementById('sqPaymentId');
 
-        function sqOpenCreateModal() {
+        function sqFillPaymentForm(data) {
+            if (!data) return;
+            document.getElementById('sqEmail').value = data.email || '';
+            document.getElementById('sqPackage').value = data.package || 'freemium';
+            document.getElementById('sqAccountStatus').value = data.account_status || 'active';
+            document.getElementById('sqAmount').value = data.amount ?? '';
+            document.getElementById('sqStatus').value = data.status || 'completed';
+            document.getElementById('sqPaymentMethod').value = data.payment_method || 'paypal';
+            document.getElementById('sqTransactionId').value = data.transaction_id || '';
+            const expiresRaw = data.expires_at || '';
+            document.getElementById('sqExpiresAt').value = expiresRaw ? String(expiresRaw).replace(' ', 'T').slice(0, 16) : '';
+        }
+
+        function sqOpenCreateModal(prefill) {
+            const form = document.getElementById('sqPaymentForm');
+            form.reset();
             sqFormAction.value = 'create';
             sqPaymentId.value = '';
-            document.getElementById('sqPaymentForm').reset();
             sqModalTitle.innerHTML = '<i class="fas fa-plus-circle"></i> Add Payment';
+            document.getElementById('sqStatus').value = 'completed';
+            document.getElementById('sqPackage').value = 'freemium';
+            document.getElementById('sqAccountStatus').value = 'active';
+            document.getElementById('sqPaymentMethod').value = 'paypal';
+            if (prefill) sqFillPaymentForm(prefill);
+            sqPaymentModal.classList.add('sq-modal--active');
+            sqBody.style.overflow = 'hidden';
+        }
+
+        function sqOpenEditModalFromDraft(data) {
+            if (!data) return;
+            sqFormAction.value = 'update';
+            sqPaymentId.value = data.payment_id || '';
+            sqFillPaymentForm(data);
+            sqModalTitle.innerHTML = '<i class="fas fa-edit"></i> Edit Payment #' + (data.payment_id || '');
             sqPaymentModal.classList.add('sq-modal--active');
             sqBody.style.overflow = 'hidden';
         }
@@ -1382,6 +1589,16 @@ function formatCurrency($amount)
             sqPaymentModal.classList.remove('sq-modal--active');
             sqBody.style.overflow = '';
         }
+
+        document.getElementById('sqAddPaymentBtn')?.addEventListener('click', function () {
+            sqOpenCreateModal();
+        });
+
+        <?php if ($reopenPaymentModal === 'create'): ?>
+        sqOpenCreateModal(<?php echo json_encode($paymentFormDraft, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>);
+        <?php elseif ($reopenPaymentModal === 'update'): ?>
+        sqOpenEditModalFromDraft(<?php echo json_encode($paymentFormDraft, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP); ?>);
+        <?php endif; ?>
 
         function sqViewPayment(payment) {
             const statusColor = getStatusColor(payment.status);
@@ -1517,7 +1734,11 @@ function formatCurrency($amount)
         function sqCloseConfirmModal() {
             sqConfirmModal.classList.remove('sq-modal--active');
             sqPendingConfirmForm = null;
-            sqBody.style.overflow = '';
+            if (sqPaymentModal?.classList.contains('sq-modal--active') || sqViewModal?.classList.contains('sq-modal--active')) {
+                sqBody.style.overflow = 'hidden';
+            } else {
+                sqBody.style.overflow = '';
+            }
         }
 
         sqConfirmModal?.addEventListener('click', (e) => {
@@ -1527,8 +1748,65 @@ function formatCurrency($amount)
         sqConfirmOkBtn?.addEventListener('click', () => {
             const form = sqPendingConfirmForm;
             sqCloseConfirmModal();
-            if (form) form.submit();
+            if (form) {
+                form.submit();
+            }
         });
+
+        const sqPaymentFormEl = document.getElementById('sqPaymentForm');
+        const sqTransactionIdEl = document.getElementById('sqTransactionId');
+
+        function sqValidateTransactionIdInput() {
+            if (!sqTransactionIdEl) {
+                return { ok: false };
+            }
+            const id = sqTransactionIdEl.value.trim();
+            if (id === '') {
+                sqTransactionIdEl.setCustomValidity('Transaction ID is required');
+                return { ok: false };
+            }
+            if (id.length > 100) {
+                sqTransactionIdEl.setCustomValidity('Transaction ID must be 100 characters or fewer');
+                return { ok: false };
+            }
+            if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(id)) {
+                sqTransactionIdEl.setCustomValidity('Transaction ID contains invalid characters');
+                return { ok: false };
+            }
+            sqTransactionIdEl.setCustomValidity('');
+            return { ok: true, value: id };
+        }
+
+        sqTransactionIdEl?.addEventListener('input', () => {
+            sqTransactionIdEl.setCustomValidity('');
+        });
+
+        sqPaymentFormEl?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (!sqPaymentFormEl.reportValidity()) {
+                return;
+            }
+            const tx = sqValidateTransactionIdInput();
+            if (!tx.ok) {
+                sqTransactionIdEl?.reportValidity();
+                return;
+            }
+            const action = (sqFormAction?.value || 'create').trim();
+            const isCreate = action === 'create';
+            const email = (document.getElementById('sqEmail')?.value || '').trim();
+            const amount = (document.getElementById('sqAmount')?.value || '0').trim();
+            const pid = (sqPaymentId?.value || '').trim();
+            const metaPrefix = pid ? `Payment #${pid} • ` : '';
+            sqOpenConfirmModal({
+                title: isCreate ? 'Confirm new payment' : 'Confirm payment update',
+                message: isCreate
+                    ? 'Create this payment record with the details below?'
+                    : 'Save changes to this payment record?',
+                meta: `${metaPrefix}Txn: ${tx.value} • ${email} • $${amount}`,
+                onConfirmForm: sqPaymentFormEl,
+            });
+        }, true);
 
         // Wire up any form/button with data-sq-confirm
         document.addEventListener('submit', (e) => {
@@ -1683,18 +1961,27 @@ function formatCurrency($amount)
     <script>
         (function () {
             const el = document.getElementById('sqPaymentsMetricsChart');
+            const periodSelect = document.getElementById('sqPaymentsMetricsPeriod');
+            const metricsSub = document.getElementById('sqPaymentsMetricsSub');
             if (!el || typeof Chart === 'undefined') return;
+
+            const isDark = () => document.body.classList.contains('sq-dark');
+            const chartColors = () => {
+                const dark = isDark();
+                return {
+                    grid: dark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(148, 163, 184, 0.22)',
+                    ticks: dark ? '#cbd5e1' : '#475569',
+                    line: dark ? '#a78bfa' : '#3b82f6',
+                    fill: dark ? 'rgba(167, 139, 250, 0.18)' : 'rgba(59, 130, 246, 0.14)',
+                };
+            };
 
             const labels = <?php echo json_encode($paymentsMetricsLabels ?? [], JSON_UNESCAPED_SLASHES); ?>;
             const counts = <?php echo json_encode($paymentsMetricsCounts ?? [], JSON_UNESCAPED_SLASHES); ?>;
             const revenue = <?php echo json_encode($paymentsMetricsRevenue ?? [], JSON_UNESCAPED_SLASHES); ?>;
-            if (!labels.length) return;
+            const c = chartColors();
 
-            const isDark = document.body.classList.contains('sq-dark');
-            const grid = isDark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(148, 163, 184, 0.22)';
-            const ticks = isDark ? '#cbd5e1' : '#475569';
-
-            new Chart(el.getContext('2d'), {
+            const metricsChart = new Chart(el.getContext('2d'), {
                 type: 'line',
                 data: {
                     labels,
@@ -1702,8 +1989,8 @@ function formatCurrency($amount)
                         {
                             label: 'Payments',
                             data: counts,
-                            borderColor: isDark ? '#a78bfa' : '#3b82f6',
-                            backgroundColor: isDark ? 'rgba(167, 139, 250, 0.18)' : 'rgba(59, 130, 246, 0.14)',
+                            borderColor: c.line,
+                            backgroundColor: c.fill,
                             tension: 0.35,
                             fill: true,
                             pointRadius: 2,
@@ -1725,17 +2012,43 @@ function formatCurrency($amount)
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: { labels: { color: ticks, font: { weight: '700' } } },
+                        legend: { labels: { color: c.ticks, font: { weight: '700' } } },
                         tooltip: { intersect: false, mode: 'index' }
                     },
                     interaction: { intersect: false, mode: 'index' },
                     scales: {
-                        x: { grid: { color: grid }, ticks: { color: ticks, font: { weight: '700' } } },
-                        y: { grid: { color: grid }, ticks: { color: ticks }, beginAtZero: true, title: { display: true, text: 'Payments', color: ticks, font: { weight: '800' } } },
-                        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: ticks }, beginAtZero: true, title: { display: true, text: 'Revenue', color: ticks, font: { weight: '800' } } }
+                        x: { grid: { color: c.grid }, ticks: { color: c.ticks, font: { weight: '700' } } },
+                        y: { grid: { color: c.grid }, ticks: { color: c.ticks }, beginAtZero: true, title: { display: true, text: 'Payments', color: c.ticks, font: { weight: '800' } } },
+                        y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: c.ticks }, beginAtZero: true, title: { display: true, text: 'Revenue', color: c.ticks, font: { weight: '800' } } }
                     }
                 }
             });
+
+            if (periodSelect) {
+                periodSelect.addEventListener('change', async function () {
+                    const days = this.value;
+                    periodSelect.disabled = true;
+                    try {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('ajax', 'metrics');
+                        url.searchParams.set('days', days);
+                        const res = await fetch(url.toString(), { headers: { 'X-Requested-With': 'fetch' } });
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        metricsChart.data.labels = data.labels || [];
+                        metricsChart.data.datasets[0].data = data.counts || [];
+                        metricsChart.data.datasets[1].data = data.revenue || [];
+                        metricsChart.update();
+                        if (metricsSub) {
+                            metricsSub.textContent = 'Last ' + (data.days || days) + ' days • payments count + completed revenue';
+                        }
+                    } catch (err) {
+                        /* ignore */
+                    } finally {
+                        periodSelect.disabled = false;
+                    }
+                });
+            }
         })();
     </script>
 </body>

@@ -44,6 +44,69 @@ $recordsEnd = 0;
 $offset = 0;
 $totalPages = 0;
 
+function sq_normalize_metrics_days(int $days): int
+{
+    $allowed = [7, 14, 30, 60, 90];
+    return in_array($days, $allowed, true) ? $days : 14;
+}
+
+function sq_build_users_metrics(PDO $pdo, int $days): array
+{
+    $labels = [];
+    $newCounts = [];
+    $roleLabels = [];
+    $roleCounts = [];
+    try {
+        $stmt = $pdo->prepare("
+            SELECT DATE(created_at) AS d, COUNT(*) AS cnt
+            FROM users
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+            GROUP BY DATE(created_at)
+            ORDER BY d ASC
+        ");
+        $stmt->execute([$days - 1]);
+        $rows = $stmt->fetchAll();
+        $byDay = [];
+        foreach ($rows as $r) {
+            $key = (string) ($r['d'] ?? '');
+            if ($key === '') {
+                continue;
+            }
+            $byDay[$key] = (int) ($r['cnt'] ?? 0);
+        }
+        for ($i = $days - 1; $i >= 0; $i--) {
+            $day = date('Y-m-d', strtotime("-{$i} days"));
+            $labels[] = date('M j', strtotime($day));
+            $newCounts[] = (int) ($byDay[$day] ?? 0);
+        }
+
+        $roleRows = $pdo->query("
+            SELECT role, COUNT(*) AS cnt
+            FROM users
+            WHERE deleted_at IS NULL
+            GROUP BY role
+            ORDER BY cnt DESC
+        ")->fetchAll();
+        foreach ($roleRows as $rr) {
+            $roleLabels[] = (string) ($rr['role'] ?? 'unknown');
+            $roleCounts[] = (int) ($rr['cnt'] ?? 0);
+        }
+    } catch (Exception $e) {
+        $labels = [];
+        $newCounts = [];
+        $roleLabels = [];
+        $roleCounts = [];
+    }
+
+    return [
+        'days' => $days,
+        'labels' => $labels,
+        'newCounts' => $newCounts,
+        'roleLabels' => $roleLabels,
+        'roleCounts' => $roleCounts,
+    ];
+}
+
 // Flash messages (success)
 if (isset($_SESSION['sq_user_create_success']) && is_string($_SESSION['sq_user_create_success'])) {
     $successMessage = $_SESSION['sq_user_create_success'];
@@ -306,6 +369,12 @@ try {
         exit();
     }
 
+    if (isset($_GET['ajax']) && $_GET['ajax'] === 'metrics' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(sq_build_users_metrics($pdo, sq_normalize_metrics_days((int) ($_GET['days'] ?? 14))));
+        exit();
+    }
+
     // Filters
     $view = $_GET['view'] ?? 'active';
     $role = $_GET['role'] ?? 'all';
@@ -381,51 +450,12 @@ try {
         'deleted' => $pdo->query("SELECT COUNT(*) FROM users WHERE deleted_at IS NOT NULL")->fetchColumn()
     ];
 
-    // Metrics charts: last 14 days new users + role distribution (active)
-    $usersMetricsLabels = [];
-    $usersMetricsNewCounts = [];
-    $usersMetricsRoleLabels = [];
-    $usersMetricsRoleCounts = [];
-    try {
-        $days = 14;
-        $stmt = $pdo->prepare("
-            SELECT DATE(created_at) AS d, COUNT(*) AS cnt
-            FROM users
-            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-            GROUP BY DATE(created_at)
-            ORDER BY d ASC
-        ");
-        $stmt->execute([$days - 1]);
-        $rows = $stmt->fetchAll();
-        $byDay = [];
-        foreach ($rows as $r) {
-            $key = (string) ($r['d'] ?? '');
-            if ($key === '') continue;
-            $byDay[$key] = (int) ($r['cnt'] ?? 0);
-        }
-        for ($i = $days - 1; $i >= 0; $i--) {
-            $day = date('Y-m-d', strtotime("-{$i} days"));
-            $usersMetricsLabels[] = date('M j', strtotime($day));
-            $usersMetricsNewCounts[] = (int) ($byDay[$day] ?? 0);
-        }
-
-        $roleRows = $pdo->query("
-            SELECT role, COUNT(*) AS cnt
-            FROM users
-            WHERE deleted_at IS NULL
-            GROUP BY role
-            ORDER BY cnt DESC
-        ")->fetchAll();
-        foreach ($roleRows as $rr) {
-            $usersMetricsRoleLabels[] = (string) ($rr['role'] ?? 'unknown');
-            $usersMetricsRoleCounts[] = (int) ($rr['cnt'] ?? 0);
-        }
-    } catch (Exception $e) {
-        $usersMetricsLabels = [];
-        $usersMetricsNewCounts = [];
-        $usersMetricsRoleLabels = [];
-        $usersMetricsRoleCounts = [];
-    }
+    $usersMetricsDays = sq_normalize_metrics_days((int) ($_GET['metrics_days'] ?? 14));
+    $usersMetrics = sq_build_users_metrics($pdo, $usersMetricsDays);
+    $usersMetricsLabels = $usersMetrics['labels'];
+    $usersMetricsNewCounts = $usersMetrics['newCounts'];
+    $usersMetricsRoleLabels = $usersMetrics['roleLabels'];
+    $usersMetricsRoleCounts = $usersMetrics['roleCounts'];
 
 } catch (Exception $e) {
     error_log("Users List Error: " . $e->getMessage());
@@ -439,6 +469,7 @@ try {
     $offset = 0;
     $recordsStart = 0;
     $recordsEnd = 0;
+    $usersMetricsDays = 14;
     $usersMetricsLabels = [];
     $usersMetricsNewCounts = [];
     $usersMetricsRoleLabels = [];
@@ -577,12 +608,19 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
         </div>
 
         <div class="sq-table-container" style="padding: 18px; margin: 18px 0 22px; overflow: visible;">
-            <div style="display:flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px;">
+            <div style="display:flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; flex-wrap: wrap;">
                 <div style="font-weight: 900; letter-spacing: 0.2px; display:flex; align-items:center; gap: 10px;">
                     <i class="fas fa-chart-bar" style="color: var(--sq-accent);"></i>
                     User metrics
                 </div>
-                <div style="color: var(--sq-text-light); font-size: 12px; font-weight: 700;">Last 14 days • Role distribution</div>
+                <div style="display:flex; align-items:center; gap: 10px; flex-wrap: wrap;">
+                    <div id="sqUsersMetricsSub" style="color: var(--sq-text-light); font-size: 12px; font-weight: 700;">Last <?php echo (int) $usersMetricsDays; ?> days • Role distribution</div>
+                    <select id="sqUsersMetricsPeriod" class="sq-metrics-period-select" aria-label="Metrics period">
+                        <?php foreach ([7, 14, 30, 60, 90] as $opt): ?>
+                            <option value="<?php echo $opt; ?>" <?php echo (int) $usersMetricsDays === $opt ? 'selected' : ''; ?>>Last <?php echo $opt; ?> days</option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
             </div>
             <div style="display:grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: stretch;">
                 <div style="height: 280px;">
@@ -1092,26 +1130,38 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
         (function () {
             const newEl = document.getElementById('sqUsersNewChart');
             const roleEl = document.getElementById('sqUsersRoleChart');
+            const periodSelect = document.getElementById('sqUsersMetricsPeriod');
+            const metricsSub = document.getElementById('sqUsersMetricsSub');
             if (typeof Chart === 'undefined' || (!newEl && !roleEl)) return;
 
+            const isDark = () => document.body.classList.contains('sq-dark');
+            const chartColors = () => {
+                const dark = isDark();
+                return {
+                    grid: dark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(148, 163, 184, 0.22)',
+                    ticks: dark ? '#cbd5e1' : '#475569',
+                    line: dark ? '#a78bfa' : '#3b82f6',
+                    fill: dark ? 'rgba(167, 139, 250, 0.18)' : 'rgba(59, 130, 246, 0.14)',
+                };
+            };
+
+            let newChart = null;
             const labels = <?php echo json_encode($usersMetricsLabels ?? [], JSON_UNESCAPED_SLASHES); ?>;
             const newCounts = <?php echo json_encode($usersMetricsNewCounts ?? [], JSON_UNESCAPED_SLASHES); ?>;
             const roleLabels = <?php echo json_encode($usersMetricsRoleLabels ?? [], JSON_UNESCAPED_SLASHES); ?>;
             const roleCounts = <?php echo json_encode($usersMetricsRoleCounts ?? [], JSON_UNESCAPED_SLASHES); ?>;
-            const isDark = document.body.classList.contains('sq-dark');
-            const grid = isDark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(148, 163, 184, 0.22)';
-            const ticks = isDark ? '#cbd5e1' : '#475569';
 
-            if (newEl && labels.length) {
-                new Chart(newEl.getContext('2d'), {
+            if (newEl) {
+                const c = chartColors();
+                newChart = new Chart(newEl.getContext('2d'), {
                     type: 'line',
                     data: {
                         labels,
                         datasets: [{
                             label: 'New users',
                             data: newCounts,
-                            borderColor: isDark ? '#a78bfa' : '#3b82f6',
-                            backgroundColor: isDark ? 'rgba(167, 139, 250, 0.18)' : 'rgba(59, 130, 246, 0.14)',
+                            borderColor: c.line,
+                            backgroundColor: c.fill,
                             tension: 0.35,
                             fill: true,
                             pointRadius: 2,
@@ -1120,16 +1170,17 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        plugins: { legend: { labels: { color: ticks, font: { weight: '700' } } } },
+                        plugins: { legend: { labels: { color: c.ticks, font: { weight: '700' } } } },
                         scales: {
-                            x: { grid: { color: grid }, ticks: { color: ticks, font: { weight: '700' } } },
-                            y: { grid: { color: grid }, ticks: { color: ticks }, beginAtZero: true }
+                            x: { grid: { color: c.grid }, ticks: { color: c.ticks, font: { weight: '700' } } },
+                            y: { grid: { color: c.grid }, ticks: { color: c.ticks }, beginAtZero: true }
                         }
                     }
                 });
             }
 
             if (roleEl && roleLabels.length) {
+                const c = chartColors();
                 new Chart(roleEl.getContext('2d'), {
                     type: 'doughnut',
                     data: {
@@ -1143,7 +1194,7 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
                                 'rgba(239, 68, 68, 0.55)',
                                 'rgba(139, 92, 246, 0.55)'
                             ],
-                            borderColor: isDark ? 'rgba(15, 23, 42, 0.6)' : 'rgba(255, 255, 255, 0.9)',
+                            borderColor: isDark() ? 'rgba(15, 23, 42, 0.6)' : 'rgba(255, 255, 255, 0.9)',
                             borderWidth: 2
                         }]
                     },
@@ -1151,8 +1202,33 @@ function getProfilePhotoUrl($profilePhoto, $firstName, $surname)
                         responsive: true,
                         maintainAspectRatio: false,
                         plugins: {
-                            legend: { position: 'bottom', labels: { color: ticks, font: { weight: '700' } } }
+                            legend: { position: 'bottom', labels: { color: c.ticks, font: { weight: '700' } } }
                         }
+                    }
+                });
+            }
+
+            if (periodSelect && newChart) {
+                periodSelect.addEventListener('change', async function () {
+                    const days = this.value;
+                    periodSelect.disabled = true;
+                    try {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('ajax', 'metrics');
+                        url.searchParams.set('days', days);
+                        const res = await fetch(url.toString(), { headers: { 'X-Requested-With': 'fetch' } });
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        newChart.data.labels = data.labels || [];
+                        newChart.data.datasets[0].data = data.newCounts || [];
+                        newChart.update();
+                        if (metricsSub) {
+                            metricsSub.textContent = 'Last ' + (data.days || days) + ' days • Role distribution';
+                        }
+                    } catch (err) {
+                        /* ignore */
+                    } finally {
+                        periodSelect.disabled = false;
                     }
                 });
             }

@@ -51,10 +51,8 @@ if (isset($_COOKIE['theme'])) {
                     </button>
                 </div>
 
-                <a href="../../../Homepage/PHP/Frontend/Homepage.php">
-                    <button class="header-button" aria-label="Home Page" data-tooltip="Home">
-                        <i class="fa fa-home"></i>
-                    </button>
+                <a href="../../../Homepage/PHP/Frontend/Homepage.php" class="header-icon-link" data-tooltip="Home" aria-label="Home">
+                    <i class="fas fa-home"></i>
                 </a>
             </div>
         </div>
@@ -71,7 +69,7 @@ if (isset($_COOKIE['theme'])) {
                 </div><br>
                 <div class="collapsible-content" id="collapsible-content">
                     <div class="like-boxes" id="like-boxes">
-                        <div class="like-box" id="home-button"><i class="fa fa-home"></i> <span>Home</span></div>
+                        <div class="like-box" id="home-button"><i class="fas fa-home"></i> <span>Home</span></div>
                         <div class="like-box" id="create-ticket-box"><i class="fa fa-plus-circle"></i> <span>Create New
                                 Ticket</span></div>
                         <div class="like-box" id="view-prev-tickets-box"><i class="fa fa-history"></i> <span>View
@@ -171,8 +169,8 @@ if (isset($_COOKIE['theme'])) {
                             <ul id="file-list" style="margin-top: 10px; list-style: none; padding: 0;"></ul>
                         </div>
 
-                        <button type="submit" class="btn-primary">
-                            Submit Support Ticket
+                        <button type="submit" class="btn-primary" id="ticketSubmitBtn">
+                            <span class="ticket-submit-btn-label">Submit Support Ticket</span>
                         </button>
                     </section>
                 </div>

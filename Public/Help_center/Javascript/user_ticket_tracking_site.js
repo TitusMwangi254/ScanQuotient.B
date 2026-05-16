@@ -34,22 +34,17 @@ if (successToast) {
   }, 4000);
 }
 
-const modal = document.getElementById("closeTicketModal");
-const modalContent = document.getElementById("modalContent");
-const openModalBtn = document.getElementById("openCloseModalBtn");
-const cancelBtn = document.getElementById("cancelCloseBtn");
-
-if (openModalBtn) {
-  openModalBtn.addEventListener("click", () => {
-    modal.classList.remove("hidden");
-    setTimeout(() => {
-      modalContent.classList.remove("scale-95", "opacity-0");
-      modalContent.classList.add("scale-100", "opacity-100");
-    }, 10);
-  });
+function openModal(modal, modalContent) {
+  if (!modal || !modalContent) return;
+  modal.classList.remove("hidden");
+  setTimeout(() => {
+    modalContent.classList.remove("scale-95", "opacity-0");
+    modalContent.classList.add("scale-100", "opacity-100");
+  }, 10);
 }
 
-function closeModal() {
+function closeModal(modal, modalContent) {
+  if (!modal || !modalContent) return;
   modalContent.classList.remove("scale-100", "opacity-100");
   modalContent.classList.add("scale-95", "opacity-0");
   setTimeout(() => {
@@ -57,10 +52,144 @@ function closeModal() {
   }, 200);
 }
 
-if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
-modal.addEventListener("click", (e) => {
-  if (e.target === modal) closeModal();
-});
+const closeTicketModal = document.getElementById("closeTicketModal");
+const closeModalContent = document.getElementById("modalContent");
+const openCloseModalBtn = document.getElementById("openCloseModalBtn");
+const cancelCloseBtn = document.getElementById("cancelCloseBtn");
+
+if (openCloseModalBtn) {
+  openCloseModalBtn.addEventListener("click", () => {
+    openModal(closeTicketModal, closeModalContent);
+  });
+}
+
+if (cancelCloseBtn) {
+  cancelCloseBtn.addEventListener("click", () => closeModal(closeTicketModal, closeModalContent));
+}
+
+if (closeTicketModal) {
+  closeTicketModal.addEventListener("click", (e) => {
+    if (e.target === closeTicketModal) closeModal(closeTicketModal, closeModalContent);
+  });
+}
+
+const attachmentUploadModal = document.getElementById("attachmentUploadModal");
+const attachmentModalContent = document.getElementById("attachmentModalContent");
+const openAttachmentModalBtn = document.getElementById("openAttachmentModalBtn");
+const cancelAttachmentBtn = document.getElementById("cancelAttachmentBtn");
+const confirmAttachmentBtn = document.getElementById("confirmAttachmentBtn");
+const addAttachmentsForm = document.getElementById("add-attachments-form");
+const attachmentInput = document.getElementById("ticket-attachments");
+const attachmentFileList = document.getElementById("attachment-file-list");
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "pdf", "txt"];
+
+function getSelectedAttachmentFiles() {
+  if (!attachmentInput || !attachmentInput.files) return [];
+  return Array.from(attachmentInput.files);
+}
+
+function validateAttachmentSelection(files) {
+  if (!files.length) {
+    return "Please select at least one file to upload.";
+  }
+
+  for (const file of files) {
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      return `File type not allowed: ${file.name}`;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return `File exceeds 5 MB: ${file.name}`;
+    }
+  }
+
+  return "";
+}
+
+function renderAttachmentFileList() {
+  if (!attachmentFileList || !attachmentInput) return;
+
+  attachmentFileList.innerHTML = "";
+  const files = getSelectedAttachmentFiles();
+
+  files.forEach((file, index) => {
+    const li = document.createElement("li");
+    li.className = "attachment-file-list-item";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = file.name;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "attachment-file-remove";
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", () => {
+      const dt = new DataTransfer();
+      files.forEach((f, i) => {
+        if (i !== index) dt.items.add(f);
+      });
+      attachmentInput.files = dt.files;
+      renderAttachmentFileList();
+    });
+
+    li.appendChild(nameSpan);
+    li.appendChild(removeBtn);
+    attachmentFileList.appendChild(li);
+  });
+}
+
+if (attachmentInput) {
+  attachmentInput.addEventListener("change", renderAttachmentFileList);
+}
+
+if (openAttachmentModalBtn) {
+  openAttachmentModalBtn.addEventListener("click", () => {
+    const error = validateAttachmentSelection(getSelectedAttachmentFiles());
+    if (error) {
+      window.alert(error);
+      return;
+    }
+    openModal(attachmentUploadModal, attachmentModalContent);
+  });
+}
+
+if (cancelAttachmentBtn) {
+  cancelAttachmentBtn.addEventListener("click", () => {
+    closeModal(attachmentUploadModal, attachmentModalContent);
+  });
+}
+
+if (attachmentUploadModal) {
+  attachmentUploadModal.addEventListener("click", (e) => {
+    if (e.target === attachmentUploadModal) {
+      closeModal(attachmentUploadModal, attachmentModalContent);
+    }
+  });
+}
+
+if (confirmAttachmentBtn && addAttachmentsForm) {
+  confirmAttachmentBtn.addEventListener("click", () => {
+    const error = validateAttachmentSelection(getSelectedAttachmentFiles());
+    if (error) {
+      window.alert(error);
+      return;
+    }
+
+    confirmAttachmentBtn.disabled = true;
+    confirmAttachmentBtn.innerHTML =
+      '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+    if (openAttachmentModalBtn) {
+      openAttachmentModalBtn.disabled = true;
+      openAttachmentModalBtn.classList.add("attachment-upload-btn--loading");
+      openAttachmentModalBtn.innerHTML =
+        '<i class="fas fa-spinner fa-spin"></i> Uploading...';
+    }
+
+    addAttachmentsForm.submit();
+  });
+}
 
 const backToTopBtn = document.getElementById("back-to-top");
 window.addEventListener("scroll", () => {

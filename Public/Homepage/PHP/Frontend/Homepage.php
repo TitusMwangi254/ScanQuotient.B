@@ -99,9 +99,6 @@ require_once __DIR__ . '/../../../security_headers.php';
                     <a href="../../../Registration_page/PHP/Frontend/Registration_page.php" class="btn btn-primary">
                         <i class="fas fa-shield-alt"></i> Start Free Scan
                     </a>
-                    <a href="#features" class="btn btn-secondary">
-                        <i class="fas fa-play-circle"></i> Watch Demo
-                    </a>
                 </div>
             </div>
 
@@ -553,7 +550,11 @@ require_once __DIR__ . '/../../../security_headers.php';
                 </div>
 
                 <div class="about-visual">
-                    <div class="about-image"></div>
+                    <div class="about-image">
+                        <img src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&amp;fit=crop&amp;w=1200&amp;q=80"
+                            alt="Web security assessment dashboard displaying vulnerability scan results and risk metrics"
+                            loading="lazy" width="1200" height="675" />
+                    </div>
                     <div
                         style="position: absolute; bottom: -20px; right: -20px; background: var(--glass); border: 1px solid var(--glass-border); border-radius: 16px; padding: 20px; backdrop-filter: blur(10px);">
                         <div style="font-size: 2rem; font-weight: 700; color: var(--primary);">500+</div>
@@ -636,7 +637,7 @@ require_once __DIR__ . '/../../../security_headers.php';
 
                 <div class="contact-form-wrapper">
                     <h3 style="font-size: 1.5rem; margin-bottom: 24px; color: var(--text-main);">Send Message</h3>
-                    <form action="../Backend/submit_customer_feedback.php" method="POST">
+                    <form id="contactForm" action="../Backend/submit_customer_feedback.php" method="POST">
                         <div class="form-group">
                             <input type="text" name="name" placeholder="Your Name" required>
                         </div>
@@ -649,8 +650,8 @@ require_once __DIR__ . '/../../../security_headers.php';
                         <div class="form-group">
                             <textarea name="message" placeholder="Your Message" required></textarea>
                         </div>
-                        <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">
-                            <i class="fas fa-paper-plane"></i> Send Message
+                        <button type="submit" id="contactSubmitBtn" class="btn btn-primary sq-contact-submit-btn" style="width: 100%; justify-content: center;">
+                            <i class="fas fa-paper-plane" aria-hidden="true"></i> Send Message
                         </button>
                     </form>
                 </div>

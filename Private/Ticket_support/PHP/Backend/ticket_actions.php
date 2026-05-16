@@ -2,6 +2,8 @@
 session_start();
 header('Content-Type: application/json; charset=utf-8');
 
+require_once __DIR__ . '/../../../../Public/Help_center/PHP/Backend/ticket_attachment_helpers.php';
+
 require 'C:/Users/1/vendor/autoload.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
@@ -18,6 +20,7 @@ if ($conn->connect_error) {
     echo json_encode(['status' => 'error', 'message' => 'DB connection failed']);
     exit;
 }
+sq_ticket_apply_db_timezone($conn);
 
 /* --- Read JSON payload --- */
 $raw = file_get_contents('php://input');
@@ -179,12 +182,32 @@ switch ($action) {
             break;
         }
 
-        $stmt = $conn->prepare("UPDATE support_tickets SET answer = ?, resolver_id = ?, updated_at = NOW() WHERE unique_id = ?");
-        $stmt->bind_param("sss", $resolution, $user_id, $unique_id);
+        $hadResolution = false;
+        $check = $conn->prepare("SELECT answer FROM support_tickets WHERE unique_id = ? LIMIT 1");
+        $check->bind_param("s", $unique_id);
+        $check->execute();
+        $checkResult = $check->get_result();
+        if ($row = $checkResult->fetch_assoc()) {
+            $hadResolution = trim((string) ($row['answer'] ?? '')) !== '';
+        }
+        $check->close();
+
+        $updatedAt = sq_ticket_now_eat();
+        $stmt = $conn->prepare("UPDATE support_tickets SET answer = ?, resolver_id = ?, updated_at = ? WHERE unique_id = ?");
+        $stmt->bind_param("ssss", $resolution, $user_id, $updatedAt, $unique_id);
         if ($stmt->execute()) {
-            $email_sent = send_ticket_email($conn, $unique_id, 'Resolution Added', $resolution);
-            $response_message = 'Resolution saved' . ($email_sent ? ' and email sent' : ' (email failed)');
-            echo json_encode(['status' => 'ok', 'message' => $response_message, 'email_sent' => $email_sent]);
+            $emailSubject = $hadResolution ? 'Resolution Updated' : 'Resolution Added';
+            $email_sent = send_ticket_email($conn, $unique_id, $emailSubject, $resolution);
+            $response_message = ($hadResolution ? 'Resolution updated' : 'Resolution saved')
+                . ($email_sent ? ' and email sent' : ' (email failed)');
+            echo json_encode([
+                'status' => 'ok',
+                'message' => $response_message,
+                'email_sent' => $email_sent,
+                'answer' => $resolution,
+                'is_update' => $hadResolution,
+                'updated_at' => sq_ticket_format_eat_display($updatedAt),
+            ]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Failed to save resolution']);
         }
@@ -199,26 +222,33 @@ switch ($action) {
             break;
         }
 
-        $stmt = $conn->prepare("SELECT admin_reply FROM support_tickets WHERE unique_id = ? LIMIT 1");
+        $stmt = $conn->prepare("SELECT * FROM support_tickets WHERE unique_id = ? LIMIT 1");
         $stmt->bind_param("s", $unique_id);
         $stmt->execute();
         $res = $stmt->get_result();
-        $row = $res->fetch_assoc();
+        $ticketRow = $res->fetch_assoc();
         $stmt->close();
 
-        $existing = isset($row['admin_reply']) ? trim((string) $row['admin_reply']) : '';
-        $finalReply = ($existing === '' || $existing === null || $existing === '—') ? $newReply : $existing . "\n\n" . $newReply;
+        if (!$ticketRow) {
+            echo json_encode(['status' => 'error', 'message' => 'Ticket not found']);
+            break;
+        }
 
-        $stmt = $conn->prepare("UPDATE support_tickets SET admin_reply = ?, updated_at = NOW() WHERE unique_id = ?");
-        $stmt->bind_param("ss", $finalReply, $unique_id);
-        if ($stmt->execute()) {
+        $log = sq_conversation_append_message($ticketRow, 'admin', $newReply);
+        if (sq_persist_conversation_log_mysqli($conn, $unique_id, $log, $ticketRow['message'] ?? null)) {
             $email_sent = send_ticket_email($conn, $unique_id, 'Admin Reply', $newReply);
             $response_message = 'Admin reply saved' . ($email_sent ? ' and email sent' : ' (email failed)');
-            echo json_encode(['status' => 'ok', 'message' => $response_message, 'admin_reply' => $finalReply, 'email_sent' => $email_sent]);
+            $last = $log[count($log) - 1];
+            echo json_encode([
+                'status' => 'ok',
+                'message' => $response_message,
+                'email_sent' => $email_sent,
+                'sent_at' => $last['sent_at'] ?? sq_ticket_now_eat(),
+                'sent_at_label' => sq_ticket_format_eat_display($last['sent_at'] ?? sq_ticket_now_eat()),
+            ]);
         } else {
             echo json_encode(['status' => 'error', 'message' => 'Failed to save reply']);
         }
-        $stmt->close();
         break;
 
     // ---------------- CHANGE STATUS ----------------

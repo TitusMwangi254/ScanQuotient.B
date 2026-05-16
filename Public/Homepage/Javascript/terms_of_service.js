@@ -2,8 +2,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const themeToggle = document.getElementById("themeToggle");
   const themeIcon = document.getElementById("themeIcon");
   const body = document.body;
-  const scrollToTopBtn = document.getElementById("scrollToTopBtn");
-
   // Load theme preference from local storage
   if (localStorage.getItem("theme") === "dark-mode") {
     body.classList.add("dark-mode");
@@ -31,13 +29,5 @@ document.addEventListener("DOMContentLoaded", () => {
       localStorage.setItem("theme", "light-mode");
       themeToggle.setAttribute("data-tooltip", "Switch to Dark Mode");
     }
-  });
-
-  // Scroll-to-top functionality
-  scrollToTopBtn.addEventListener("click", function () {
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
   });
 });

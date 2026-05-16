@@ -367,8 +367,9 @@ footer {
     /* Light mode gradient */
     color: #1e293b;
     /* Dark text for light mode */
-    padding: 60px 0;
+    padding: 60px 0 0;
     width: 100%;
+    margin-top: auto;
     border-top: 2px solid #3b82f6;
     /* Blue border for light mode */
     transition: all 0.3s ease;
@@ -469,11 +470,27 @@ body.dark-mode .footer-col ul li a:hover {
     /* Purple hover for dark mode */
 }
 
-/* Bottom Bar */
+.footer-bottom p {
+    margin: 0;
+}
+
+/* Bottom Bar — full width of footer */
+footer .footer-bottom {
+    width: 100%;
+    max-width: none;
+    margin-top: 50px;
+    margin-bottom: 0;
+    margin-left: 0;
+    margin-right: 0;
+    padding: 16px 0;
+    box-sizing: border-box;
+}
+
 .footer-bottom {
     width: 100%;
     margin-top: 50px;
-    padding: 20px 0;
+    margin-bottom: 0;
+    padding: 16px 0;
     background-color: rgba(59, 130, 246, 0.1);
     /* Light blue tint for light mode */
     border-top: 1px solid rgba(59, 130, 246, 0.2);

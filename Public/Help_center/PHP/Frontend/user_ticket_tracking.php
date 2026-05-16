@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../../../security_headers.php';
+require_once __DIR__ . '/../Backend/ticket_attachment_helpers.php';
 
 function getBaseUrl() {
     $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' || $_SERVER['SERVER_PORT'] == 443) ? "https://" : "http://";
@@ -29,6 +30,7 @@ $page_success_message = '';
 
 try {
     $pdo = new PDO($dsn, $user, $pass, $options);
+    sq_ticket_apply_db_timezone($pdo);
 } catch (PDOException $e) {
     error_log("DB connection failed: " . $e->getMessage());
     $page_error_message = 'Database connection failed. Please try again later.';
@@ -63,7 +65,7 @@ if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && 
 if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unique_id'], $_POST['new_user_reply'])) {
     $unique_id_post = trim($_POST['unique_id']);
     $new_user_reply = trim($_POST['new_user_reply']);
-    $sql_fetch_current = "SELECT user_reply, status FROM support_tickets WHERE unique_id = ?";
+    $sql_fetch_current = "SELECT * FROM support_tickets WHERE unique_id = ?";
     $stmt_fetch = $pdo->prepare($sql_fetch_current);
     $stmt_fetch->execute([$unique_id_post]);
     $current_ticket = $stmt_fetch->fetch();
@@ -74,14 +76,13 @@ if ($pdo && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['unique_id'], 
     }
 
     if ($current_ticket) {
-        $existing_user_reply = $current_ticket['user_reply'];
-        $updated_user_reply = !empty($existing_user_reply) ? $existing_user_reply . ', ' . $new_user_reply : $new_user_reply;
-        $sql_update = "UPDATE support_tickets SET user_reply = ?, updated_at = NOW() WHERE unique_id = ?";
         try {
-            $stmt_update = $pdo->prepare($sql_update);
-            $stmt_update->execute([$updated_user_reply, $unique_id_post]);
-            header("Location: " . $_SERVER['PHP_SELF'] . "?id=" . urlencode($unique_id_post) . "&success=reply_added");
-            exit();
+            $log = sq_conversation_append_message($current_ticket, 'user', $new_user_reply);
+            if (sq_persist_conversation_log_pdo($pdo, $unique_id_post, $log, $current_ticket['message'] ?? null)) {
+                header("Location: " . $_SERVER['PHP_SELF'] . "?id=" . urlencode($unique_id_post) . "&success=reply_added");
+                exit();
+            }
+            $page_error_message = 'Error saving your reply.';
         } catch (PDOException $e) {
             $page_error_message = 'Error saving your reply.';
         }
@@ -111,6 +112,9 @@ if (isset($_GET['error'])) {
         case 'already_closed': $page_error_message = 'Ticket is already closed.'; break;
         case 'close_error': $page_error_message = 'Error closing ticket.'; break;
         case 'closed_reply': $page_error_message = 'Cannot reply to a closed ticket.'; break;
+        case 'closed_attachments': $page_error_message = 'Cannot add attachments to a closed ticket.'; break;
+        case 'attachment_validation': $page_error_message = $_SESSION['toast_message'] ?? 'Invalid attachment upload.'; unset($_SESSION['toast_message']); break;
+        case 'upload_failed': $page_error_message = $_SESSION['toast_message'] ?? 'Failed to upload attachments.'; unset($_SESSION['toast_message']); break;
         default: $page_error_message = htmlspecialchars($_GET['error']);
     }
 }
@@ -118,6 +122,28 @@ if (isset($_GET['error'])) {
 if (isset($_GET['success'])) {
     if ($_GET['success'] === 'reply_added') $page_success_message = 'Reply submitted successfully!';
     if ($_GET['success'] === 'ticket_closed') $page_success_message = 'Ticket closed successfully!';
+    if ($_GET['success'] === 'attachments_added') $page_success_message = 'Attachment(s) uploaded successfully!';
+}
+
+$ticketAttachments = ['paths' => [], 'names' => []];
+$conversationThread = [];
+if ($ticket) {
+    $ticketAttachments = sq_parse_ticket_attachment_fields(
+        $ticket['attachment_path'] ?? '',
+        $ticket['attachment_name'] ?? ''
+    );
+
+    $conversationThread = sq_get_ticket_conversation_thread($ticket);
+    $initialMessage = trim((string) ($ticket['message'] ?? ''));
+    if ($initialMessage !== '') {
+        $conversationThread = array_values(array_filter(
+            $conversationThread,
+            static fn(array $entry): bool => !(
+                ($entry['role'] ?? '') === 'user'
+                && trim((string) ($entry['text'] ?? '')) === $initialMessage
+            )
+        ));
+    }
 }
 
 $baseUrl = getBaseUrl();
@@ -212,9 +238,6 @@ function getPriorityStyle($priority) {
                         <span class="px-3 py-1 rounded-lg text-xs font-semibold border priority-<?= htmlspecialchars(strtolower($ticket['priority'])) ?>">
                             <i class="fas fa-flag mr-1"></i><?= htmlspecialchars(ucwords($ticket['priority'])) ?> Priority
                         </span>
-                        <span class="px-3 py-1 rounded-lg bg-slate-100 text-xs font-semibold text-slate-600 border border-slate-300">
-                            <?= htmlspecialchars(ucwords(str_replace('_', ' ', $ticket['category']))) ?>
-                        </span>
                     </div>
                 </div>
 
@@ -259,53 +282,84 @@ function getPriorityStyle($priority) {
                             </div>
                         </div>
 
-                        <?php if (!empty($ticket['attachment_name'])): ?>
-                        <div class="ticket-card p-6 animate-slide-in" style="animation-delay: 0.3s;">
-                            <h3 class="text-lg font-semibold mb-4 flex items-center gap-2 icon-colored">
-                                <i class="fas fa-paperclip"></i> Attachments
-                            </h3>
-                            <div class="space-y-2">
-                                <?php
-                                $paths = explode(',', $ticket['attachment_path']);
-                                $names = explode(',', $ticket['attachment_name']);
-                                $paths = array_filter(array_map('trim', $paths));
-                                $names = array_filter(array_map('trim', $names));
-                                
-                                if (!empty($paths) && count($paths) === count($names)):
-                                    foreach ($paths as $index => $path):
-                                        $filename = htmlspecialchars($names[$index]);
+                        <div class="ticket-card attachments-panel p-6 animate-slide-in" style="animation-delay: 0.3s;">
+                            <div class="attachments-panel-header">
+                                <h3 class="text-lg font-semibold flex items-center gap-2 icon-colored">
+                                    <i class="fas fa-paperclip"></i> Attachments
+                                </h3>
+                                <span class="attachments-count-badge"><?= count($ticketAttachments['paths']) ?> / 5</span>
+                            </div>
+                            <div class="attachments-list-wrap">
+                                <?php if (!empty($ticketAttachments['paths'])): ?>
+                                    <ul class="attachments-list">
+                                    <?php foreach ($ticketAttachments['paths'] as $index => $path):
+                                        $rawName = $ticketAttachments['names'][$index];
+                                        $filename = htmlspecialchars($rawName);
+                                        $iconClass = sq_attachment_icon_class($rawName);
                                         $fileUrl = $baseUrl . BASE_UPLOAD_URL . basename($path);
-                                ?>
-                                    <div class="attachment-card p-3 flex items-center gap-3">
-                                        <div class="w-8 h-8 rounded bg-violet-100 flex items-center justify-center icon-colored flex-shrink-0">
-                                            <i class="fas fa-file"></i>
+                                    ?>
+                                    <li class="attachment-card">
+                                        <div class="attachment-card-icon" aria-hidden="true">
+                                            <i class="fas <?= htmlspecialchars($iconClass) ?>"></i>
                                         </div>
-                                        
-                                        <!-- Filename with tooltip -->
                                         <div class="attachment-filename-container">
-                                            <div class="attachment-filename" title="Hover to see full name">
-                                                <?= $filename ?>
-                                            </div>
-                                            <!-- Tooltip showing full filename -->
+                                            <span class="attachment-filename-label">File</span>
+                                            <div class="attachment-filename" title="<?= $filename ?>"><?= $filename ?></div>
                                             <div class="filename-tooltip"><?= $filename ?></div>
                                         </div>
-                                        
                                         <div class="attachment-actions">
-                                            <a href="<?= $fileUrl ?>" target="_blank" title="View">
+                                            <a href="<?= $fileUrl ?>" target="_blank" rel="noopener" class="attachment-action-btn" title="View file">
                                                 <i class="fas fa-eye"></i>
                                             </a>
-                                            <a href="<?= $fileUrl ?>" download title="Download">
+                                            <a href="<?= $fileUrl ?>" download class="attachment-action-btn" title="Download file">
                                                 <i class="fas fa-download"></i>
                                             </a>
                                         </div>
+                                    </li>
+                                    <?php endforeach; ?>
+                                    </ul>
+                                <?php else: ?>
+                                    <div class="attachments-empty-state">
+                                        <i class="fas fa-folder-open"></i>
+                                        <p>No attachments yet</p>
+                                        <span>Upload files below to share screenshots or documents with support.</span>
                                     </div>
-                                <?php 
-                                    endforeach;
-                                endif;
-                                ?>
+                                <?php endif; ?>
                             </div>
+
+                            <?php if ($ticket['status'] !== 'closed'): ?>
+                                <?php $remainingSlots = max(0, 5 - count($ticketAttachments['paths'])); ?>
+                                <div class="attachment-upload-zone">
+                                    <form id="add-attachments-form"
+                                        action="../Backend/add_ticket_attachments.php"
+                                        method="POST"
+                                        enctype="multipart/form-data"
+                                        class="attachment-upload-form">
+                                        <input type="hidden" name="unique_id" value="<?= htmlspecialchars($ticket['unique_id']) ?>">
+                                        <p class="attachment-upload-title">
+                                            <i class="fas fa-cloud-arrow-up"></i> Add new attachment(s)
+                                        </p>
+                                        <label for="ticket-attachments" class="attachment-file-drop">
+                                            <input type="file" id="ticket-attachments" name="attachments[]"
+                                                accept=".jpg,.jpeg,.png,.pdf,.txt" multiple class="attachment-file-input" />
+                                            <span class="attachment-file-drop-icon"><i class="fas fa-file-circle-plus"></i></span>
+                                            <span class="attachment-file-drop-text">Click to choose files</span>
+                                            <span class="attachment-file-drop-hint">JPG, PNG, PDF, TXT &middot; max 5 MB each</span>
+                                        </label>
+                                        <p class="attachment-upload-meta">
+                                            <i class="fas fa-circle-info"></i>
+                                            You can add up to <strong><?= (int) $remainingSlots ?></strong> more file(s) on this ticket.
+                                        </p>
+                                        <ul id="attachment-file-list" class="attachment-file-list"></ul>
+                                        <button type="button" id="openAttachmentModalBtn" class="attachment-upload-btn">
+                                            <i class="fas fa-upload"></i> Upload attachment(s)
+                                        </button>
+                                    </form>
+                                </div>
+                            <?php else: ?>
+                                <p class="attachments-closed-note"><i class="fas fa-lock"></i> Attachments cannot be added to a closed ticket.</p>
+                            <?php endif; ?>
                         </div>
-                        <?php endif; ?>
                     </div>
 
                     <!-- Right Column: Content -->
@@ -342,38 +396,38 @@ function getPriorityStyle($priority) {
                         <div class="ticket-card p-6 animate-slide-in" style="animation-delay: 0.4s;">
                             <div class="flex items-center justify-between mb-4">
                                 <h3 class="text-lg font-semibold flex items-center gap-2 icon-colored">
-                                    <i class="fas fa-comments"></i> Additional Info
+                                    <i class="fas fa-comments"></i> Conversation
                                 </h3>
                                 <?php if ($ticket['status'] !== 'closed'): ?>
                                     <span class="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded border border-slate-300">
-                                        <i class="fas fa-info-circle mr-1"></i>Send additional details here
+                                        <i class="fas fa-info-circle mr-1"></i>Conversation with support team
                                     </span>
                                 <?php endif; ?>
                             </div>
                             
-                            <div class="space-y-3 mb-6">
-                                <?php
-                                $user_replies_array = [];
-                                if (!empty($ticket['user_reply'])) {
-                                    $user_replies_array = array_filter(array_map('trim', explode(',', $ticket['user_reply'])));
-                                }
-                                
-                                if (!empty($user_replies_array)):
-                                    foreach ($user_replies_array as $reply):
-                                ?>
-                                    <div class="reply-card p-3 flex gap-3">
-                                        <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 text-xs font-bold">
-                                            YOU
-                                        </div>
+                            <div class="conversation-thread space-y-3 mb-6">
+                                <?php if (!empty($conversationThread)): ?>
+                                    <?php foreach ($conversationThread as $entry): ?>
+                                        <?php if ($entry['role'] === 'user'): ?>
+                                    <div class="reply-card conversation-bubble conversation-bubble--user p-3 flex gap-3">
+                                        <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0 text-xs font-bold">YOU</div>
                                         <div class="flex-1">
-                                            <p class="text-sm text-slate-700"><?= nl2br(htmlspecialchars($reply)) ?></p>
+                                            <p class="text-xs font-semibold text-blue-600 mb-1">You<?php if (!empty($entry['sent_at_label'])): ?> <span class="conversation-time"><?= htmlspecialchars($entry['sent_at_label']) ?></span><?php endif; ?></p>
+                                            <p class="text-sm text-slate-700"><?= nl2br(htmlspecialchars($entry['text'])) ?></p>
                                         </div>
                                     </div>
-                                <?php 
-                                    endforeach;
-                                else:
-                                ?>
-                                    <p class="text-sm text-slate-500 italic text-center py-4">No additional information submitted yet.</p>
+                                        <?php else: ?>
+                                    <div class="reply-card conversation-bubble conversation-bubble--admin p-3 flex gap-3">
+                                        <div class="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center text-violet-600 flex-shrink-0 text-xs font-bold">SQ</div>
+                                        <div class="flex-1">
+                                            <p class="text-xs font-semibold text-violet-600 mb-1">Support Team<?php if (!empty($entry['sent_at_label'])): ?> <span class="conversation-time"><?= htmlspecialchars($entry['sent_at_label']) ?></span><?php endif; ?></p>
+                                            <p class="text-sm text-slate-700"><?= nl2br(htmlspecialchars($entry['text'])) ?></p>
+                                        </div>
+                                    </div>
+                                        <?php endif; ?>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <p class="text-sm text-slate-500 italic text-center py-4">No follow-up messages yet. Add a note below and our team will reply here.</p>
                                 <?php endif; ?>
                             </div>
 
@@ -397,26 +451,6 @@ function getPriorityStyle($priority) {
                                 </div>
                             <?php endif; ?>
                         </div>
-
-                        <!-- Admin Note -->
-                        <?php if (!empty($ticket['admin_reply'])): ?>
-                        <div class="admin-note p-6 animate-slide-in" style="animation-delay: 0.5s;">
-                            <div class="flex items-center gap-2 mb-3">
-                                <div class="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center icon-colored">
-                                    <i class="fas fa-user-shield"></i>
-                                </div>
-                                <div>
-                                    <h3 class="text-sm font-bold text-violet-600 uppercase tracking-wider">Admin Note</h3>
-                                    <p class="text-xs text-slate-500">For internal reference</p>
-                                </div>
-                            </div>
-                            <div class="pl-10">
-                                <p class="text-sm text-slate-700 leading-relaxed bg-white/50 p-3 rounded-lg border border-violet-200">
-                                    <?= nl2br(htmlspecialchars($ticket['admin_reply'])) ?>
-                                </p>
-                            </div>
-                        </div>
-                        <?php endif; ?>
 
                         <!-- Action Bar -->
                         <div class="flex justify-between items-center pt-4 animate-slide-in" style="animation-delay: 0.5s;">
@@ -480,6 +514,28 @@ function getPriorityStyle($priority) {
             </div>
         </div>
     </footer>
+
+
+    <!-- Upload Attachments Modal -->
+    <div id="attachmentUploadModal" class="modal-overlay fixed inset-0 z-[100] hidden flex items-center justify-center p-4">
+        <div class="ticket-card max-w-md w-full p-6 transform transition-all scale-95 opacity-0" id="attachmentModalContent">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-violet-100 flex items-center justify-center text-violet-600 text-2xl">
+                    <i class="fas fa-paperclip"></i>
+                </div>
+                <h3 class="text-xl font-bold mb-2">Upload attachment(s)?</h3>
+                <p class="text-slate-600 text-sm">Selected files will be added to this ticket. Max 5 MB per file.</p>
+            </div>
+            <div class="flex gap-3">
+                <button type="button" id="cancelAttachmentBtn" class="flex-1 py-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium transition-colors border-2 border-slate-300">
+                    Cancel
+                </button>
+                <button type="button" id="confirmAttachmentBtn" class="flex-1 py-2.5 rounded-lg btn-primary font-medium">
+                    Yes, Upload
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- Close Ticket Modal -->
     <div id="closeTicketModal" class="modal-overlay fixed inset-0 z-[100] hidden flex items-center justify-center p-4">

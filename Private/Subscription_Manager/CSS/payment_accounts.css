@@ -508,11 +508,46 @@ body.sq-dark .sq-btn-primary:hover {
     transform: translateY(-2px);
 }
 
+/* Floating action buttons (add + back to top) */
+.sq-floating-actions {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.sq-floating-actions .sq-back-to-top {
+    position: static;
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    border: none;
+    background: #10b981;
+    color: white;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.15);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+body.sq-dark .sq-floating-actions .sq-back-to-top {
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+
+.sq-floating-actions .sq-back-to-top.sq-back-to-top--visible {
+    display: flex;
+    transform: translateY(-2px);
+}
+
 /* Add Button */
 .sq-add-btn {
-    position: fixed;
-    bottom: 30px;
-    right: 30px;
+    position: static;
     width: 60px;
     height: 60px;
     border-radius: 50%;
@@ -523,7 +558,6 @@ body.sq-dark .sq-btn-primary:hover {
     cursor: pointer;
     box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
     transition: all 0.3s;
-    z-index: 50;
     display: flex;
     align-items: center;
     justify-content: center;

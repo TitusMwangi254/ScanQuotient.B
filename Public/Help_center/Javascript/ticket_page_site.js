@@ -320,4 +320,31 @@ document.addEventListener("DOMContentLoaded", () => {
     notificationsContainer,
     urgentAssistance,
   ]);
+
+  // Ticket form: disable submit and show spinner while posting
+  const ticketForm = document.getElementById("ticket-form");
+  const ticketSubmitBtn = document.getElementById("ticketSubmitBtn");
+
+  if (ticketForm && ticketSubmitBtn) {
+    const ticketBtnDefaultHtml = ticketSubmitBtn.innerHTML;
+
+    ticketForm.addEventListener("submit", function () {
+      if (ticketSubmitBtn.disabled) return;
+
+      ticketSubmitBtn.disabled = true;
+      ticketSubmitBtn.setAttribute("aria-busy", "true");
+      ticketSubmitBtn.classList.add("sq-ticket-submit-btn--loading");
+      ticketSubmitBtn.innerHTML =
+        '<i class="fas fa-spinner fa-spin" aria-hidden="true"></i> Submitting...';
+    });
+
+    window.addEventListener("pageshow", function (event) {
+      if (event.persisted) {
+        ticketSubmitBtn.disabled = false;
+        ticketSubmitBtn.removeAttribute("aria-busy");
+        ticketSubmitBtn.classList.remove("sq-ticket-submit-btn--loading");
+        ticketSubmitBtn.innerHTML = ticketBtnDefaultHtml;
+      }
+    });
+  }
 });

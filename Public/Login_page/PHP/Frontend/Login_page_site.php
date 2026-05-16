@@ -109,6 +109,23 @@ header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
 
     <script src="../../Javascript/login_page.js" defer></script>
     <script>
+        (function () {
+            try {
+                var username = sessionStorage.getItem('sq_first_login_username');
+                if (username) {
+                    var field = document.getElementById('usernameField');
+                    if (field) {
+                        field.value = username;
+                        field.setAttribute('autocomplete', 'username');
+                    }
+                    sessionStorage.removeItem('sq_first_login_username');
+                }
+            } catch (e) {
+                /* ignore */
+            }
+        })();
+    </script>
+    <script>
         // Theme switcher logic
         const checkbox = document.getElementById('checkbox');
         const themeLabel = document.getElementById('theme-label');

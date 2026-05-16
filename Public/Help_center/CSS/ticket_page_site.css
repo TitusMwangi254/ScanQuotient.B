@@ -177,98 +177,72 @@ body.light-theme .tagline {
     align-items: center;
 }
 
-/* Header Button - Icon Only with Tooltip */
-.header-button {
-    background: transparent;
-    border: none;
-    color: #3b82f6;
-    /* Blue in light mode */
-    cursor: pointer;
-    font-size: 1.2rem;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
+/* Header icon link (home) */
+.header-icon-link {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
+    width: 40px;
+    height: 40px;
+    color: #3b82f6;
+    text-decoration: none;
+    font-size: 1.2rem;
+    border-radius: 50%;
     transition: all 0.3s ease;
-    position: relative;
 }
 
-.header-button:hover {
+.header-icon-link:hover {
     background: rgba(59, 130, 246, 0.1);
     transform: scale(1.1);
+    color: #3b82f6;
 }
 
-/* Dark mode - Purple (matching your other page) */
-body.dark .header-button,
-body:not(.light-theme) .header-button {
+body.light-theme .header-icon-link,
+body.light-theme .header-icon-link:hover {
+    color: #3b82f6;
+}
+
+body.light-theme .header-icon-link:hover {
+    background: rgba(59, 130, 246, 0.1);
+}
+
+body.dark-theme .header-icon-link {
     color: #9b59b6;
-    /* Purple matching your other page */
 }
 
-body.dark .header-button:hover,
-body:not(.light-theme) .header-button:hover {
+body.dark-theme .header-icon-link:hover {
     background: rgba(155, 89, 182, 0.2);
-    /* Purple tint */
+    color: #9b59b6;
 }
 
-/* Tooltip */
-.header-button::before {
+.header-icon-link::after {
     content: attr(data-tooltip);
     position: absolute;
-    top: 50%;
-    right: 50px;
-    transform: translateY(-50%) translateX(10px);
-    background: var(--card-bg, #1f2937);
-    color: var(--text-main, #fff);
-    padding: 8px 14px;
-    border-radius: 8px;
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.85);
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 6px;
     font-size: 0.8rem;
     font-weight: 500;
     white-space: nowrap;
     opacity: 0;
     visibility: hidden;
-    transition: all 0.3s ease;
     pointer-events: none;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    z-index: 1001;
 }
 
-/* Tooltip Arrow */
-.header-button::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    right: 44px;
-    transform: translateY(-50%) translateX(10px);
-    border-width: 6px;
-    border-style: solid;
-    border-color: transparent transparent transparent var(--card-bg, #1f2937);
-    opacity: 0;
-    visibility: hidden;
-    transition: all 0.3s ease;
-    pointer-events: none;
-}
-
-/* Show Tooltip */
-.header-button:hover::before,
-.header-button:hover::after {
+.header-icon-link:hover::after {
     opacity: 1;
     visibility: visible;
-    transform: translateY(-50%) translateX(0);
 }
 
-/* Dark mode tooltip */
-body.dark .header-button::before,
-body:not(.light-theme) .header-button::before {
-    background: #1f1f1f;
-    border-color: #444;
-}
-
-body.dark .header-button::after,
-body:not(.light-theme) .header-button::after {
-    border-color: transparent transparent transparent #1f1f1f;
+body.light-theme .header-icon-link::after {
+    background: rgba(31, 41, 55, 0.92);
 }
 
 /* Main Content Layout */
@@ -648,6 +622,25 @@ textarea:focus {
     /* Slightly darker blue on hover */
 }
 
+#ticketSubmitBtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-width: 12rem;
+}
+
+#ticketSubmitBtn.sq-ticket-submit-btn--loading,
+#ticketSubmitBtn:disabled {
+    opacity: 0.85;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+#ticketSubmitBtn.sq-ticket-submit-btn--loading:hover {
+    background-color: var(--brand-color);
+}
+
 /* Urgent Assistance Section */
 .urgent-assistance {
     margin-top: 2rem;
@@ -911,16 +904,21 @@ body.light-theme .footer-tagline {
 }
 
 /* Dark mode - Purple (matching your other pages) */
-body.dark .theme-icon-btn,
-body:not(.light-theme) .theme-icon-btn {
-    color: #9b59b6;
-    /* Purple */
+body.light-theme .theme-icon-btn,
+body.light-theme .theme-icon-btn:hover {
+    color: #3b82f6;
 }
 
-body.dark .theme-icon-btn:hover,
-body:not(.light-theme) .theme-icon-btn:hover {
+body.light-theme .theme-icon-btn:hover {
+    background: rgba(59, 130, 246, 0.1);
+}
+
+body.dark-theme .theme-icon-btn {
+    color: #9b59b6;
+}
+
+body.dark-theme .theme-icon-btn:hover {
     background: rgba(155, 89, 182, 0.2);
-    /* Purple tint */
 }
 
 /* Tooltip */
@@ -970,14 +968,12 @@ body:not(.light-theme) .theme-icon-btn:hover {
 }
 
 /* Dark mode tooltip (matching your other pages) */
-body.dark .theme-icon-btn::before,
-body:not(.light-theme) .theme-icon-btn::before {
+body.dark-theme .theme-icon-btn::before {
     background: #1f1f1f;
     border-color: #444;
 }
 
-body.dark .theme-icon-btn::after,
-body:not(.light-theme) .theme-icon-btn::after {
+body.dark-theme .theme-icon-btn::after {
     border-color: transparent transparent transparent #1f1f1f;
 }
 

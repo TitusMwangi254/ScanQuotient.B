@@ -275,6 +275,16 @@ try {
 
     $pdo->commit();
 
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    $_SESSION['sq_pending_credentials'] = [
+        'email' => strtolower(trim($email)),
+        'username' => $user_name,
+        'password' => $generated_password,
+        'expires' => time() + 7200,
+    ];
+
     // Send beautifully styled email with credentials
     $mail = new PHPMailer(true);
 
@@ -328,7 +338,8 @@ try {
                                                     <tr>
                                                         <td style="padding: 10px 0; border-bottom: 1px solid #e9ecef;">
                                                             <span style="color: #6c757d; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Username</span>
-                                                            <p style="margin: 5px 0 0 0; font-size: 18px; color: #333333; font-weight: bold;">' . htmlspecialchars($surname) . '</p>
+                                                            <p style="margin: 5px 0 0 0; font-size: 18px; color: #333333; font-weight: bold; font-family: monospace;">' . htmlspecialchars($user_name) . '</p>
+                                                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #6c757d;">Use this exact username when signing in (all lowercase).</p>
                                                         </td>
                                                     </tr>
                                                     <tr>
@@ -376,7 +387,7 @@ try {
         </html>';
 
         // Plain text alternative
-        $mail->AltBody = "Welcome to ScanQuotient!\n\nHello $first_name,\n\nYour account has been created successfully.\n\nUsername: $surname\nPassword: $generated_password\n\nYour verification code is: $email_verification_token\nThis code expires in 5 minutes.\n\nPlease change your password after your first login.";
+        $mail->AltBody = "Welcome to ScanQuotient!\n\nHello $first_name,\n\nYour account has been created successfully.\n\nUsername: $user_name\nPassword: $generated_password\n\nYour verification code is: $email_verification_token\nThis code expires in 5 minutes.\n\nAfter verifying your email, sign in with these credentials. You will set a permanent password during account setup.";
 
         $mail->send();
 

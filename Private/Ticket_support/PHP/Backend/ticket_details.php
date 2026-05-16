@@ -35,10 +35,13 @@ $dbname = 'scanquotient.a1';
 $dbuser = 'root';
 $dbpass = '';
 
+require_once __DIR__ . '/../../../../Public/Help_center/PHP/Backend/ticket_attachment_helpers.php';
+
 $conn = new mysqli($servername, $dbuser, $dbpass, $dbname);
 if ($conn->connect_error) {
     die("DB connection failed: " . $conn->connect_error);
 }
+sq_ticket_apply_db_timezone($conn);
 
 /* --- Validate input --- */
 if (!isset($_GET['unique_id']) || $_GET['unique_id'] === '') {
@@ -74,16 +77,20 @@ function showVal($v, $fallback = '—')
     return ($v === null || $v === '') ? $fallback : esc($v);
 }
 
-/* prepare admin replies array for display (split on commas) */
-$adminRepliesRaw = isset($ticket['admin_reply']) ? trim((string) $ticket['admin_reply']) : '';
-$adminRepliesArr = [];
-if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
-    $parts = array_map('trim', explode(',', $adminRepliesRaw));
-    foreach ($parts as $p) {
-        if ($p !== '')
-            $adminRepliesArr[] = $p;
-    }
+$conversationThread = sq_get_ticket_conversation_thread($ticket);
+$initialMessage = trim((string) ($ticket['message'] ?? ''));
+if ($initialMessage !== '') {
+    $conversationThread = array_values(array_filter(
+        $conversationThread,
+        static fn(array $entry): bool => !(
+            ($entry['role'] ?? '') === 'user'
+            && trim((string) ($entry['text'] ?? '')) === $initialMessage
+        )
+    ));
 }
+
+$resolutionText = trim((string) ($ticket['answer'] ?? ''));
+$hasResolution = $resolutionText !== '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -151,7 +158,7 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
                 <p>This is the ticket details resolution page. Here you can:</p>
                 <ul>
                     <li>View complete ticket information in the left sidebar</li>
-                    <li>Add or update the resolution/answer for the ticket</li>
+                    <li>Add a resolution, or use <strong>Edit resolution</strong> to change an existing one</li>
                     <li>Reply to user messages and view conversation history</li>
                     <li>Change ticket status (Open, In Progress, Resolved, Closed)</li>
                     <li>Delete tickets permanently (use with caution)</li>
@@ -323,24 +330,43 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
         </aside>
 
         <!-- RIGHT TOP: Resolution Card -->
-        <section class="main-top-card">
+        <section class="main-top-card resolution-card">
             <div class="card-header">
-                    <div class=" card-icon success">
-                <i class="fas fa-check-circle"></i>
-                    </div>
-                <h2 class="card-title">Resolution & Answer</h2>
+                <div class="card-icon success">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <h2 class="card-title">Resolution &amp; Answer</h2>
             </div>
 
-            <div class="form-group">
-                <label class="form-label">Resolution / Final Answer</label>
-                <textarea id="ticket-resolution" class="form-textarea"
-                    placeholder="Enter the resolution or final answer for this ticket..."><?php echo esc($ticket['answer'] ?? ''); ?></textarea>
+            <div id="resolution-view" class="resolution-view<?= $hasResolution ? '' : ' sq-is-hidden' ?>">
+                <div id="resolution-display" class="resolution-display-body"><?= nl2br(esc($resolutionText)) ?></div>
+                <?php if (!empty($ticket['updated_at'])): ?>
+                    <p class="resolution-meta">
+                        <i class="fas fa-clock"></i>
+                        Last updated <?= esc(date('M j, Y g:i A', strtotime($ticket['updated_at']))) ?>
+                    </p>
+                <?php endif; ?>
+                <div class="resolution-actions">
+                    <button type="button" class="btn btn-secondary" id="editResolutionBtn">
+                        <i class="fas fa-pen"></i> Edit resolution
+                    </button>
+                </div>
             </div>
 
-            <div class="action-bar" style="border-top: none; padding-top: 0; margin-top: 0;">
-                <button class="btn btn-success" id="resolutionBtn">
-                    <i class="fas fa-save"></i> Save Resolution
-                </button>
+            <div id="resolution-edit" class="resolution-edit<?= $hasResolution ? ' sq-is-hidden' : '' ?>">
+                <div class="form-group">
+                    <label class="form-label" for="ticket-resolution">Resolution / Final Answer</label>
+                    <textarea id="ticket-resolution" class="form-textarea" rows="8"
+                        placeholder="Enter the resolution or final answer for this ticket..."><?= esc($resolutionText) ?></textarea>
+                </div>
+                <div class="resolution-actions">
+                    <button type="button" class="btn btn-success" id="resolutionBtn">
+                        <i class="fas fa-save"></i> <?= $hasResolution ? 'Save changes' : 'Save resolution' ?>
+                    </button>
+                    <button type="button" class="btn btn-secondary sq-is-hidden" id="cancelResolutionBtn">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                </div>
             </div>
         </section>
 
@@ -353,49 +379,35 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
                 <h2 class="card-title">Conversation History</h2>
             </div>
 
-            <!-- User Replies -->
-            <div class="replies-section">
+            <div class="replies-section conversation-section">
                 <div class="replies-title">
-                    <i class="fas fa-user" style="margin-right: 6px;"></i> User Messages
+                    <i class="fas fa-comments" style="margin-right: 6px;"></i> Conversation
                 </div>
-                <?php
-                $ur = showVal($ticket['user_reply'], '');
-                if ($ur !== '' && $ur !== '—'):
-                    $arr = array_map('trim', explode(',', $ur));
-                    ?>
-                    <ul class="reply-list">
-                        <?php foreach ($arr as $r): ?>
-                            <li class="reply-item user">
-                                                <?php echo esc($r); ?>
-                                        </li>
-                                <?php endforeach; ?>
-                            </ul>
-                    <?php else: ?>
-                            <div class="reply-empty">
-                                <i class="fas fa-comment-slash"></i> No user messages yet
-                            </div>
-                        <?php endif; ?>
-            </div>
 
-            <!-- Admin Replies -->
-            <div class="replies-section">
-                <div class="replies-title">
-                    <i class="fas fa-user-shield" style="margin-right: 6px;"></i> Admin Replies
+                <div class="conversation-thread" id="conversation-thread">
+                    <?php if (!empty($conversationThread)): ?>
+                        <div class="conversation-list" id="conversation-list">
+                            <?php foreach ($conversationThread as $entry): ?>
+                                <?php $isAdmin = ($entry['role'] === 'admin'); ?>
+                                <div class="reply-item <?= $isAdmin ? 'admin' : 'user' ?>">
+                                    <div class="reply-bubble-meta">
+                                        <span class="reply-avatar"><?= $isAdmin ? 'SQ' : 'U' ?></span>
+                                        <span class="reply-author"><?= $isAdmin ? 'Support Team' : 'Customer' ?></span>
+                                        <?php if (!empty($entry['sent_at_label'])): ?>
+                                            <span class="reply-time"><?= esc($entry['sent_at_label']) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="reply-bubble-body"><?= nl2br(esc($entry['text'])) ?></div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php else: ?>
+                        <div class="reply-empty" id="conversation-empty">
+                            <i class="fas fa-comment-slash"></i> No messages yet. Customer follow-ups and your replies will appear here.
+                        </div>
+                    <?php endif; ?>
                 </div>
-                <?php if (count($adminRepliesArr) > 0): ?>
-                    <ol class="reply-list" id="admin-replies-list">
-                        <?php foreach ($adminRepliesArr as $r): ?>
-                            <li class="reply-item admin">
-                                <?php echo esc($r); ?>
-                            </li>
-                        <?php endforeach; ?>
-                    </ol>
-                <?php else: ?>
-                    <div class="reply-empty" id="no-admin-replies">
-                                <i class="fas fa-comment-slash"></i> No admin replies yet
-                    </div>
-                <?php endif; ?>
-                </div>
+            </div>
 
                 <!-- New Reply Form -->
                 <div class="form-group" style="margin-top: 24px;">
@@ -579,18 +591,74 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
                         }
                     });
 
-                    // Resolution
-                    document.getElementById('resolutionBtn').addEventListener('click', async () => {
-                        const btn = document.getElementById('resolutionBtn');
-                        const text = document.getElementById('ticket-resolution').value.trim();
+                    // Resolution view / edit
+                    const resolutionView = document.getElementById('resolution-view');
+                    const resolutionEdit = document.getElementById('resolution-edit');
+                    const resolutionDisplay = document.getElementById('resolution-display');
+                    const resolutionTextarea = document.getElementById('ticket-resolution');
+                    const resolutionBtn = document.getElementById('resolutionBtn');
+                    const cancelResolutionBtn = document.getElementById('cancelResolutionBtn');
+                    const editResolutionBtn = document.getElementById('editResolutionBtn');
+                    let resolutionSavedText = resolutionTextarea.value.trim();
+
+                    function escapeHtml(str) {
+                        return String(str)
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;')
+                            .replace(/'/g, '&#039;');
+                    }
+
+                    function formatResolutionHtml(text) {
+                        return escapeHtml(text).replace(/\r?\n/g, '<br>');
+                    }
+
+                    function setResolutionSaveLabel(isUpdate) {
+                        resolutionBtn.innerHTML = '<i class="fas fa-save"></i> ' + (isUpdate ? 'Save changes' : 'Save resolution');
+                    }
+
+                    function showResolutionView(text) {
+                        resolutionSavedText = text;
+                        resolutionDisplay.innerHTML = formatResolutionHtml(text);
+                        resolutionView.classList.remove('sq-is-hidden');
+                        resolutionEdit.classList.add('sq-is-hidden');
+                        cancelResolutionBtn.classList.add('sq-is-hidden');
+                    }
+
+                    function showResolutionEdit(text) {
+                        resolutionTextarea.value = text;
+                        resolutionView.classList.add('sq-is-hidden');
+                        resolutionEdit.classList.remove('sq-is-hidden');
+                        cancelResolutionBtn.classList.toggle('sq-is-hidden', resolutionSavedText === '');
+                        setResolutionSaveLabel(resolutionSavedText !== '');
+                        resolutionTextarea.focus();
+                    }
+
+                    editResolutionBtn.addEventListener('click', () => {
+                        showResolutionEdit(resolutionSavedText);
+                    });
+
+                    cancelResolutionBtn.addEventListener('click', () => {
+                        if (resolutionSavedText === '') {
+                            resolutionTextarea.value = '';
+                            resolutionEdit.classList.remove('sq-is-hidden');
+                            resolutionView.classList.add('sq-is-hidden');
+                            return;
+                        }
+                        showResolutionView(resolutionSavedText);
+                    });
+
+                    resolutionBtn.addEventListener('click', async () => {
+                        const text = resolutionTextarea.value.trim();
 
                         if (!text) {
                             Swal.fire({ icon: 'error', title: 'Empty', text: 'Resolution cannot be empty!' });
                             return;
                         }
 
-                        btn.disabled = true;
-                        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+                        resolutionBtn.disabled = true;
+                        resolutionBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
 
                         try {
                             const res = await postAction('../../PHP/Backend/ticket_actions.php', {
@@ -599,11 +667,25 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
                                 resolution: text
                             });
                             showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
+
+                            if (res.status === 'ok') {
+                                const saved = (res.answer || text).trim();
+                                showResolutionView(saved);
+                                if (res.updated_at) {
+                                    let meta = resolutionView.querySelector('.resolution-meta');
+                                    if (!meta) {
+                                        meta = document.createElement('p');
+                                        meta.className = 'resolution-meta';
+                                        resolutionDisplay.insertAdjacentElement('afterend', meta);
+                                    }
+                                    meta.innerHTML = '<i class="fas fa-clock"></i> Last updated ' + res.updated_at;
+                                }
+                            }
                         } catch (e) {
                             showSwal('Failed to save', 'error');
                         } finally {
-                            btn.disabled = false;
-                            btn.innerHTML = '<i class="fas fa-save"></i> Save Resolution';
+                            resolutionBtn.disabled = false;
+                            setResolutionSaveLabel(resolutionSavedText !== '');
                         }
                     });
 
@@ -630,24 +712,30 @@ if ($adminRepliesRaw !== '' && $adminRepliesRaw !== '—') {
                             showSwal(res.message, res.status === 'ok' ? 'success' : 'error');
 
                             if (res.status === 'ok') {
-                                // Add to list
-                                let list = document.getElementById('admin-replies-list');
-                                const empty = document.getElementById('no-admin-replies');
+                                const thread = document.getElementById('conversation-thread');
+                                const empty = document.getElementById('conversation-empty');
+                                if (empty) empty.remove();
 
+                                let list = document.getElementById('conversation-list');
                                 if (!list) {
-                                    if (empty) empty.remove();
-                                    list = document.createElement('ol');
-                                    list.className = 'reply-list';
-                                    list.id = 'admin-replies-list';
-                                    document.querySelectorAll('.replies-section')[1].appendChild(list);
+                                    list = document.createElement('div');
+                                    list.className = 'conversation-list';
+                                    list.id = 'conversation-list';
+                                    thread.appendChild(list);
                                 }
 
-                                const li = document.createElement('li');
-                                li.className = 'reply-item admin';
-                                li.textContent = text;
-                                list.appendChild(li);
+                                const item = document.createElement('div');
+                                item.className = 'reply-item admin';
+                                const timeLabel = res.sent_at_label || '';
+                                const timeHtml = timeLabel
+                                    ? '<span class="reply-time">' + timeLabel.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>'
+                                    : '';
+                                item.innerHTML = '<div class="reply-bubble-meta"><span class="reply-avatar">SQ</span><span class="reply-author">Support Team</span>' + timeHtml + '</div><div class="reply-bubble-body"></div>';
+                                item.querySelector('.reply-bubble-body').textContent = text;
+                                list.appendChild(item);
 
                                 document.getElementById('admin-reply').value = '';
+                                thread.scrollTop = thread.scrollHeight;
                             }
                         } catch (e) {
                             showSwal('Failed to send', 'error');

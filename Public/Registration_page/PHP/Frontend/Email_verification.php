@@ -20,7 +20,7 @@ if (!$email) {
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 
-    <link rel="stylesheet" href="../../CSS/Email_verification.css">
+    <link rel="stylesheet" href="../../CSS/email_verification.css">
 </head>
 
 <body>
@@ -95,6 +95,41 @@ if (!$email) {
         </div>
     </div>
     <input type="hidden" id="userEmail" value="<?php echo htmlspecialchars($email); ?>">
+
+    <div id="sqAutoModal" class="sq-verify-success-modal" hidden aria-hidden="true" role="dialog" aria-labelledby="sqAutoModalTitle">
+        <div class="sq-verify-success-card">
+            <div id="sqAutoModalIcon" class="sq-verify-success-icon sq-verify-success-icon--success" aria-hidden="true">
+                <i class="fas fa-circle-check"></i>
+            </div>
+            <h3 id="sqAutoModalTitle">Done</h3>
+            <p id="sqAutoModalMessage" class="sq-verify-success-text"></p>
+            <div id="sqAutoModalCredentials" class="sq-verify-credentials" hidden>
+                <div class="sq-verify-cred-row">
+                    <span class="sq-verify-cred-label">Username</span>
+                    <code id="sqAutoModalUsername" class="sq-verify-cred-value"></code>
+                </div>
+                <div class="sq-verify-cred-row">
+                    <span class="sq-verify-cred-label">Password</span>
+                    <code id="sqAutoModalPassword" class="sq-verify-cred-value"></code>
+                </div>
+                <p class="sq-verify-cred-hint">Save these now — you will set a permanent password after signing in.</p>
+            </div>
+            <div class="sq-verify-success-progress" aria-hidden="true">
+                <div id="sqAutoModalProgressBar" class="sq-verify-success-progress-bar"></div>
+            </div>
+            <p id="sqAutoModalCountdown" class="sq-verify-success-countdown" hidden>
+                <span id="sqAutoModalCountdownLabel">Redirecting in</span>
+                <strong id="sqAutoModalSeconds">10</strong> s
+            </p>
+            <button type="button" id="sqAutoModalCloseBtn" class="btn btn-secondary sq-verify-success-close-btn sq-modal-action--hidden">
+                <i class="fas fa-times"></i> Close
+            </button>
+            <a id="sqAutoModalLoginBtn" href="#" class="btn btn-primary sq-verify-success-login-btn sq-modal-action--hidden">
+                <i class="fas fa-right-to-bracket"></i> Go to login now
+            </a>
+        </div>
+    </div>
+
     <!-- Footer -->
     <footer class="footer">
         <div class="footer-brand">ScanQuotient</div>
