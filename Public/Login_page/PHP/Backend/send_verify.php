@@ -3,6 +3,7 @@ session_start();
 header('Content-Type: application/json');
 
 require_once 'C:/Users/1/vendor/autoload.php';
+require_once __DIR__ . '/forgot_password_email_templates.php';
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
@@ -100,7 +101,7 @@ try {
     }
 
     // Get fresh user data
-    $stmt = $pdo->prepare("SELECT security_answer FROM users WHERE user_id = ?");
+    $stmt = $pdo->prepare("SELECT security_answer, first_name, surname FROM users WHERE user_id = ? LIMIT 1");
     $stmt->execute([$_SESSION['fp_user_id']]);
     $user = $stmt->fetch();
 
@@ -146,8 +147,19 @@ try {
         $_SESSION['fp_expires'] = time() + 900; // 15 min
 
         $target = ($method === 'recovery') ? $_SESSION['fp_recovery'] : $_SESSION['fp_email'];
+        $deliveryLabel = ($method === 'recovery') ? 'your recovery email' : 'your primary email';
+        $firstName = trim((string) ($user['first_name'] ?? ''));
+        if ($firstName === '') {
+            $firstName = trim((string) ($user['surname'] ?? ''));
+        }
+        if ($firstName === '') {
+            $firstName = 'there';
+        }
+        $isResend = !empty($_POST['resend']);
+        $subject = $isResend
+            ? 'Your new ScanQuotient password reset code'
+            : 'Your ScanQuotient password reset code';
 
-        // Send email
         $mail = new PHPMailer(true);
         $mail->isSMTP();
         $mail->Host = 'smtp.gmail.com';
@@ -156,11 +168,12 @@ try {
         $mail->Password = 'vnht iefe anwl xynb';
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port = 587;
-        $mail->setFrom('scanquotient@gmail.com', 'ScanQuotient');
+        $mail->setFrom('scanquotient@gmail.com', 'ScanQuotient Security');
         $mail->addAddress($target);
         $mail->isHTML(true);
-        $mail->Subject = 'Password Reset Code';
-        $mail->Body = "<div style='text-align:center'><h2>Reset Code: {$code}</h2><p>Expires in 15 minutes</p></div>";
+        $mail->Subject = $subject;
+        $mail->Body = sq_build_forgot_password_code_email_html($firstName, $code, $deliveryLabel, 15);
+        $mail->AltBody = sq_build_forgot_password_code_email_alt($firstName, $code, $deliveryLabel, 15);
         $mail->send();
 
         echo json_encode(['status' => 'success']);

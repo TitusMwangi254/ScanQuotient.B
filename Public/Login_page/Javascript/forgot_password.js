@@ -17,6 +17,38 @@ themeToggle.addEventListener("change", function () {
 // Your existing JavaScript functions...
 let resetData = {};
 let expiryTimer;
+let resendCooldownTimer = null;
+const RESEND_COOLDOWN_SEC = 30;
+
+function clearResendCooldown() {
+  if (resendCooldownTimer) {
+    clearInterval(resendCooldownTimer);
+    resendCooldownTimer = null;
+  }
+}
+
+function startResendCooldown(seconds) {
+  const btn = document.getElementById("resendBtn");
+  if (!btn) return;
+
+  clearResendCooldown();
+  btn.disabled = true;
+  let remaining = seconds;
+
+  const tick = () => {
+    if (remaining <= 0) {
+      clearResendCooldown();
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-redo"></i> Resend Code';
+      return;
+    }
+    btn.innerHTML = `<i class="fas fa-clock"></i> Resend in ${remaining}s`;
+    remaining--;
+  };
+
+  tick();
+  resendCooldownTimer = setInterval(tick, 1000);
+}
 
 function toggleVisibility(id, el) {
   const input = document.getElementById(id);
@@ -107,16 +139,23 @@ function verifyIdentity() {
           document.getElementById("passwordEntry").style.display = "block";
           showStep(3);
         } else {
+          resetData.sentMethod = m;
           document.getElementById("codeEntry").style.display = "block";
           document.getElementById("passwordEntry").style.display = "none";
           startTimer(900);
           showStep(3);
+          startResendCooldown(RESEND_COOLDOWN_SEC);
         }
       } else {
         Swal.fire("Error", d.message, "error");
         btn.disabled = false;
         btn.innerHTML = '<i class="fas fa-shield-alt"></i> Verify';
       }
+    })
+    .catch(() => {
+      Swal.fire("Error", "Unable to send verification code. Please try again.", "error");
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-shield-alt"></i> Verify';
     });
 }
 
@@ -174,12 +213,66 @@ function verifyCode() {
 }
 
 function resendCode() {
-  document.getElementById("resendBtn").disabled = true;
-  verifyIdentity();
-  setTimeout(
-    () => (document.getElementById("resendBtn").disabled = false),
-    30000,
-  );
+  const btn = document.getElementById("resendBtn");
+  if (!btn || btn.disabled) return;
+
+  const m =
+    resetData.sentMethod ||
+    document.getElementById("verifyMethod")?.value ||
+    "";
+  if (!m || m === "question") {
+    Swal.fire("Error", "Choose email or recovery email verification first.", "error");
+    return;
+  }
+
+  clearResendCooldown();
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...';
+
+  fetch("../../PHP/Backend/send_verify.php", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "method=" + encodeURIComponent(m) + "&resend=1",
+  })
+    .then((r) => {
+      if (!r.ok) throw new Error("Network error");
+      return r.json();
+    })
+    .then((d) => {
+      if (d.status === "success") {
+        document.querySelectorAll(".otp-input").forEach((i) => (i.value = ""));
+        const firstOtp = document.querySelector(".otp-input");
+        if (firstOtp) firstOtp.focus();
+        startTimer(900);
+        Swal.fire({
+          icon: "success",
+          title: "Code resent",
+          text: "A new reset code has been sent to your email.",
+          confirmButtonColor: "#2563eb",
+          timer: 3500,
+          timerProgressBar: true,
+          showConfirmButton: true,
+        });
+      } else {
+        Swal.fire({
+          icon: "error",
+          title: "Could not resend",
+          text: d.message || "Please wait and try again.",
+          confirmButtonColor: "#2563eb",
+        });
+      }
+    })
+    .catch(() => {
+      Swal.fire({
+        icon: "error",
+        title: "Network error",
+        text: "Unable to resend the code. Check your connection and try again.",
+        confirmButtonColor: "#2563eb",
+      });
+    })
+    .finally(() => {
+      startResendCooldown(RESEND_COOLDOWN_SEC);
+    });
 }
 
 function checkPassword() {
@@ -242,6 +335,7 @@ function setPassword() {
 function resetFlow() {
   resetData = {};
   clearInterval(expiryTimer);
+  clearResendCooldown();
   document.getElementById("identifier").value = "";
   document.querySelectorAll(".otp-input").forEach((i) => (i.value = ""));
   document.getElementById("newPass").value = "";

@@ -109,22 +109,9 @@ try {
         exit;
     }
 
-    // Fetch user by username (ambiguous error if not found)
-    $stmt = $pdo->prepare("
-        SELECT * FROM users 
-        WHERE LOWER(TRIM(user_name)) = LOWER(TRIM(:username))
-        LIMIT 1
-    ");
-    $stmt->execute([':username' => $username]);
-    $user = $stmt->fetch();
-
-    // SECURITY: Always perform password verify to prevent timing attacks
-    $passwordValid = false;
-    if ($user) {
-        $passwordValid = password_verify($password, $user['password_hash']);
-    } else {
-        password_verify($password, '$2y$10$dummyhashforconstantimetimingattackprevention');
-    }
+    require_once dirname(__DIR__, 4) . '/Private/Shared/PHP/sq_username_helpers.php';
+    $user = sq_authenticate_user_by_username($pdo, $username, $password);
+    $passwordValid = ($user !== null);
 
     // AMBIGUOUS ERROR: Don't reveal if username or password is wrong
     if (!$user || !$passwordValid) {
@@ -299,6 +286,9 @@ try {
     // CHECK 4: Password Reset Status
     if ($user['password_reset_status'] === 'yes') {
         $_SESSION['auth_mode'] = 'password_reset';
+        $_SESSION['user_id'] = $user['user_id'];
+        $_SESSION['user_email'] = $user['email'];
+        $_SESSION['user_name'] = $user['user_name'];
 
         // Check if reset has expired
         $isResetExpired = false;
@@ -329,6 +319,9 @@ try {
     // CHECK 5: Password Expiry
     if ($user['password_expiry'] !== null && strtotime($user['password_expiry']) < time()) {
         $_SESSION['auth_mode'] = 'password_reset';
+        $_SESSION['user_id'] = $user['user_id'];
+        $_SESSION['user_email'] = $user['email'];
+        $_SESSION['user_name'] = $user['user_name'];
         $_SESSION['force_reset_reason'] = 'password_expired';
         logSecurityEvent($pdo, $username, 'PASSWORD_EXPIRED', 'Password expired - forced reset');
         header('Location: ../../../Reset_password/PHP/Frontend/Password_reset_page.php?reason=password_expired');

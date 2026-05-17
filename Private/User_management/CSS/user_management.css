@@ -233,8 +233,9 @@ body.sq-dark .sq-admin-theme-toggle:hover {
     transform: translate(-50%, -50%);
     width: 100%;
     max-width: 920px;
-    padding: 18px;
+    padding: 18px 18px 28px;
     max-height: 90vh;
+    box-sizing: border-box;
 }
 
 .sq-modal-content {
@@ -242,9 +243,17 @@ body.sq-dark .sq-admin-theme-toggle:hover {
     border: 1px solid var(--sq-border);
     border-radius: 16px;
     box-shadow: var(--sq-shadow);
-    overflow-y: auto;
     overflow-x: hidden;
     max-height: calc(100vh - 40px);
+    display: flex;
+    flex-direction: column;
+}
+
+#sqCreateUserForm {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .sq-modal-header {
@@ -291,6 +300,9 @@ body.sq-dark .sq-admin-theme-toggle:hover {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .sq-form-group--full {
@@ -324,13 +336,19 @@ body.sq-dark .sq-admin-theme-toggle:hover {
 }
 
 .sq-modal-actions {
-    padding: 14px 18px 18px;
+    padding: 16px 18px 32px;
+    margin-bottom: 4px;
     display: flex;
     justify-content: flex-end;
     gap: 12px;
     flex-wrap: wrap;
+    flex-shrink: 0;
     border-top: 1px solid var(--sq-border);
     background: var(--sq-bg-card);
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.06);
 }
 
 .sq-photo-upload {

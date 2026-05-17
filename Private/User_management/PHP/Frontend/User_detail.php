@@ -21,7 +21,7 @@ if ($adminRole !== 'admin' && $adminRole !== 'super_admin') {
     exit();
 }
 
-require_once __DIR__ . '/../../Site_security/PHP/Backend/certificate_target_helpers.php';
+require_once __DIR__ . '/../../../Site_security/PHP/Backend/certificate_target_helpers.php';
 
 define('DB_HOST', '127.0.0.1');
 define('DB_NAME', 'scanquotient.a1');
@@ -395,7 +395,7 @@ try {
                 ORDER BY c.created_at DESC
                 LIMIT 100
             ");
-            $certBind = sq_certificate_pending_bind_params($user);
+            $certBind = sq_certificate_applies_bind_params($user);
             $certBind[':uid'] = $user['user_id'];
             $stmt->execute($certBind);
             $userCertificates = $stmt->fetchAll();

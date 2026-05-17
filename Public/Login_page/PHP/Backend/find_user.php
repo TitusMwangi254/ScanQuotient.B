@@ -43,10 +43,15 @@ try {
     }
 
     $stmt = $pdo->prepare("
-        SELECT user_id, email, recovery_email, security_question, 
+        SELECT user_id, email, recovery_email, security_question,
                account_active, deleted_at
-        FROM users 
-        WHERE user_name = ? OR email = ? OR recovery_email = ?
+        FROM users
+        WHERE LOWER(TRIM(user_name)) = LOWER(TRIM(?))
+           OR LOWER(email) = LOWER(?)
+           OR LOWER(recovery_email) = LOWER(?)
+        ORDER BY (account_active = 'yes') DESC,
+                 (email_verified = 'yes') DESC,
+                 id DESC
         LIMIT 1
     ");
     $stmt->execute([$id, $id, $id]);

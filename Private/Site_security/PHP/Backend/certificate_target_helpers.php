@@ -171,6 +171,20 @@ function sq_certificate_pending_bind_params(array $user): array
     ];
 }
 
+/**
+ * Bind params for sq_certificate_applies_where_sql() only (no :uid_check).
+ *
+ * @param array{user_id?: string, user_name?: string, role?: string} $user
+ * @return array<string, string>
+ */
+function sq_certificate_applies_bind_params(array $user): array
+{
+    $params = sq_certificate_pending_bind_params($user);
+    unset($params[':uid_check']);
+
+    return $params;
+}
+
 function sq_certificate_pending_select_sql(): string
 {
     return "

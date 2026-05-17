@@ -206,22 +206,24 @@ try {
             $passwordHash = password_hash($passwordInput, PASSWORD_DEFAULT);
         }
 
-        // Username default
+        require_once dirname(__DIR__, 4) . '/Private/Shared/PHP/sq_username_helpers.php';
+
+        // Username default from surname; auto-suffix when taken
         if ($user_name === '') {
-            $user_name = strtolower($surname);
+            $user_name = sq_allocate_unique_username($pdo, $surname);
+        } else {
+            $checkUser = $pdo->prepare('SELECT id FROM users WHERE LOWER(user_name) = LOWER(?) LIMIT 1');
+            $checkUser->execute([$user_name]);
+            if ($checkUser->fetch()) {
+                throw new Exception('Username is already in use.');
+            }
         }
 
-        // Uniqueness checks (email and user_name)
+        // Uniqueness check (email)
         $check = $pdo->prepare("SELECT id FROM users WHERE email = ? LIMIT 1");
         $check->execute([$email]);
         if ($check->fetch()) {
             throw new Exception("Email is already in use.");
-        }
-
-        $checkUser = $pdo->prepare("SELECT id FROM users WHERE user_name = ? LIMIT 1");
-        $checkUser->execute([$user_name]);
-        if ($checkUser->fetch()) {
-            throw new Exception("Username is already in use.");
         }
 
         // Generate structured User ID

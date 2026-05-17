@@ -18,6 +18,7 @@ import certifi
 import concurrent.futures
 from dataclasses import dataclass, asdict, field
 from enum import Enum
+import os
 import subprocess
 import platform
 from threading import Lock
@@ -30,6 +31,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Set SCANQUOTIENT_ALLOW_LOCAL_TARGETS=1 to scan local vuln labs (127.0.0.1, localhost, RFC1918).
+ALLOW_LOCAL_TARGETS = os.environ.get('SCANQUOTIENT_ALLOW_LOCAL_TARGETS', '').strip().lower() in (
+    '1', 'true', 'yes', 'on'
+)
 
 
 # ─────────────────────────────────────────────
@@ -904,7 +910,7 @@ class SecurityScanner:
         if not parsed.netloc:
             return False, "Invalid URL format"
         hostname = parsed.hostname
-        if hostname:
+        if hostname and not ALLOW_LOCAL_TARGETS:
             blocked = [
                 r'^127\.', r'^10\.', r'^172\.(1[6-9]|2[0-9]|3[01])\.',
                 r'^192\.168\.', r'^0\.0\.0\.0$', r'^localhost$',
@@ -912,7 +918,11 @@ class SecurityScanner:
             ]
             for pattern in blocked:
                 if re.match(pattern, hostname, re.IGNORECASE):
-                    return False, "Scanning internal/private addresses is not allowed"
+                    return False, (
+                        "Scanning internal/private addresses is not allowed. "
+                        "For local labs use http://vulnlab.test:8088/ (add 127.0.0.1 vulnlab.test to hosts) "
+                        "or restart the scanner with SCANQUOTIENT_ALLOW_LOCAL_TARGETS=1."
+                    )
         clean_url = urlunparse((
             parsed.scheme, parsed.netloc, parsed.path or '/',
             parsed.params, parsed.query, ''
@@ -2804,6 +2814,7 @@ def health_check():
         'status':    'healthy',
         'timestamp': now_eat_iso(),
         'version':   '2.4.0',
+        'allow_local_targets': ALLOW_LOCAL_TARGETS,
         'features':  [
             'ssl_scan', 'header_analysis', 'sqli_test', 'xss_test',
             'port_scan', 'cors_check', 'open_redirect', 'sensitive_files',

@@ -133,8 +133,8 @@ try {
     $generated_password = generatePassword(12);
     $password_hash = password_hash($generated_password, PASSWORD_DEFAULT);
 
-    // Username is surname (lowercase for consistency)
-    $user_name = strtolower($surname);
+    require_once dirname(__DIR__, 4) . '/Private/Shared/PHP/sq_username_helpers.php';
+    $user_name = sq_allocate_unique_username($pdo, $surname);
 
     // 6-digit verification code
     $email_verification_token = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
