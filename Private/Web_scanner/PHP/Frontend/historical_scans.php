@@ -71,6 +71,99 @@ $scanMetricsDailyCounts = [];
 $scanMetricsRiskLabels = [];
 $scanMetricsRiskCounts = [];
 
+$allowedChartPeriods = [
+    '7d' => 'Last 7 days',
+    '14d' => 'Last 14 days',
+    '30d' => 'Last 30 days',
+    '90d' => 'Last 90 days',
+    '365d' => 'Last year',
+    'all' => 'All time',
+];
+
+function sq_history_normalize_chart_period(string $period): string
+{
+    global $allowedChartPeriods;
+    return isset($allowedChartPeriods[$period]) ? $period : '14d';
+}
+
+function sq_history_chart_period_days(string $period): ?int
+{
+    $map = ['7d' => 7, '14d' => 14, '30d' => 30, '90d' => 90, '365d' => 365];
+    return $map[$period] ?? null;
+}
+
+function sq_history_created_in_period(string $createdAt, string $period): bool
+{
+    if ($period === 'all') {
+        return true;
+    }
+    $days = sq_history_chart_period_days($period);
+    if ($days === null) {
+        return true;
+    }
+    $ts = strtotime($createdAt);
+    if ($ts === false) {
+        return false;
+    }
+    return $ts >= strtotime("-{$days} days");
+}
+
+/**
+ * @param array<int, array{created_at?: string}> $rows
+ * @return array{0: array<int, string>, 1: array<int, int>}
+ */
+function sq_history_build_trend_series(array $rows, string $period): array
+{
+    $dailyMap = [];
+    foreach ($rows as $row) {
+        $createdAt = (string) ($row['created_at'] ?? '');
+        if (!sq_history_created_in_period($createdAt, $period)) {
+            continue;
+        }
+        $ts = strtotime($createdAt);
+        if ($ts === false) {
+            continue;
+        }
+        $dayKey = date('Y-m-d', $ts);
+        $dailyMap[$dayKey] = ($dailyMap[$dayKey] ?? 0) + 1;
+    }
+
+    $labels = [];
+    $counts = [];
+
+    if ($period === 'all') {
+        if ($dailyMap !== []) {
+            $keys = array_keys($dailyMap);
+            sort($keys);
+            $start = strtotime($keys[0]);
+            $end = strtotime($keys[count($keys) - 1]);
+            for ($t = $start; $t <= $end; $t += 86400) {
+                $dayKey = date('Y-m-d', $t);
+                $labels[] = date('M j', $t);
+                $counts[] = (int) ($dailyMap[$dayKey] ?? 0);
+            }
+        }
+        return [$labels, $counts];
+    }
+
+    $spanDays = sq_history_chart_period_days($period) ?? 14;
+    if ($spanDays > 365) {
+        $spanDays = 365;
+    }
+    for ($i = $spanDays - 1; $i >= 0; $i--) {
+        $dayKey = date('Y-m-d', strtotime("-{$i} days"));
+        $labels[] = date('M j', strtotime($dayKey));
+        $counts[] = (int) ($dailyMap[$dayKey] ?? 0);
+    }
+
+    return [$labels, $counts];
+}
+
+$scanTrendPeriod = sq_history_normalize_chart_period((string) ($_GET['scan_trend_period'] ?? '14d'));
+$scanRiskPeriod = sq_history_normalize_chart_period((string) ($_GET['scan_risk_period'] ?? '14d'));
+$chartPeriodQ = '&scan_trend_period=' . rawurlencode($scanTrendPeriod)
+    . '&scan_risk_period=' . rawurlencode($scanRiskPeriod);
+
 try {
     $pdo = new PDO($dsn, DB_USER, DB_PASS, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -165,18 +258,17 @@ try {
     ");
     $metricsStmt->execute($params);
     $allScansForMetrics = $metricsStmt->fetchAll() ?: [];
-    $dailyMap = [];
+
+    [$scanMetricsLabels, $scanMetricsDailyCounts] = sq_history_build_trend_series(
+        $allScansForMetrics,
+        $scanTrendPeriod
+    );
+
     $riskMap = [];
-    $days = 14;
     foreach ($allScansForMetrics as $rowMetric) {
         $createdAtMetric = (string) ($rowMetric['created_at'] ?? '');
-        $tsMetric = strtotime($createdAtMetric);
-        if ($tsMetric !== false) {
-            $dayKey = date('Y-m-d', $tsMetric);
-            if (!isset($dailyMap[$dayKey])) {
-                $dailyMap[$dayKey] = 0;
-            }
-            $dailyMap[$dayKey]++;
+        if (!sq_history_created_in_period($createdAtMetric, $scanRiskPeriod)) {
+            continue;
         }
 
         $scanJsonMetric = json_decode((string) ($rowMetric['scan_json'] ?? ''), true) ?: [];
@@ -184,18 +276,9 @@ try {
         if ($riskLevelMetric === '') {
             $riskLevelMetric = 'unknown';
         }
-        if (!isset($riskMap[$riskLevelMetric])) {
-            $riskMap[$riskLevelMetric] = 0;
-        }
-        $riskMap[$riskLevelMetric]++;
+        $riskMap[$riskLevelMetric] = ($riskMap[$riskLevelMetric] ?? 0) + 1;
     }
-
-    for ($i = $days - 1; $i >= 0; $i--) {
-        $day = date('Y-m-d', strtotime("-{$i} days"));
-        $scanMetricsLabels[] = date('M j', strtotime($day));
-        $scanMetricsDailyCounts[] = (int) ($dailyMap[$day] ?? 0);
-    }
-    if (!empty($riskMap)) {
+    if ($riskMap !== []) {
         arsort($riskMap);
         foreach ($riskMap as $riskKey => $riskCount) {
             $scanMetricsRiskLabels[] = ucfirst($riskKey);
@@ -621,6 +704,36 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             font-size: 12px;
             font-weight: 700;
             color: var(--text-light);
+        }
+
+        .metrics-chart-toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .metrics-chart-label {
+            font-size: 13px;
+            font-weight: 800;
+            color: var(--text-main);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sq-chart-period-select {
+            padding: 8px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            color: var(--text-main);
+            font-size: 13px;
+            font-weight: 600;
+            min-width: 140px;
+            cursor: pointer;
         }
 
         .metrics-grid {
@@ -1690,13 +1803,31 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                             <i class="fas fa-chart-line" style="color: var(--brand-color);"></i>
                             Scan metrics
                         </div>
-                        <div class="metrics-subtitle">Last 14 days trend + risk distribution</div>
+                        <div class="metrics-subtitle">Trend and risk for your saved scans (respects group / host filters)</div>
                     </div>
                     <div class="metrics-grid">
                         <div class="metrics-canvas-wrap">
+                            <div class="metrics-chart-toolbar">
+                                <span class="metrics-chart-label"><i class="fas fa-chart-line"></i> Scan activity</span>
+                                <select class="sq-chart-period-select" aria-label="Scan activity period"
+                                    onchange="sqSetChartPeriod('scan_trend_period', this.value)">
+                                    <?php foreach ($allowedChartPeriods as $pKey => $pLabel): ?>
+                                        <option value="<?php echo htmlspecialchars($pKey); ?>" <?php echo $scanTrendPeriod === $pKey ? 'selected' : ''; ?>><?php echo htmlspecialchars($pLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
                             <canvas id="scanTrendChart"></canvas>
                         </div>
                         <div class="metrics-canvas-wrap">
+                            <div class="metrics-chart-toolbar">
+                                <span class="metrics-chart-label"><i class="fas fa-chart-pie"></i> Risk distribution</span>
+                                <select class="sq-chart-period-select" aria-label="Risk chart period"
+                                    onchange="sqSetChartPeriod('scan_risk_period', this.value)">
+                                    <?php foreach ($allowedChartPeriods as $pKey => $pLabel): ?>
+                                        <option value="<?php echo htmlspecialchars($pKey); ?>" <?php echo $scanRiskPeriod === $pKey ? 'selected' : ''; ?>><?php echo htmlspecialchars($pLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
                             <canvas id="scanRiskChart"></canvas>
                         </div>
                     </div>
@@ -1724,10 +1855,10 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                     <div
                         style="padding: 16px 24px; border-bottom: 1px solid var(--border-color); display: flex; flex-wrap: wrap; align-items: center; gap: 16px;">
                         <span style="font-size: 13px; font-weight: 600; color: var(--text-light);">Group:</span>
-                        <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo htmlspecialchars($targetQ, ENT_QUOTES); ?>"
+                        <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo htmlspecialchars($targetQ . $chartPeriodQ, ENT_QUOTES); ?>"
                             class="action-btn" style="text-decoration:none;">All</a>
                         <select id="groupFilter" style="padding: 8px 12px; border-radius: 8px; min-width: 160px;"
-                            onchange="var v=this.value; var base=<?php echo json_encode(strtok($_SERVER['REQUEST_URI'], '?')); ?>; var per=document.getElementById('perPageSelect').value; var tq=<?php echo json_encode($targetQ); ?>; if(v) window.location.href=base+'?group_id='+encodeURIComponent(v)+'&per_page='+encodeURIComponent(per)+'&page=1'+tq; else window.location.href=base+'?per_page='+encodeURIComponent(per)+'&page=1'+tq;">
+                            onchange="var v=this.value; var base=<?php echo json_encode(strtok($_SERVER['REQUEST_URI'], '?')); ?>; var per=document.getElementById('perPageSelect').value; var tq=<?php echo json_encode($targetQ . $chartPeriodQ); ?>; if(v) window.location.href=base+'?group_id='+encodeURIComponent(v)+'&per_page='+encodeURIComponent(per)+'&page=1'+tq; else window.location.href=base+'?per_page='+encodeURIComponent(per)+'&page=1'+tq;">
                             <option value="">— All —</option>
                             <?php foreach ($groups as $g): ?>
                                 <option value="<?php echo (int) $g['id']; ?>" <?php echo ($filterGroupId === (int) $g['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($g['name']); ?></option>
@@ -1736,7 +1867,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                         <span
                             style="margin-left: 12px; font-size: 13px; font-weight: 600; color: var(--text-light);">Records:</span>
                         <select id="perPageSelect" style="padding: 8px 12px; border-radius: 8px; min-width: 160px;"
-                            onchange="var v=this.value; var g=document.getElementById('groupFilter').value; var base=<?php echo json_encode(strtok($_SERVER['REQUEST_URI'], '?')); ?>; var tq=<?php echo json_encode($targetQ); ?>; if(g) window.location.href=base+'?group_id='+encodeURIComponent(g)+'&per_page='+encodeURIComponent(v)+'&page=1'+tq; else window.location.href=base+'?per_page='+encodeURIComponent(v)+'&page=1'+tq;">
+                            onchange="var v=this.value; var g=document.getElementById('groupFilter').value; var base=<?php echo json_encode(strtok($_SERVER['REQUEST_URI'], '?')); ?>; var tq=<?php echo json_encode($targetQ . $chartPeriodQ); ?>; if(g) window.location.href=base+'?group_id='+encodeURIComponent(g)+'&per_page='+encodeURIComponent(v)+'&page=1'+tq; else window.location.href=base+'?per_page='+encodeURIComponent(v)+'&page=1'+tq;">
                             <?php foreach ([5, 10, 20, 50, 100, 200] as $opt): ?>
                                 <option value="<?php echo (int) $opt; ?>" <?php echo ((string) $perPageParam === (string) $opt) ? 'selected' : ''; ?>><?php echo (int) $opt; ?> per page</option>
                             <?php endforeach; ?>
@@ -1756,7 +1887,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                         <div
                             style="padding: 10px 24px; background: rgba(59,130,246,0.1); border-bottom: 1px solid var(--border-color); font-size: 13px; color: var(--text-main);">
                             You are viewing a filtered group. Some scans are hidden.
-                            <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo htmlspecialchars($targetQ, ENT_QUOTES); ?>"
+                            <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo htmlspecialchars($targetQ . $chartPeriodQ, ENT_QUOTES); ?>"
                                 style="margin-left:8px;">Clear group filter</a>
                         </div>
                     <?php endif; ?>
@@ -1764,7 +1895,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                         <div
                             style="padding: 10px 24px; background: rgba(16,185,129,0.1); border-bottom: 1px solid var(--border-color); font-size: 13px; color: var(--text-main);">
                             Showing saved scans for <strong><?php echo htmlspecialchars($filterHostLabel, ENT_QUOTES, 'UTF-8'); ?></strong> only (same host as your scan timeline).
-                            <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo $filterGroupId ? htmlspecialchars('&group_id=' . (int) $filterGroupId, ENT_QUOTES, 'UTF-8') : ''; ?>"
+                            <a href="<?php echo htmlspecialchars(strtok($_SERVER['REQUEST_URI'], '?')); ?>?per_page=<?php echo htmlspecialchars($perPageParam, ENT_QUOTES); ?>&page=1<?php echo $filterGroupId ? htmlspecialchars('&group_id=' . (int) $filterGroupId, ENT_QUOTES, 'UTF-8') : ''; ?><?php echo htmlspecialchars($chartPeriodQ, ENT_QUOTES); ?>"
                                 style="margin-left:8px;">Show all hosts</a>
                         </div>
                     <?php endif; ?>
@@ -1865,7 +1996,7 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
                         $baseHistoryUrl = strtok($_SERVER['REQUEST_URI'], '?');
                         $perPageQ = urlencode($perPageParam);
                         $groupQ = $filterGroupId ? ('&group_id=' . (int) $filterGroupId) : '';
-                        $pageNavExtra = $groupQ . $targetQ;
+                        $pageNavExtra = $groupQ . $targetQ . $chartPeriodQ;
 
                         $pagesSet = [];
                         if ($totalPages <= 7) {
@@ -3227,6 +3358,12 @@ $packageLabel = ucfirst($userPackage ?: 'freemium');
             renderTable();
             updateStats();
             simulateRealtimeActivity();
+        }
+
+        function sqSetChartPeriod(paramName, value) {
+            const url = new URL(window.location.href);
+            url.searchParams.set(paramName, value);
+            window.location.href = url.toString();
         }
 
         // Metrics charts (server-driven)
