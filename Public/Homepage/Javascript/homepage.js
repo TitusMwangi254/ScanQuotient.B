@@ -123,10 +123,158 @@ function closeModal(event) {
   }
 }
 
-// Close modal on Escape key
+// Close modals on Escape key
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeModal();
+  if (e.key !== "Escape") return;
+  const demoOverlay = document.getElementById("demoModalOverlay");
+  if (demoOverlay && demoOverlay.classList.contains("is-open")) {
+    closeDemoModal();
+    return;
+  }
+  closeModal();
 });
+
+// Product demo modal
+(function initDemoModal() {
+  const overlay = document.getElementById("demoModalOverlay");
+  const openBtn = document.getElementById("watchDemoBtn");
+  const closeBtn = document.getElementById("demoModalClose");
+  const prevBtn = document.getElementById("demoPrevBtn");
+  const nextBtn = document.getElementById("demoNextBtn");
+  const playPauseBtn = document.getElementById("demoPlayPauseBtn");
+  const dotsWrap = document.getElementById("demoDots");
+
+  if (!overlay || !openBtn) return;
+
+  const stages = Array.from(overlay.querySelectorAll(".sq-demo-stage"));
+  const total = stages.length;
+  let current = 0;
+  let timer = null;
+  let playing = true;
+  const STEP_MS = 4200;
+
+  function buildDots() {
+    if (!dotsWrap || dotsWrap.childElementCount) return;
+    stages.forEach((stage, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "sq-demo-dot" + (i === 0 ? " is-active" : "");
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-label", stage.dataset.label || `Step ${i + 1}`);
+      btn.setAttribute("aria-selected", i === 0 ? "true" : "false");
+      btn.addEventListener("click", () => {
+        setStep(i, true);
+        resetAutoplay();
+      });
+      dotsWrap.appendChild(btn);
+    });
+  }
+
+  function updateDots(index) {
+    if (!dotsWrap) return;
+    dotsWrap.querySelectorAll(".sq-demo-dot").forEach((dot, i) => {
+      const active = i === index;
+      dot.classList.toggle("is-active", active);
+      dot.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+
+  function updatePlayButton() {
+    if (!playPauseBtn) return;
+    const icon = playPauseBtn.querySelector("i");
+    if (!icon) return;
+    icon.className = playing ? "fas fa-pause" : "fas fa-play";
+    playPauseBtn.setAttribute("aria-label", playing ? "Pause demo" : "Play demo");
+  }
+
+  function setStep(index, fromUser) {
+    const next = ((index % total) + total) % total;
+    stages.forEach((stage, i) => {
+      stage.classList.remove("is-active", "is-exit");
+      if (i === current && i !== next) stage.classList.add("is-exit");
+      if (i === next) stage.classList.add("is-active");
+    });
+    current = next;
+    updateDots(current);
+    if (fromUser) resetAutoplay();
+  }
+
+  function clearAutoplay() {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  }
+
+  function startAutoplay() {
+    clearAutoplay();
+    if (!playing) return;
+    timer = setInterval(() => setStep(current + 1, false), STEP_MS);
+  }
+
+  function resetAutoplay() {
+    clearAutoplay();
+    startAutoplay();
+  }
+
+  function openDemoModal() {
+    buildDots();
+    current = 0;
+    stages.forEach((s, i) => {
+      s.classList.toggle("is-active", i === 0);
+      s.classList.remove("is-exit");
+    });
+    updateDots(0);
+    playing = true;
+    updatePlayButton();
+    overlay.removeAttribute("hidden");
+    requestAnimationFrame(() => overlay.classList.add("is-open"));
+    document.body.style.overflow = "hidden";
+    openBtn.setAttribute("aria-expanded", "true");
+    startAutoplay();
+    closeBtn?.focus();
+  }
+
+  function closeDemoModal() {
+    clearAutoplay();
+    overlay.classList.remove("is-open");
+    document.body.style.overflow = "";
+    openBtn.setAttribute("aria-expanded", "false");
+    let hiddenSet = false;
+    const applyHidden = () => {
+      if (hiddenSet) return;
+      hiddenSet = true;
+      overlay.setAttribute("hidden", "");
+    };
+    const onEnd = (e) => {
+      if (e.target !== overlay || e.propertyName !== "opacity") return;
+      applyHidden();
+      overlay.removeEventListener("transitionend", onEnd);
+    };
+    overlay.addEventListener("transitionend", onEnd);
+    setTimeout(applyHidden, 400);
+    openBtn.focus();
+  }
+
+  openBtn.addEventListener("click", openDemoModal);
+  closeBtn?.addEventListener("click", closeDemoModal);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeDemoModal();
+  });
+
+  prevBtn?.addEventListener("click", () => setStep(current - 1, true));
+  nextBtn?.addEventListener("click", () => setStep(current + 1, true));
+
+  playPauseBtn?.addEventListener("click", () => {
+    playing = !playing;
+    updatePlayButton();
+    if (playing) startAutoplay();
+    else clearAutoplay();
+  });
+
+  window.openDemoModal = openDemoModal;
+  window.closeDemoModal = closeDemoModal;
+})();
 
 //Toast notification logic
 window.addEventListener("DOMContentLoaded", () => {

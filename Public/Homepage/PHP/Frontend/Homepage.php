@@ -99,6 +99,10 @@ require_once __DIR__ . '/../../../security_headers.php';
                     <a href="../../../Registration_page/PHP/Frontend/Registration_page.php" class="btn btn-primary">
                         <i class="fas fa-shield-alt"></i> Start Free Scan
                     </a>
+                    <button type="button" class="btn btn-secondary" id="watchDemoBtn" aria-haspopup="dialog"
+                        aria-controls="demoModalOverlay">
+                        <i class="fas fa-play-circle"></i> Watch Demo
+                    </button>
                 </div>
             </div>
 
@@ -720,6 +724,164 @@ require_once __DIR__ . '/../../../security_headers.php';
     <!-- Back to Top -->
     <div class="back-to-top" id="backToTop" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">
         <i class="fas fa-arrow-up"></i>
+    </div>
+
+    <!-- Product demo modal -->
+    <div class="sq-demo-overlay" id="demoModalOverlay" role="dialog" aria-modal="true" aria-labelledby="demoModalTitle"
+        hidden>
+        <div class="sq-demo-modal" onclick="event.stopPropagation()">
+            <button type="button" class="modal-close sq-demo-close" id="demoModalClose" aria-label="Close demo">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="sq-demo-head">
+                <span class="sq-demo-eyebrow"><i class="fas fa-circle-play"></i> Product walkthrough</span>
+                <h2 id="demoModalTitle">See ScanQuotient in action</h2>
+                <p class="sq-demo-lead">A quick wireframe tour from signup to your first security report.</p>
+            </div>
+
+            <div class="sq-demo-stage-wrap">
+                <div class="sq-demo-stage is-active" data-step="0" data-label="Account setup">
+                    <div class="sq-demo-caption">
+                        <span class="sq-demo-step-num">01</span>
+                        <div>
+                            <strong>Create your workspace</strong>
+                            <p>Register, verify email, and land in your secure dashboard.</p>
+                        </div>
+                    </div>
+                    <div class="sq-wireframe sq-wireframe--auth">
+                        <div class="sq-wf-topbar">
+                            <span class="sq-wf-dot"></span><span class="sq-wf-dot"></span><span class="sq-wf-dot"></span>
+                            <span class="sq-wf-pill">scanquotient.app / register</span>
+                        </div>
+                        <div class="sq-wf-body sq-wf-body--center">
+                            <div class="sq-wf-logo-block"></div>
+                            <div class="sq-wf-line sq-wf-line--lg"></div>
+                            <div class="sq-wf-line"></div>
+                            <div class="sq-wf-line"></div>
+                            <div class="sq-wf-line sq-wf-line--short"></div>
+                            <div class="sq-wf-btn-block"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sq-demo-stage" data-step="1" data-label="Target scan">
+                    <div class="sq-demo-caption">
+                        <span class="sq-demo-step-num">02</span>
+                        <div>
+                            <strong>Launch a scan</strong>
+                            <p>Paste a URL or domain — the engine queues checks instantly.</p>
+                        </div>
+                    </div>
+                    <div class="sq-wireframe">
+                        <div class="sq-wf-topbar">
+                            <span class="sq-wf-dot"></span><span class="sq-wf-dot"></span><span class="sq-wf-dot"></span>
+                            <span class="sq-wf-pill">Web scanner</span>
+                        </div>
+                        <div class="sq-wf-body">
+                            <div class="sq-wf-sidebar">
+                                <div class="sq-wf-nav-item sq-wf-nav-item--active"></div>
+                                <div class="sq-wf-nav-item"></div>
+                                <div class="sq-wf-nav-item"></div>
+                            </div>
+                            <div class="sq-wf-main">
+                                <div class="sq-wf-line sq-wf-line--lg"></div>
+                                <div class="sq-wf-url-bar">
+                                    <span class="sq-wf-url-text">https://your-business.com</span>
+                                    <span class="sq-wf-url-btn"></span>
+                                </div>
+                                <div class="sq-wf-cards">
+                                    <div class="sq-wf-card"></div>
+                                    <div class="sq-wf-card"></div>
+                                    <div class="sq-wf-card"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sq-demo-stage" data-step="2" data-label="Live analysis">
+                    <div class="sq-demo-caption">
+                        <span class="sq-demo-step-num">03</span>
+                        <div>
+                            <strong>Automated analysis</strong>
+                            <p>Parallel tests run across headers, SSL, configs, and OWASP checks.</p>
+                        </div>
+                    </div>
+                    <div class="sq-wireframe">
+                        <div class="sq-wf-topbar">
+                            <span class="sq-wf-dot"></span><span class="sq-wf-dot"></span><span class="sq-wf-dot"></span>
+                            <span class="sq-wf-pill">Scan in progress</span>
+                        </div>
+                        <div class="sq-wf-body sq-wf-body--scan">
+                            <div class="sq-wf-scan-ring"></div>
+                            <div class="sq-wf-progress">
+                                <div class="sq-wf-progress-fill"></div>
+                            </div>
+                            <ul class="sq-wf-checklist">
+                                <li class="sq-wf-check sq-wf-check--done">TLS &amp; certificate audit</li>
+                                <li class="sq-wf-check sq-wf-check--done">Security headers</li>
+                                <li class="sq-wf-check sq-wf-check--active">Injection &amp; XSS probes</li>
+                                <li class="sq-wf-check">Configuration review</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sq-demo-stage" data-step="3" data-label="Risk report">
+                    <div class="sq-demo-caption">
+                        <span class="sq-demo-step-num">04</span>
+                        <div>
+                            <strong>Actionable intelligence</strong>
+                            <p>Prioritized findings, risk score, and export-ready reports.</p>
+                        </div>
+                    </div>
+                    <div class="sq-wireframe">
+                        <div class="sq-wf-topbar">
+                            <span class="sq-wf-dot"></span><span class="sq-wf-dot"></span><span class="sq-wf-dot"></span>
+                            <span class="sq-wf-pill">Scan report</span>
+                        </div>
+                        <div class="sq-wf-body sq-wf-body--report">
+                            <div class="sq-wf-score">
+                                <div class="sq-wf-score-ring"><span>94</span></div>
+                                <div>
+                                    <div class="sq-wf-line sq-wf-line--md"></div>
+                                    <div class="sq-wf-line sq-wf-line--short"></div>
+                                </div>
+                            </div>
+                            <div class="sq-wf-findings">
+                                <div class="sq-wf-finding sq-wf-finding--low"><span></span><span></span></div>
+                                <div class="sq-wf-finding sq-wf-finding--med"><span></span><span></span>                                </div>
+                                <div class="sq-wf-finding sq-wf-finding--high"><span></span><span></span></div>
+                            </div>
+                            <div class="sq-wf-export-row">
+                                <span class="sq-wf-export"></span>
+                                <span class="sq-wf-export"></span>
+                                <span class="sq-wf-export"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sq-demo-footer">
+                <div class="sq-demo-dots" id="demoDots" role="tablist" aria-label="Demo steps"></div>
+                <div class="sq-demo-footer-actions">
+                    <button type="button" class="sq-demo-nav-btn" id="demoPrevBtn" aria-label="Previous step">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <button type="button" class="sq-demo-nav-btn sq-demo-nav-btn--play" id="demoPlayPauseBtn"
+                        aria-label="Pause demo">
+                        <i class="fas fa-pause"></i>
+                    </button>
+                    <button type="button" class="sq-demo-nav-btn" id="demoNextBtn" aria-label="Next step">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                    <a href="../../../Registration_page/PHP/Frontend/Registration_page.php" class="btn btn-primary sq-demo-cta">
+                        <i class="fas fa-rocket"></i> Start Free Scan
+                    </a>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Modal -->
