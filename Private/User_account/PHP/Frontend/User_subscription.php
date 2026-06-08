@@ -1,6 +1,8 @@
 <?php
-// user_subscription.php - FIXED VERSION
+// user_subscription.php - Subscription management with cancel-at-period-end
 session_start();
+
+require_once __DIR__ . '/../../../Shared/PHP/sq_subscription_emails.php';
 
 // Authentication check
 if (!isset($_SESSION['authenticated']) || $_SESSION['authenticated'] !== true) {
@@ -89,6 +91,16 @@ $paymentHistory = [];
 $subscriptionStatus = 'active';
 $nextBillingDate = null;
 $daysRemaining = 0;
+$activeSubscriptionId = null;
+$isCancelledPendingExpiry = false;
+$cancellationReasons = [
+    'too_expensive' => 'Too expensive',
+    'not_using' => 'Not using it enough',
+    'missing_features' => 'Missing features I need',
+    'switching_service' => 'Switching to another service',
+    'technical_issues' => 'Technical issues',
+    'other' => 'Other (please specify)',
+];
 
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
@@ -107,31 +119,34 @@ try {
     $stmt->execute([$userEmail]);
     $paymentHistory = $stmt->fetchAll();
 
-    // Determine current active plan from database
-    if (!empty($paymentHistory)) {
-        $latestPayment = $paymentHistory[0];
+    // Find the latest non-expired paid subscription (includes cancelled-but-still-active)
+    $activeSubStmt = $pdo->prepare("
+        SELECT * FROM payments
+        WHERE email = ? AND deleted_at IS NULL
+          AND package IN ('pro', 'enterprise')
+          AND (account_status = 'active' OR account_status IS NULL)
+          AND (expires_at IS NULL OR expires_at > NOW())
+        ORDER BY created_at DESC
+        LIMIT 1
+    ");
+    $activeSubStmt->execute([$userEmail]);
+    $activeSubscription = $activeSubStmt->fetch();
 
-        // Check if subscription is active and not expired
-        $isActive = ($latestPayment['account_status'] ?? 'active') === 'active';
-        $isExpired = isset($latestPayment['expires_at']) &&
-            strtotime($latestPayment['expires_at']) < time();
+    if ($activeSubscription) {
+        $activeSubscriptionId = (int) $activeSubscription['id'];
+        $currentPlan = $activeSubscription['package'];
+        $nextBillingDate = $activeSubscription['expires_at'];
+        $daysRemaining = getDaysRemaining($nextBillingDate);
 
-        if ($isActive && !$isExpired) {
-            $currentPlan = $latestPayment['package'];
-            $subscriptionStatus = 'active';
-            $nextBillingDate = $latestPayment['expires_at'];
-            $daysRemaining = getDaysRemaining($nextBillingDate);
-        } elseif ($isExpired) {
-            $subscriptionStatus = 'expired';
-            $currentPlan = 'freemium'; // Fallback to free
+        if (($activeSubscription['status'] ?? '') === 'cancelled') {
+            $subscriptionStatus = 'cancelled';
+            $isCancelledPendingExpiry = true;
         } else {
-            $subscriptionStatus = 'suspended';
-            $currentPlan = 'freemium';
+            $subscriptionStatus = 'active';
         }
     } else {
-        // No payment history = freemium
         $currentPlan = 'freemium';
-        $subscriptionStatus = 'active'; // Freemium is always "active"
+        $subscriptionStatus = 'active';
     }
 
     // Handle form actions
@@ -140,22 +155,61 @@ try {
 
         switch ($action) {
             case 'cancel':
-                // Cancel subscription: record a downgrade to freemium while preserving history.
-                // We do NOT soft-delete prior payments (deleted_at is used for "trash").
-                if (!empty($paymentHistory) && ($plans[$currentPlan]['price'] ?? 0) > 0) {
-                    $insertStmt = $pdo->prepare("
-                        INSERT INTO payments (email, package, account_status, amount, transaction_id, status, payment_method, expires_at, created_at)
-                        VALUES (?, 'freemium', 'active', 0.00, NULL, 'cancelled', 'manual', NULL, NOW())
+                if ($activeSubscriptionId && ($plans[$currentPlan]['price'] ?? 0) > 0 && !$isCancelledPendingExpiry) {
+                    $reasonKey = $_POST['cancellation_reason'] ?? '';
+                    $reasonOther = trim($_POST['cancellation_reason_other'] ?? '');
+                    if ($reasonKey === 'other') {
+                        $reasonText = $reasonOther !== '' ? $reasonOther : 'Other';
+                    } elseif (isset($cancellationReasons[$reasonKey])) {
+                        $reasonText = $cancellationReasons[$reasonKey];
+                        if ($reasonKey === 'other' && $reasonOther !== '') {
+                            $reasonText = $reasonOther;
+                        }
+                    } else {
+                        $errorMessage = 'Please select a reason for cancellation.';
+                        break;
+                    }
+
+                    $cancelStmt = $pdo->prepare("
+                        UPDATE payments
+                        SET status = 'cancelled', cancelled_at = NOW(), cancellation_reason = ?
+                        WHERE id = ? AND email = ? AND deleted_at IS NULL
                     ");
-                    $insertStmt->execute([$userEmail]);
+                    $cancelStmt->execute([$reasonText, $activeSubscriptionId, $userEmail]);
 
-                    $successMessage = "Subscription cancelled successfully. You have been downgraded to Freemium.";
-                    $currentPlan = 'freemium';
-                    $subscriptionStatus = 'active';
-                    $nextBillingDate = null;
-                    $daysRemaining = 0;
+                    if ($cancelStmt->rowCount() > 0) {
+                        sq_send_cancellation_emails($userEmail, $currentPlan, $nextBillingDate, $reasonText);
+                        $expiryFormatted = formatDate($nextBillingDate);
+                        $successMessage = "Subscription cancelled. You keep {$plans[$currentPlan]['name']} access until {$expiryFormatted}, then your account moves to Freemium.";
+                        $subscriptionStatus = 'cancelled';
+                        $isCancelledPendingExpiry = true;
+                    } else {
+                        $errorMessage = 'Unable to cancel subscription. Please try again.';
+                    }
 
-                    // Refresh data
+                    $stmt->execute([$userEmail]);
+                    $paymentHistory = $stmt->fetchAll();
+                }
+                break;
+
+            case 'resubscribe':
+                if ($activeSubscriptionId && $isCancelledPendingExpiry) {
+                    $reactivateStmt = $pdo->prepare("
+                        UPDATE payments
+                        SET status = 'completed'
+                        WHERE id = ? AND email = ? AND deleted_at IS NULL AND status = 'cancelled'
+                    ");
+                    $reactivateStmt->execute([$activeSubscriptionId, $userEmail]);
+
+                    if ($reactivateStmt->rowCount() > 0) {
+                        sq_send_reactivation_emails($userEmail, $currentPlan, $nextBillingDate);
+                        $successMessage = "Subscription reactivated! Your {$plans[$currentPlan]['name']} plan is active again until " . formatDate($nextBillingDate) . ".";
+                        $subscriptionStatus = 'active';
+                        $isCancelledPendingExpiry = false;
+                    } else {
+                        $errorMessage = 'Unable to reactivate subscription. Please try again or contact support.';
+                    }
+
                     $stmt->execute([$userEmail]);
                     $paymentHistory = $stmt->fetchAll();
                 }
@@ -215,7 +269,8 @@ function getDaysRemaining($expiresAt)
             </div>
         </div>
         <div class="sq-admin-header-right">
-            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile" class="header-profile-photo">
+            <img src="<?php echo htmlspecialchars($avatar_url, ENT_QUOTES, 'UTF-8'); ?>" alt="Profile"
+                class="header-profile-photo">
 
             <button class="sq-admin-theme-toggle" id="sqThemeToggle" title="Toggle Theme">
                 <i class="fas fa-sun"></i>
@@ -241,6 +296,38 @@ function getDaysRemaining($expiresAt)
             <form method="POST" id="modalForm">
                 <input type="hidden" name="subscription_action" id="modalAction">
                 <input type="hidden" name="target_plan" id="modalTargetPlan">
+                <div class="sq-sub-cancel-reason" id="cancelReasonBlock" style="display: none;">
+                    <div class="sq-sub-cancel-reason-head">
+                        <i class="fas fa-comment-dots"></i>
+                        <span>Help us improve: why are you leaving?</span>
+                    </div>
+                    <div class="sq-sub-cancel-field">
+                        <label class="sq-sub-cancel-label" for="cancellationReason">Cancellation reason</label>
+                        <div class="sq-sub-cancel-select-wrap">
+                            <i class="fas fa-list-ul sq-sub-cancel-field-icon"></i>
+                            <select name="cancellation_reason" id="cancellationReason" class="sq-sub-cancel-select">
+                                <option value="" disabled selected>Select a reason...</option>
+                                <?php foreach ($cancellationReasons as $key => $label): ?>
+                                    <option value="<?php echo htmlspecialchars($key); ?>">
+                                        <?php echo htmlspecialchars($label); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <i class="fas fa-chevron-down sq-sub-cancel-select-chevron"></i>
+                        </div>
+                    </div>
+                    <div class="sq-sub-cancel-other-wrap" id="cancelOtherWrap">
+                        <label class="sq-sub-cancel-label" for="cancellationReasonOther">Your reason</label>
+                        <div class="sq-sub-cancel-other-inner">
+                            <i class="fas fa-pen sq-sub-cancel-field-icon"></i>
+                            <textarea name="cancellation_reason_other" id="cancellationReasonOther"
+                                class="sq-sub-cancel-other" rows="3" maxlength="300"
+                                placeholder="Tell us a bit more so we can improve..."></textarea>
+                        </div>
+                        <span class="sq-sub-cancel-hint" id="cancelOtherHint">Please describe your reason — up to 300
+                            characters</span>
+                    </div>
+                </div>
                 <div class="sq-sub-modal-actions">
                     <button type="button" class="sq-sub-btn sq-sub-btn--secondary"
                         onclick="closeSubModal()">Cancel</button>
@@ -288,11 +375,20 @@ function getDaysRemaining($expiresAt)
                     <strong><?php echo formatCurrency($plans[$currentPlan]['price']); ?></strong>
                     <?php echo $plans[$currentPlan]['price'] > 0 ? '/month' : 'Forever Free'; ?>
                 </div>
+                <?php if ($isCancelledPendingExpiry): ?>
+                    <div class="sq-sub-cancel-notice">
+                        <i class="fas fa-info-circle"></i>
+                        <span>Your subscription is cancelled but remains active until
+                            <strong><?php echo formatDate($nextBillingDate); ?></strong> (<?php echo $daysRemaining; ?> days
+                            left). After that, your account will move to Freemium.</span>
+                    </div>
+                <?php endif; ?>
                 <div class="sq-sub-plan-meta">
                     <?php if ($nextBillingDate && $plans[$currentPlan]['price'] > 0): ?>
                         <div class="sq-sub-plan-meta-item">
                             <i class="fas fa-calendar"></i>
-                            <span>Renews: <?php echo formatDate($nextBillingDate); ?></span>
+                            <span><?php echo $isCancelledPendingExpiry ? 'Access ends' : 'Renews'; ?>:
+                                <?php echo formatDate($nextBillingDate); ?></span>
                         </div>
                         <div class="sq-sub-plan-meta-item">
                             <i class="fas fa-clock"></i>
@@ -310,7 +406,14 @@ function getDaysRemaining($expiresAt)
             </div>
 
             <div class="sq-sub-plan-actions">
-                <?php if ($subscriptionStatus === 'active' && $plans[$currentPlan]['price'] > 0): ?>
+                <?php if ($isCancelledPendingExpiry): ?>
+                    <form method="POST" id="resubscribeForm" style="display: inline;">
+                        <input type="hidden" name="subscription_action" value="resubscribe">
+                        <button type="submit" class="sq-sub-btn sq-sub-btn--primary" id="resubscribeBtn">
+                            <i class="fas fa-redo"></i> Resubscribe
+                        </button>
+                    </form>
+                <?php elseif ($subscriptionStatus === 'active' && $plans[$currentPlan]['price'] > 0): ?>
                     <button class="sq-sub-btn sq-sub-btn--danger" onclick="showCancelModal()">
                         <i class="fas fa-times"></i> Cancel Subscription
                     </button>
@@ -432,6 +535,8 @@ function getDaysRemaining($expiresAt)
                             <th>Status</th>
                             <th>Account</th>
                             <th>Expires</th>
+                            <th>Cancelled</th>
+                            <th>Reason</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -447,8 +552,8 @@ function getDaysRemaining($expiresAt)
                                 <td>
                                     <code
                                         style="background: var(--sq-sub-bg); padding: 4px 8px; border-radius: 6px; font-size: 12px;">
-                                                                                                                                                                                <?php echo htmlspecialchars($payment['transaction_id'] ?? 'N/A'); ?>
-                                                                                                                                                                            </code>
+                                                                                                                                                                                                                <?php echo htmlspecialchars($payment['transaction_id'] ?? 'N/A'); ?>
+                                                                                                                                                                                                            </code>
                                 </td>
                                 <td>
                                     <span class="sq-sub-status sq-sub-status--<?php echo $payment['status']; ?>">
@@ -464,6 +569,10 @@ function getDaysRemaining($expiresAt)
                                     </span>
                                 </td>
                                 <td><?php echo formatDate($payment['expires_at']); ?></td>
+                                <td><?php echo !empty($payment['cancelled_at']) ? formatDate($payment['cancelled_at']) : '—'; ?>
+                                </td>
+                                <td><?php echo !empty($payment['cancellation_reason']) ? htmlspecialchars($payment['cancellation_reason']) : '—'; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -502,6 +611,8 @@ function getDaysRemaining($expiresAt)
         const modalConfirmBtn = document.getElementById('modalConfirmBtn');
 
         function showUpgradeModal(planKey, planName) {
+            cancelReasonBlock.style.display = 'none';
+            cancellationReason.required = false;
             modalIcon.className = 'sq-sub-modal-icon sq-sub-modal-icon--upgrade';
             modalIcon.innerHTML = '<i class="fas fa-arrow-up"></i>';
             modalTitle.textContent = 'Upgrade to ' + planName;
@@ -514,6 +625,8 @@ function getDaysRemaining($expiresAt)
         }
 
         function showDowngradeModal(planKey, planName) {
+            cancelReasonBlock.style.display = 'none';
+            cancellationReason.required = false;
             modalIcon.className = 'sq-sub-modal-icon sq-sub-modal-icon--downgrade';
             modalIcon.innerHTML = '<i class="fas fa-arrow-down"></i>';
             modalTitle.textContent = 'Switch to ' + planName;
@@ -525,20 +638,88 @@ function getDaysRemaining($expiresAt)
             modal.classList.add('sq-sub-modal-overlay--active');
         }
 
+        const cancelReasonBlock = document.getElementById('cancelReasonBlock');
+        const cancelOtherWrap = document.getElementById('cancelOtherWrap');
+        const cancellationReason = document.getElementById('cancellationReason');
+        const cancellationReasonOther = document.getElementById('cancellationReasonOther');
+
         function showCancelModal() {
             modalIcon.className = 'sq-sub-modal-icon sq-sub-modal-icon--cancel';
             modalIcon.innerHTML = '<i class="fas fa-times"></i>';
             modalTitle.textContent = 'Cancel Subscription?';
-            modalDesc.textContent = 'You will lose access to premium features immediately and be downgraded to Freemium. This action cannot be undone.';
+            modalDesc.textContent = 'Your plan stays active until the end of your billing period. After that, your account moves to Freemium. You can resubscribe anytime before access ends.';
             modalAction.value = 'cancel';
             modalTargetPlan.value = '';
             modalConfirmBtn.textContent = 'Yes, Cancel';
             modalConfirmBtn.className = 'sq-sub-btn sq-sub-btn--danger';
+            cancelReasonBlock.style.display = 'block';
+            document.getElementById('confirmModal').querySelector('.sq-sub-modal').classList.add('sq-sub-modal--cancel');
+            cancellationReason.required = true;
+            cancellationReason.selectedIndex = 0;
+            cancellationReasonOther.value = '';
+            cancelOtherWrap.classList.remove('sq-sub-cancel-other-wrap--visible');
+            cancellationReasonOther.required = false;
             modal.classList.add('sq-sub-modal-overlay--active');
         }
 
         function closeSubModal() {
             modal.classList.remove('sq-sub-modal-overlay--active');
+            cancelReasonBlock.style.display = 'none';
+            document.getElementById('confirmModal').querySelector('.sq-sub-modal').classList.remove('sq-sub-modal--cancel');
+            cancellationReason.required = false;
+            cancellationReasonOther.required = false;
+            cancelOtherWrap.classList.remove('sq-sub-cancel-other-wrap--visible');
+        }
+
+        cancellationReason.addEventListener('change', function () {
+            const showOther = this.value === 'other';
+            cancelOtherWrap.classList.toggle('sq-sub-cancel-other-wrap--visible', showOther);
+            cancellationReasonOther.required = showOther;
+            document.getElementById('cancelOtherHint').textContent = showOther
+                ? 'Required : tell us more so we can improve (up to 300 characters)'
+                : 'Please describe your reason — up to 300 characters';
+            if (showOther) {
+                setTimeout(function () { cancellationReasonOther.focus(); }, 200);
+            }
+        });
+
+        function sqLockActionButton(btn, processingText) {
+            if (!btn || btn.disabled) return;
+            btn.disabled = true;
+            btn.classList.add('sq-sub-btn--busy');
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + processingText;
+        }
+
+        document.getElementById('modalForm').addEventListener('submit', function (e) {
+            if (modalAction.value === 'cancel') {
+                if (!cancellationReason.value) {
+                    e.preventDefault();
+                    cancellationReason.focus();
+                    return;
+                }
+                if (cancellationReason.value === 'other' && !cancellationReasonOther.value.trim()) {
+                    e.preventDefault();
+                    cancellationReasonOther.focus();
+                    return;
+                }
+            }
+
+            if (!e.defaultPrevented) {
+                const busyLabels = {
+                    cancel: 'Cancelling...',
+                    upgrade: 'Upgrading...',
+                    downgrade: 'Switching...'
+                };
+                sqLockActionButton(modalConfirmBtn, busyLabels[modalAction.value] || 'Processing...');
+                this.querySelectorAll('button[type="button"]').forEach(function (b) { b.disabled = true; });
+            }
+        });
+
+        const resubscribeForm = document.getElementById('resubscribeForm');
+        if (resubscribeForm) {
+            resubscribeForm.addEventListener('submit', function () {
+                sqLockActionButton(document.getElementById('resubscribeBtn'), 'Resubscribing...');
+            });
         }
 
         // Close on outside click

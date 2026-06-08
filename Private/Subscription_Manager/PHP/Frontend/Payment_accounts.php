@@ -47,6 +47,14 @@ $totalPages = 0;
 $offset = 0;
 $recordsStart = 0;
 $recordsEnd = 0;
+$cancelPage = 1;
+$cancelPerPageParam = (string) DEFAULT_PER_PAGE;
+$cancelEffectivePerPage = (int) DEFAULT_PER_PAGE;
+$cancelTotalItems = 0;
+$cancelTotalPages = 0;
+$cancelOffset = 0;
+$cancelRecordsStart = 0;
+$cancelRecordsEnd = 0;
 
 // Valid enums for status, payment_method, package, and account_status
 $validStatuses = ['pending', 'completed', 'failed', 'refunded', 'cancelled'];
@@ -249,6 +257,49 @@ function sq_build_payments_metrics(PDO $pdo, int $days): array
     ];
 }
 
+function sq_build_cancellations_metrics(PDO $pdo, int $days): array
+{
+    $labels = [];
+    $counts = [];
+    try {
+        $metricsStmt = $pdo->prepare("
+            SELECT
+                DATE(p.cancelled_at) AS d,
+                COUNT(*) AS cnt
+            FROM payments p
+            WHERE p.deleted_at IS NULL
+              AND p.cancelled_at IS NOT NULL
+              AND p.cancelled_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+            GROUP BY DATE(p.cancelled_at)
+            ORDER BY d ASC
+        ");
+        $metricsStmt->execute([$days - 1]);
+        $rows = $metricsStmt->fetchAll();
+        $byDay = [];
+        foreach ($rows as $r) {
+            $key = (string) ($r['d'] ?? '');
+            if ($key === '') {
+                continue;
+            }
+            $byDay[$key] = (int) ($r['cnt'] ?? 0);
+        }
+        for ($i = $days - 1; $i >= 0; $i--) {
+            $day = date('Y-m-d', strtotime("-{$i} days"));
+            $labels[] = date('M j', strtotime($day));
+            $counts[] = (int) ($byDay[$day] ?? 0);
+        }
+    } catch (Exception $e) {
+        $labels = [];
+        $counts = [];
+    }
+
+    return [
+        'days' => $days,
+        'labels' => $labels,
+        'counts' => $counts,
+    ];
+}
+
 try {
     $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
     $pdo = new PDO($dsn, DB_USER, DB_PASS, [
@@ -420,6 +471,12 @@ try {
         exit();
     }
 
+    if (isset($_GET['ajax']) && $_GET['ajax'] === 'cancel_metrics' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(sq_build_cancellations_metrics($pdo, sq_normalize_metrics_days((int) ($_GET['days'] ?? 14))));
+        exit();
+    }
+
     // Get filter parameters
     $view = $_GET['view'] ?? 'active'; // active, trash, all
     $status = $_GET['status'] ?? 'all';
@@ -506,6 +563,82 @@ try {
     $paymentsMetricsCounts = $paymentsMetrics['counts'];
     $paymentsMetricsRevenue = $paymentsMetrics['revenue'];
 
+    // Cancellation metrics and records
+    $cancellationStats = [
+        'total' => 0,
+        'this_month' => 0,
+        'pending_expiry' => 0,
+        'reactivated' => 0,
+    ];
+    $cancellations = [];
+    $cancellationMetricsDays = sq_normalize_metrics_days((int) ($_GET['cancel_metrics_days'] ?? 14));
+    $cancellationMetrics = sq_build_cancellations_metrics($pdo, $cancellationMetricsDays);
+    $cancellationMetricsLabels = $cancellationMetrics['labels'];
+    $cancellationMetricsCounts = $cancellationMetrics['counts'];
+
+    try {
+        $cancellationStats['total'] = (int) $pdo->query("
+            SELECT COUNT(*) FROM payments
+            WHERE deleted_at IS NULL AND cancelled_at IS NOT NULL
+        ")->fetchColumn();
+
+        $cancellationStats['this_month'] = (int) $pdo->query("
+            SELECT COUNT(*) FROM payments
+            WHERE deleted_at IS NULL AND cancelled_at IS NOT NULL
+              AND cancelled_at >= DATE_FORMAT(NOW(), '%Y-%m-01')
+        ")->fetchColumn();
+
+        $cancellationStats['pending_expiry'] = (int) $pdo->query("
+            SELECT COUNT(*) FROM payments
+            WHERE deleted_at IS NULL AND status = 'cancelled'
+              AND cancelled_at IS NOT NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
+        ")->fetchColumn();
+
+        $cancellationStats['reactivated'] = (int) $pdo->query("
+            SELECT COUNT(*) FROM payments
+            WHERE deleted_at IS NULL AND status = 'completed'
+              AND package IN ('pro', 'enterprise')
+              AND amount > 0
+              AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        ")->fetchColumn();
+
+        $cancelPage = max(1, intval($_GET['cancel_page'] ?? 1));
+        $cancelPerPageParam = $_GET['cancel_per_page'] ?? (string) DEFAULT_PER_PAGE;
+        $allowedCancelPerPage = ['5', '10', '20', '50', '100', '200', 'all'];
+        if (!in_array($cancelPerPageParam, $allowedCancelPerPage, true)) {
+            $cancelPerPageParam = (string) DEFAULT_PER_PAGE;
+        }
+        $cancelEffectivePerPage = $cancelPerPageParam === 'all' ? null : (int) $cancelPerPageParam;
+        $cancelTotalItems = (int) $cancellationStats['total'];
+        $cancelTotalPages = ($cancelEffectivePerPage === null || $cancelTotalItems === 0)
+            ? 1
+            : (int) ceil($cancelTotalItems / $cancelEffectivePerPage);
+        $cancelOffset = $cancelEffectivePerPage === null ? 0 : ($cancelPage - 1) * $cancelEffectivePerPage;
+        $cancelRecordsStart = $cancelTotalItems === 0 ? 0 : ($cancelOffset + 1);
+        $cancelRecordsEnd = $cancelEffectivePerPage === null
+            ? $cancelTotalItems
+            : (int) min($cancelOffset + $cancelEffectivePerPage, $cancelTotalItems);
+
+        $cancelListBase = "
+            SELECT p.*, u.first_name, u.surname
+            FROM payments p
+            LEFT JOIN users u ON p.email = u.email
+            WHERE p.deleted_at IS NULL AND p.cancelled_at IS NOT NULL
+            ORDER BY p.cancelled_at DESC
+        ";
+        if ($cancelEffectivePerPage === null) {
+            $cancelListStmt = $pdo->prepare($cancelListBase);
+            $cancelListStmt->execute();
+        } else {
+            $cancelListStmt = $pdo->prepare($cancelListBase . ' LIMIT ' . (int) $cancelEffectivePerPage . ' OFFSET ' . (int) $cancelOffset);
+            $cancelListStmt->execute();
+        }
+        $cancellations = $cancelListStmt->fetchAll();
+    } catch (Exception $e) {
+        error_log('Cancellation metrics error: ' . $e->getMessage());
+    }
+
 } catch (Exception $e) {
     error_log("Payments Admin Error: " . $e->getMessage());
     $errorMessage = "Database error: " . $e->getMessage();
@@ -523,6 +656,27 @@ try {
     $paymentsMetricsLabels = [];
     $paymentsMetricsCounts = [];
     $paymentsMetricsRevenue = [];
+    $cancellationStats = ['total' => 0, 'this_month' => 0, 'pending_expiry' => 0, 'reactivated' => 0];
+    $cancellations = [];
+    $cancellationMetricsDays = 14;
+    $cancellationMetricsLabels = [];
+    $cancellationMetricsCounts = [];
+    $cancelPage = 1;
+    $cancelPerPageParam = (string) DEFAULT_PER_PAGE;
+    $cancelEffectivePerPage = (int) DEFAULT_PER_PAGE;
+    $cancelTotalItems = 0;
+    $cancelTotalPages = 0;
+    $cancelOffset = 0;
+    $cancelRecordsStart = 0;
+    $cancelRecordsEnd = 0;
+}
+
+function sq_cancel_pagination_href(int $page): string
+{
+    $params = $_GET;
+    $params['cancel_page'] = $page;
+    $path = strtok($_SERVER['REQUEST_URI'] ?? '', '?') ?: $_SERVER['PHP_SELF'];
+    return $path . '?' . http_build_query($params);
 }
 
 // Helper functions
@@ -805,6 +959,116 @@ function formatCurrency($amount)
             background-color: var(--sq-bg-card, #0f172a);
             color: var(--sq-text-main, #e2e8f0);
         }
+
+        .sq-cancellations-section {
+            margin: 24px 0 28px;
+        }
+        .sq-cancellations-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .sq-cancellations-title {
+            font-weight: 900;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--sq-text-main);
+        }
+        .sq-cancellations-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+        .sq-cancel-stat {
+            background: var(--sq-bg-card);
+            border: 1px solid var(--sq-border);
+            border-radius: 14px;
+            padding: 16px;
+            box-shadow: var(--sq-shadow);
+        }
+        .sq-cancel-stat h4 {
+            font-size: 24px;
+            margin-bottom: 4px;
+            color: var(--sq-text-main);
+        }
+        .sq-cancel-stat p {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--sq-text-light);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .sq-cancel-metrics-card {
+            margin-bottom: 18px;
+        }
+        .sq-cancel-metrics-canvas-wrap {
+            height: 220px;
+        }
+        .sq-cancellations-table-wrap {
+            overflow-x: auto;
+            border: 1px solid var(--sq-border);
+            border-radius: 14px;
+            background: var(--sq-bg-card);
+            box-shadow: var(--sq-shadow);
+        }
+        .sq-cancellations-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .sq-cancellations-table th,
+        .sq-cancellations-table td {
+            padding: 12px 14px;
+            border-bottom: 1px solid var(--sq-border);
+            text-align: left;
+            vertical-align: top;
+        }
+        .sq-cancellations-table th {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--sq-text-light);
+            background: rgba(148, 163, 184, 0.08);
+        }
+        .sq-cancellations-table tr:last-child td {
+            border-bottom: none;
+        }
+        .sq-cancel-per-page-row {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            padding: 12px 14px;
+            border-top: 1px solid var(--sq-border);
+        }
+        .sq-cancel-per-page-label {
+            color: var(--sq-text-light);
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .sq-cancel-per-page-select {
+            margin: 0 8px;
+            padding: 8px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--sq-border);
+            background: var(--sq-bg-card);
+            color: var(--sq-text-main);
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .sq-cancel-per-page-meta {
+            color: var(--sq-text-light);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .sq-cancel-pagination {
+            padding: 0 14px 14px;
+        }
     </style>
 </head>
 
@@ -1081,6 +1345,177 @@ function formatCurrency($amount)
                 </div>
             </div>
         </div>
+
+        <section class="sq-cancellations-section">
+            <div class="sq-cancellations-head">
+                <div class="sq-cancellations-title">
+                    <i class="fas fa-user-slash" style="color: #dc2626;"></i>
+                    Subscription Cancellations
+                </div>
+            </div>
+
+            <div class="sq-cancellations-grid">
+                <div class="sq-cancel-stat">
+                    <h4><?php echo number_format($cancellationStats['total']); ?></h4>
+                    <p>Total Cancellations</p>
+                </div>
+                <div class="sq-cancel-stat">
+                    <h4><?php echo number_format($cancellationStats['this_month']); ?></h4>
+                    <p>This Month</p>
+                </div>
+                <div class="sq-cancel-stat">
+                    <h4><?php echo number_format($cancellationStats['pending_expiry']); ?></h4>
+                    <p>Active Until Expiry</p>
+                </div>
+                <div class="sq-cancel-stat">
+                    <h4><?php echo number_format($cancellationStats['reactivated']); ?></h4>
+                    <p>New Paid (30 days)</p>
+                </div>
+            </div>
+
+            <div class="sq-metrics-card sq-cancel-metrics-card">
+                <div class="sq-metrics-head">
+                    <div>
+                        <div class="sq-metrics-title">
+                            <i class="fas fa-chart-area" style="color: #dc2626;"></i>
+                            Cancellations trend
+                        </div>
+                        <div class="sq-metrics-sub" id="sqCancelMetricsSub">Last <?php echo (int) $cancellationMetricsDays; ?> days • daily cancellation count</div>
+                    </div>
+                    <select id="sqCancelMetricsPeriod" class="sq-metrics-period-select" aria-label="Cancellation metrics period">
+                        <?php foreach ([7, 14, 30, 60, 90] as $opt): ?>
+                            <option value="<?php echo $opt; ?>" <?php echo (int) $cancellationMetricsDays === $opt ? 'selected' : ''; ?>>Last <?php echo $opt; ?> days</option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="sq-cancel-metrics-canvas-wrap">
+                    <canvas id="sqCancelMetricsChart"></canvas>
+                </div>
+            </div>
+
+            <div class="sq-cancellations-table-wrap">
+                <table class="sq-cancellations-table">
+                    <thead>
+                        <tr>
+                            <th>Customer</th>
+                            <th>Plan</th>
+                            <th>Cancelled</th>
+                            <th>Access Until</th>
+                            <th>Status</th>
+                            <th>Reason</th>
+                            <th>Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($cancellations)): ?>
+                            <tr>
+                                <td colspan="7" style="text-align:center; color: var(--sq-text-light); padding: 24px;">
+                                    No cancellations recorded yet.
+                                </td>
+                            </tr>
+                        <?php else: ?>
+                            <?php foreach ($cancellations as $cancel): ?>
+                                <?php
+                                $customerName = trim(($cancel['first_name'] ?? '') . ' ' . ($cancel['surname'] ?? ''));
+                                $stillActive = ($cancel['status'] ?? '') === 'cancelled'
+                                    && (empty($cancel['expires_at']) || strtotime($cancel['expires_at']) > time());
+                                ?>
+                                <tr>
+                                    <td>
+                                        <div style="font-weight:700;"><?php echo htmlspecialchars($customerName !== '' ? $customerName : '—'); ?></div>
+                                        <div style="font-size:12px; color:var(--sq-text-light);"><?php echo htmlspecialchars($cancel['email']); ?></div>
+                                    </td>
+                                    <td style="text-transform:capitalize; font-weight:700;"><?php echo htmlspecialchars($cancel['package']); ?></td>
+                                    <td><?php echo !empty($cancel['cancelled_at']) ? date('M j, Y g:i A', strtotime($cancel['cancelled_at'])) : '—'; ?></td>
+                                    <td><?php echo !empty($cancel['expires_at']) ? date('M j, Y', strtotime($cancel['expires_at'])) : '—'; ?></td>
+                                    <td>
+                                        <?php if ($stillActive): ?>
+                                            <span style="color:#f59e0b; font-weight:700;">Active until expiry</span>
+                                        <?php elseif (($cancel['status'] ?? '') === 'completed' && !empty($cancel['cancelled_at'])): ?>
+                                            <span style="color:#10b981; font-weight:700;">Reactivated</span>
+                                        <?php else: ?>
+                                            <span style="color:#64748b; font-weight:700;"><?php echo ucfirst($cancel['status'] ?? 'unknown'); ?></span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?php echo !empty($cancel['cancellation_reason']) ? htmlspecialchars($cancel['cancellation_reason']) : '—'; ?></td>
+                                    <td><?php echo formatCurrency($cancel['amount']); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+
+                <?php if ($cancelTotalItems > 0): ?>
+                    <div class="sq-per-page-row sq-cancel-per-page-row">
+                        <label class="sq-cancel-per-page-label">
+                            Records
+                            <select id="sqCancelPerPageSelect" class="sq-cancel-per-page-select"
+                                onchange="sqUpdateCancelPerPage(this.value)">
+                                <?php
+                                $cancelPerPageOptions = ['5', '10', '20', '50', '100', '200', 'all'];
+                                foreach ($cancelPerPageOptions as $opt):
+                                    $selected = ((string) $cancelPerPageParam === (string) $opt) ? 'selected' : '';
+                                    ?>
+                                    <option value="<?php echo htmlspecialchars($opt); ?>" <?php echo $selected; ?>>
+                                        <?php echo $opt === 'all' ? 'All' : $opt; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            per page
+                        </label>
+                        <span class="sq-cancel-per-page-meta">
+                            Showing <?php echo (int) $cancelRecordsStart; ?>–<?php echo (int) $cancelRecordsEnd; ?> of <?php echo number_format((int) $cancelTotalItems); ?>
+                        </span>
+                    </div>
+
+                    <?php if ($cancelTotalPages > 1): ?>
+                        <div class="sq-pagination sq-cancel-pagination">
+                            <?php if ($cancelPage > 1): ?>
+                                <a href="<?php echo htmlspecialchars(sq_cancel_pagination_href($cancelPage - 1)); ?>" class="sq-page-btn">
+                                    <i class="fas fa-chevron-left"></i>
+                                </a>
+                            <?php else: ?>
+                                <span class="sq-page-btn disabled"><i class="fas fa-chevron-left"></i></span>
+                            <?php endif; ?>
+
+                            <?php
+                            $cancelStartPage = max(1, $cancelPage - 2);
+                            $cancelEndPage = min($cancelTotalPages, $cancelPage + 2);
+
+                            if ($cancelStartPage > 1): ?>
+                                <a href="<?php echo htmlspecialchars(sq_cancel_pagination_href(1)); ?>" class="sq-page-btn">1</a>
+                                <?php if ($cancelStartPage > 2): ?>
+                                    <span class="sq-page-btn disabled">...</span>
+                                <?php endif; ?>
+                            <?php endif; ?>
+
+                            <?php for ($i = $cancelStartPage; $i <= $cancelEndPage; $i++): ?>
+                                <?php if ($i === $cancelPage): ?>
+                                    <span class="sq-page-btn active"><?php echo $i; ?></span>
+                                <?php else: ?>
+                                    <a href="<?php echo htmlspecialchars(sq_cancel_pagination_href($i)); ?>" class="sq-page-btn"><?php echo $i; ?></a>
+                                <?php endif; ?>
+                            <?php endfor; ?>
+
+                            <?php if ($cancelEndPage < $cancelTotalPages): ?>
+                                <?php if ($cancelEndPage < $cancelTotalPages - 1): ?>
+                                    <span class="sq-page-btn disabled">...</span>
+                                <?php endif; ?>
+                                <a href="<?php echo htmlspecialchars(sq_cancel_pagination_href($cancelTotalPages)); ?>" class="sq-page-btn"><?php echo $cancelTotalPages; ?></a>
+                            <?php endif; ?>
+
+                            <?php if ($cancelPage < $cancelTotalPages): ?>
+                                <a href="<?php echo htmlspecialchars(sq_cancel_pagination_href($cancelPage + 1)); ?>" class="sq-page-btn">
+                                    <i class="fas fa-chevron-right"></i>
+                                </a>
+                            <?php else: ?>
+                                <span class="sq-page-btn disabled"><i class="fas fa-chevron-right"></i></span>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
+            </div>
+        </section>
 
         <div class="sq-metrics-card">
             <div class="sq-metrics-head">
@@ -1941,6 +2376,13 @@ function formatCurrency($amount)
             window.location.href = url.toString();
         }
 
+        function sqUpdateCancelPerPage(perPageValue) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('cancel_per_page', perPageValue);
+            url.searchParams.set('cancel_page', '1');
+            window.location.href = url.toString();
+        }
+
         (function () {
             const backToTopBtn = document.getElementById('backToTopBtn');
             if (!backToTopBtn) return;
@@ -2041,6 +2483,90 @@ function formatCurrency($amount)
                         metricsChart.update();
                         if (metricsSub) {
                             metricsSub.textContent = 'Last ' + (data.days || days) + ' days • payments count + completed revenue';
+                        }
+                    } catch (err) {
+                        /* ignore */
+                    } finally {
+                        periodSelect.disabled = false;
+                    }
+                });
+            }
+        })();
+    </script>
+
+    <script>
+        (function () {
+            const el = document.getElementById('sqCancelMetricsChart');
+            const periodSelect = document.getElementById('sqCancelMetricsPeriod');
+            const metricsSub = document.getElementById('sqCancelMetricsSub');
+            if (!el || typeof Chart === 'undefined') return;
+
+            const isDark = () => document.body.classList.contains('sq-dark');
+            const chartColors = () => {
+                const dark = isDark();
+                return {
+                    grid: dark ? 'rgba(148, 163, 184, 0.16)' : 'rgba(148, 163, 184, 0.22)',
+                    ticks: dark ? '#cbd5e1' : '#475569',
+                    line: dark ? '#f87171' : '#dc2626',
+                    fill: dark ? 'rgba(248, 113, 113, 0.2)' : 'rgba(220, 38, 38, 0.12)',
+                };
+            };
+
+            const labels = <?php echo json_encode($cancellationMetricsLabels ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            const counts = <?php echo json_encode($cancellationMetricsCounts ?? [], JSON_UNESCAPED_SLASHES); ?>;
+            const c = chartColors();
+
+            const cancelChart = new Chart(el.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Cancellations',
+                        data: counts,
+                        borderColor: c.line,
+                        backgroundColor: c.fill,
+                        tension: 0.35,
+                        fill: true,
+                        pointRadius: 3,
+                        pointHoverRadius: 5,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: c.ticks, font: { weight: '700' } } },
+                        tooltip: { intersect: false, mode: 'index' }
+                    },
+                    interaction: { intersect: false, mode: 'index' },
+                    scales: {
+                        x: { grid: { color: c.grid }, ticks: { color: c.ticks, font: { weight: '700' } } },
+                        y: {
+                            grid: { color: c.grid },
+                            ticks: { color: c.ticks, stepSize: 1 },
+                            beginAtZero: true,
+                            title: { display: true, text: 'Cancellations', color: c.ticks, font: { weight: '800' } }
+                        }
+                    }
+                }
+            });
+
+            if (periodSelect) {
+                periodSelect.addEventListener('change', async function () {
+                    const days = this.value;
+                    periodSelect.disabled = true;
+                    try {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('ajax', 'cancel_metrics');
+                        url.searchParams.set('days', days);
+                        const res = await fetch(url.toString(), { headers: { 'X-Requested-With': 'fetch' } });
+                        if (!res.ok) return;
+                        const data = await res.json();
+                        cancelChart.data.labels = data.labels || [];
+                        cancelChart.data.datasets[0].data = data.counts || [];
+                        cancelChart.update();
+                        if (metricsSub) {
+                            metricsSub.textContent = 'Last ' + (data.days || days) + ' days • daily cancellation count';
                         }
                     } catch (err) {
                         /* ignore */
