@@ -502,9 +502,8 @@ function getDaysRemaining($expiresAt)
                                     <i class="fas fa-arrow-down"></i> Downgrade
                                 </button>
                             </form>
-                        <?php elseif ($planKey === 'freemium' && $currentPlan !== 'freemium'): ?>
-                            <button class="sq-sub-btn sq-sub-btn--secondary"
-                                onclick="showDowngradeModal('<?php echo $planKey; ?>', '<?php echo $plan['name']; ?>')">
+                        <?php elseif ($planKey === 'freemium' && $currentPlan !== 'freemium' && !$isCancelledPendingExpiry): ?>
+                            <button class="sq-sub-btn sq-sub-btn--secondary" onclick="showCancelModal()">
                                 <i class="fas fa-arrow-down"></i> Switch to Free
                             </button>
                         <?php endif; ?>
@@ -601,7 +600,7 @@ function getDaysRemaining($expiresAt)
             document.getElementById('subThemeIcon').className = 'fas fa-moon';
         }
 
-        // Modal Functions
+        // Modal elements
         const modal = document.getElementById('confirmModal');
         const modalIcon = document.getElementById('modalIcon');
         const modalTitle = document.getElementById('modalTitle');
@@ -609,35 +608,6 @@ function getDaysRemaining($expiresAt)
         const modalAction = document.getElementById('modalAction');
         const modalTargetPlan = document.getElementById('modalTargetPlan');
         const modalConfirmBtn = document.getElementById('modalConfirmBtn');
-
-        function showUpgradeModal(planKey, planName) {
-            cancelReasonBlock.style.display = 'none';
-            cancellationReason.required = false;
-            modalIcon.className = 'sq-sub-modal-icon sq-sub-modal-icon--upgrade';
-            modalIcon.innerHTML = '<i class="fas fa-arrow-up"></i>';
-            modalTitle.textContent = 'Upgrade to ' + planName;
-            modalDesc.textContent = 'You will be charged immediately and gain access to all ' + planName + ' features. Your current plan will be upgraded today.';
-            modalAction.value = 'upgrade';
-            modalTargetPlan.value = planKey;
-            modalConfirmBtn.textContent = 'Upgrade Now';
-            modalConfirmBtn.className = 'sq-sub-btn sq-sub-btn--primary';
-            modal.classList.add('sq-sub-modal-overlay--active');
-        }
-
-        function showDowngradeModal(planKey, planName) {
-            cancelReasonBlock.style.display = 'none';
-            cancellationReason.required = false;
-            modalIcon.className = 'sq-sub-modal-icon sq-sub-modal-icon--downgrade';
-            modalIcon.innerHTML = '<i class="fas fa-arrow-down"></i>';
-            modalTitle.textContent = 'Switch to ' + planName;
-            modalDesc.textContent = 'Your current plan features will remain active until the end of your billing period, then switch to ' + planName + '.';
-            modalAction.value = 'downgrade';
-            modalTargetPlan.value = planKey;
-            modalConfirmBtn.textContent = 'Confirm Switch';
-            modalConfirmBtn.className = 'sq-sub-btn sq-sub-btn--secondary';
-            modal.classList.add('sq-sub-modal-overlay--active');
-        }
-
         const cancelReasonBlock = document.getElementById('cancelReasonBlock');
         const cancelOtherWrap = document.getElementById('cancelOtherWrap');
         const cancellationReason = document.getElementById('cancellationReason');
